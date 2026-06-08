@@ -8,7 +8,7 @@ logger = logging.getLogger("shuangxiang.db")
 class Database:
     """SQLite 单例。承载多租户机器人平台的全部数据。
 
-    平台级： users / admins / messages
+    平台级： users
     租户级（均按 tenant_id 隔离）：
       • tenants        —— 用户创建的机器人
       • tenant_users   —— 各机器人下的终端用户（封禁状态等）
@@ -63,16 +63,6 @@ class Database:
                     full_name TEXT,
                     joined_at TEXT DEFAULT (datetime('now')),
                     last_seen TEXT DEFAULT (datetime('now'))
-                );
-                CREATE TABLE IF NOT EXISTS admins (
-                    id INTEGER PRIMARY KEY, role INTEGER DEFAULT 1,
-                    granted_by INTEGER, note TEXT,
-                    granted_at TEXT DEFAULT (datetime('now'))
-                );
-                CREATE TABLE IF NOT EXISTS messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER, direction TEXT, content TEXT,
-                    sent_at TEXT DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS tenants (
                     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -328,7 +318,7 @@ class Database:
             return default
         return v in ("1", "true", "True", "on", "yes")
 
-    # ── 平台用户 / 消息日志 ─────────────────────────────────
+    # ── 平台用户 ───────────────────────────────────────────
 
     def upsert_user(self, uid, username, full_name):
         with self._conn() as c:
@@ -336,15 +326,6 @@ class Database:
                 ON CONFLICT(id) DO UPDATE SET
                 username=excluded.username, full_name=excluded.full_name,
                 last_seen=datetime('now')""", (uid, username, full_name))
-
-    def get_user(self, uid):
-        with self._conn() as c:
-            return c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
-
-    def log_message(self, uid, direction, content):
-        with self._conn() as c:
-            c.execute("INSERT INTO messages(user_id,direction,content) VALUES(?,?,?)",
-                      (uid, direction, content))
 
     # ── 租户（用户创建的机器人）─────────────────────────────
 
@@ -726,12 +707,3 @@ class Database:
                 "SELECT * FROM orders WHERE tenant_id=? AND id=?",
                 (tenant_id, oid)).fetchone()
 
-    # ── 管理员（平台级）─────────────────────────────────────
-
-    def get_admin_role(self, uid):
-        with self._conn() as c:
-            r = c.execute("SELECT role FROM admins WHERE id=?", (uid,)).fetchone()
-            return r["role"] if r else 0
-
-    def is_admin(self, uid):
-        return self.get_admin_role(uid) >= 1
