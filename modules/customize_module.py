@@ -612,7 +612,10 @@ class CustomizeModule(BaseModule):
             state["step"] = "buttons"
             await msg.reply_text(
                 "（第 4/4 步）请发送随回复附带的*内联按钮*，每行一个或多个：\n"
-                "`文字 - 链接`（同一行用 `&&` 可放多个按钮）\n\n若不需要按钮，发送「跳过」。",
+                "`文字 - 链接`\n\n"
+                "💡 用 `&&` 可在一行放多个按钮：\n"
+                "`频道 - https://t.me/a && 客服 - https://t.me/b`\n\n"
+                "若不需要按钮，发送「跳过」。",
                 parse_mode="Markdown")
         elif step == "buttons":
             buttons_json = ""

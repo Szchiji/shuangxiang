@@ -183,6 +183,18 @@ def test_auto_reply_markup_none_when_no_buttons(db):
     assert AutoReplyModule._reply_markup(row) is None
 
 
+def test_auto_reply_markup_multi_button_row(db):
+    from modules.auto_reply_module import AutoReplyModule
+    rows = parse_buttons("频道 - https://t.me/a && 客服 - https://t.me/b")
+    db.add_auto_reply(1, "价格", "见官网", "contains", 0,
+                      json.dumps(rows, ensure_ascii=False))
+    row = db.get_auto_replies(1)[0]
+    markup = AutoReplyModule._reply_markup(row)
+    assert len(markup.inline_keyboard) == 1
+    assert [b.text for b in markup.inline_keyboard[0]] == ["频道", "客服"]
+    assert markup.inline_keyboard[0][1].url == "https://t.me/b"
+
+
 # ── 引导式向导：启动语 ───────────────────────────────────────
 
 @pytest.mark.asyncio
