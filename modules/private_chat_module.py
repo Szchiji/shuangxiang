@@ -1,11 +1,11 @@
-"""双向私聊机器人核心模块。
+"""双向私聊机器人核心模块（每个租户机器人各运行一份）。
 
 工作方式：
-  • 普通用户私聊机器人 → 机器人把消息（任意类型）转发给管理员；
+  • 普通用户私聊机器人 → 机器人把消息（任意类型）转发给该机器人的拥有者（管理员）；
   • 管理员「回复」某条转发过来的消息 → 机器人把回复（任意类型）发还给对应用户。
 
-依靠数据库中的 message_map 表把「管理员侧的消息 ID」映射到「原始用户」，
-因此图片、语音、文件、贴纸等所有消息类型都能被正确地双向中转。
+所有用户、封禁状态与消息映射均按 tenant_id 隔离，
+因此同一套数据库可同时承载多个用户各自创建的机器人。
 """
 
 from telegram import Update
@@ -26,13 +26,13 @@ class PrivateChatModule(BaseModule):
     """双向私聊（客服/反馈）机器人。"""
 
     def setup(self, app: Application) -> None:
-        self.db       = Database()
-        self.admin_id = int(self.config["bot"]["admin_id"])
-        msgs          = self.config.get("messages", {})
-        self.welcome  = msgs.get(
+        self.db        = Database()
+        self.tenant_id = int(self.config.get("tenant_id", 0))
+        self.admin_id  = int(self.config["bot"]["admin_id"])
+        msgs           = self.config.get("messages", {})
+        self.welcome   = msgs.get(
             "welcome",
-            "👋 你好！这里是私聊机器人，直接发送消息即可联系管理员，"
-            "我们会尽快回复你。",
+            "👋 你好！直接发送消息即可联系管理员，我们会尽快回复你。",
         )
         self.admin_welcome = msgs.get(
             "admin_welcome",
@@ -57,67 +57,67 @@ class PrivateChatModule(BaseModule):
     # ── 辅助 ────────────────────────────────────────────────
 
     def _is_admin(self, uid: int) -> bool:
-        return uid == self.admin_id or self.db.is_admin(uid)
+        return uid == self.admin_id
 
     def _user_label(self, user) -> str:
         uname = f"@{user.username}" if user.username else "无用户名"
         return f"👤 {user.full_name} ({uname})\n🆔 ID: `{user.id}`"
 
-    async def _resolve_target(self, update: Update):
+    def _resolve_target(self, update: Update):
         """从被回复的消息解析目标用户 ID。"""
         reply = update.message.reply_to_message
         if not reply:
             return None
-        return self.db.get_mapped_user(reply.message_id)
+        return self.db.get_mapped_user(self.tenant_id, reply.message_id)
+
+    def _target_from_args(self, update: Update, ctx) -> int | None:
+        target = self._resolve_target(update)
+        if target is None and ctx.args:
+            try:
+                target = int(ctx.args[0])
+            except ValueError:
+                target = None
+        return target
 
     # ── 指令 ────────────────────────────────────────────────
 
     async def cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
-        self.db.upsert_user(user.id, user.username or "", user.full_name)
         if self._is_admin(user.id):
             await update.message.reply_text(self.admin_welcome)
         else:
+            self.db.upsert_tenant_user(self.tenant_id, user.id,
+                                       user.username or "", user.full_name)
             await update.message.reply_text(self.welcome)
 
     async def cmd_ban(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
             return
-        target = await self._resolve_target(update)
-        if target is None and ctx.args:
-            try:
-                target = int(ctx.args[0])
-            except ValueError:
-                target = None
+        target = self._target_from_args(update, ctx)
         if target is None:
             await update.message.reply_text("⚠️ 请「回复」某位用户的消息，或使用 /ban <用户ID>。")
             return
-        self.db.ban_user(target)
+        self.db.ban_user(self.tenant_id, target)
         await update.message.reply_text(f"⛔ 已封禁用户 `{target}`", parse_mode="Markdown")
 
     async def cmd_unban(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
             return
-        target = await self._resolve_target(update)
-        if target is None and ctx.args:
-            try:
-                target = int(ctx.args[0])
-            except ValueError:
-                target = None
+        target = self._target_from_args(update, ctx)
         if target is None:
             await update.message.reply_text("⚠️ 请「回复」某位用户的消息，或使用 /unban <用户ID>。")
             return
-        self.db.unban_user(target)
+        self.db.unban_user(self.tenant_id, target)
         await update.message.reply_text(f"✅ 已解封用户 `{target}`", parse_mode="Markdown")
 
     async def cmd_info(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
             return
-        target = await self._resolve_target(update)
+        target = self._resolve_target(update)
         if target is None:
             await update.message.reply_text("⚠️ 请「回复」某位用户的消息以查看其资料。")
             return
-        u = self.db.get_user(target)
+        u = self.db.get_tenant_user(self.tenant_id, target)
         if not u:
             await update.message.reply_text(f"未找到用户 `{target}`", parse_mode="Markdown")
             return
@@ -125,7 +125,11 @@ class PrivateChatModule(BaseModule):
         await update.message.reply_text(
             f"👤 {u['full_name']}\n"
             f"🔗 @{u['username'] or '无'}\n"
-            f"🆔 `{u['id']}`\n"
+            f"🆔 `{u['id']}`\n".replace("u['id']", str(u['user_id']))
+            if False else
+            f"👤 {u['full_name']}\n"
+            f"🔗 @{u['username'] or '无'}\n"
+            f"🆔 `{u['user_id']}`\n"
             f"📊 状态：{status}\n"
             f"🕐 首次：{u['joined_at']}\n"
             f"🕐 最近：{u['last_seen']}",
@@ -135,7 +139,7 @@ class PrivateChatModule(BaseModule):
     async def cmd_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
             return
-        s = self.db.get_user_count()
+        s = self.db.get_tenant_user_count(self.tenant_id)
         await update.message.reply_text(
             f"📊 *统计*\n\n"
             f"总用户：{s['total']}\n"
@@ -163,13 +167,12 @@ class PrivateChatModule(BaseModule):
     async def _user_to_admin(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg  = update.message
         user = update.effective_user
-        self.db.upsert_user(user.id, user.username or "", user.full_name)
+        self.db.upsert_tenant_user(self.tenant_id, user.id,
+                                   user.username or "", user.full_name)
 
-        if self.db.is_banned(user.id):
+        if self.db.is_banned(self.tenant_id, user.id):
             await msg.reply_text(self.banned)
             return
-
-        self.db.log_message(user.id, "in", msg.text or "[附件]")
 
         try:
             # 先发送一条用户信息抬头，便于管理员识别
@@ -178,7 +181,8 @@ class PrivateChatModule(BaseModule):
                 text=f"📩 *新消息*\n\n{self._user_label(user)}\n\n_回复本消息即可回复该用户_",
                 parse_mode="Markdown",
             )
-            self.db.save_message_map(header.message_id, user.id, msg.message_id)
+            self.db.save_message_map(self.tenant_id, header.message_id,
+                                     user.id, msg.message_id)
 
             # 再原样复制用户消息（支持图片/语音/文件/贴纸等所有类型）
             copied = await ctx.bot.copy_message(
@@ -186,7 +190,8 @@ class PrivateChatModule(BaseModule):
                 from_chat_id=msg.chat_id,
                 message_id=msg.message_id,
             )
-            self.db.save_message_map(copied.message_id, user.id, msg.message_id)
+            self.db.save_message_map(self.tenant_id, copied.message_id,
+                                     user.id, msg.message_id)
         except TelegramError as e:
             print(f"[私聊] 转发给管理员失败: {e}")
             return
@@ -196,7 +201,7 @@ class PrivateChatModule(BaseModule):
 
     async def _admin_reply(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg    = update.message
-        target = await self._resolve_target(update)
+        target = self._resolve_target(update)
 
         if target is None:
             await msg.reply_text(
@@ -204,7 +209,6 @@ class PrivateChatModule(BaseModule):
                 "可用指令：/ban /unban /info /stats")
             return
 
-        self.db.log_message(target, "out", msg.text or "[附件]")
         try:
             await ctx.bot.copy_message(
                 chat_id=target,
