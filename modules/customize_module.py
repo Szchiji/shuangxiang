@@ -62,7 +62,7 @@ def parse_buttons(text: str) -> list[list[dict]]:
 
 
 def _split_button_line(line: str):
-    for sep in (" - ", " | ", "|", " - ", "：", ":"):
+    for sep in (" - ", " | ", "|", "：", ":"):
         if sep in line:
             label, _, url = line.partition(sep)
             return label, sep, url
@@ -260,7 +260,7 @@ class CustomizeModule(BaseModule):
         lines, kb = [], []
         for r in rows:
             tag = " [拦截]" if r["stop"] else ""
-            has_btn = " 🔘" if (r["buttons"] if "buttons" in r.keys() else "") else ""
+            has_btn = " 🔘" if (r["buttons"] or "") else ""
             lines.append(f"#{r['id']} 「{r['keyword']}」{tag}{has_btn}")
             kb.append([InlineKeyboardButton(
                 f"🗑 删除 #{r['id']}", callback_data=f"cz:ar:del:{r['id']}")])

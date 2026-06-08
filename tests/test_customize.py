@@ -175,7 +175,8 @@ async def test_wizard_ar_full_flow(db):
     rows = db.get_auto_replies(1)
     assert len(rows) == 1
     assert rows[0]["keyword"] == "价格"
-    assert "https://e.com" in rows[0]["buttons"]
+    btns = json.loads(rows[0]["buttons"])
+    assert btns[0][0]["url"] == "https://e.com"
 
 
 @pytest.mark.asyncio

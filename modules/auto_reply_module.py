@@ -217,7 +217,7 @@ class AutoReplyModule(BaseModule):
     @staticmethod
     def _reply_markup(row):
         """若该自动回复配置了内联按钮（JSON），构建 InlineKeyboardMarkup。"""
-        raw = row["buttons"] if "buttons" in row.keys() else ""
+        raw = row["buttons"] or ""
         if not raw:
             return None
         try:
