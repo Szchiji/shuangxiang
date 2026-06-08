@@ -54,6 +54,10 @@ class PrivateChatModule(BaseModule):
             "直接「回复」某条消息即可回复对应用户。\n\n"
             "💡 把我加入一个开启「话题」的群并运行 /setgroup 可启用 Topics 管理模式。")
         self.received = msgs.get("received", "")
+        # 用户消息成功转发后给用户的「已发送」轻提示，默认 5 秒后自动删除。
+        self.sent_ack = (msgs.get("sent_ack")
+                         or "✅ 已发送成功，管理员会尽快回复你。")
+        self._ack_delete_delay = 5.0
         self.banned   = msgs.get("banned", "⛔ 你已被封禁，无法发送消息。")
         # 可配置品牌署名页脚（默认关闭，尊重租户；设置后追加到用户欢迎语末尾）
         self.brand    = (msgs.get("brand") or "").strip()
@@ -233,6 +237,10 @@ class PrivateChatModule(BaseModule):
             [InlineKeyboardButton("✏️ 启动语", callback_data="cz:welcome"),
              InlineKeyboardButton("📊 数据统计", callback_data="pc:stats")],
             [InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
+            # 内容功能（菜单 / 表单 / 商店）
+            [InlineKeyboardButton("📋 菜单", callback_data="pc:menu"),
+             InlineKeyboardButton("📝 表单", callback_data="pc:form"),
+             InlineKeyboardButton("🛒 商店", callback_data="pc:store")],
             # 安全开关（点一下即切换）
             [InlineKeyboardButton(
                 f"🛡 防刷屏：{'✅ 开' if antiflood else '⛔ 关'}",
@@ -252,6 +260,7 @@ class PrivateChatModule(BaseModule):
             "⚙️ *控制面板*\n\n"
             "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
             "• 自定义自动回复、启动语、群发等常用功能\n"
+            "• 管理菜单、表单、商店等内容功能\n"
             "• 一键开关安全过滤与 Topics 协作模式")
 
     def _bans_view(self):
@@ -275,6 +284,67 @@ class PrivateChatModule(BaseModule):
                 f"✅ 解封 {label}", callback_data=f"pc:unban:{u['user_id']}")])
         kb.append([InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")])
         return text, InlineKeyboardMarkup(kb)
+
+    # ── 内容功能管理视图（菜单 / 表单 / 商店）────────────────
+
+    def _menu_view(self) -> str:
+        """菜单管理视图：展示当前菜单结构与维护指令。"""
+        lines: list[str] = []
+        self._walk_menu(0, 0, lines)
+        body = "\n".join(lines) if lines else "（暂无菜单项）"
+        return (
+            "📋 *菜单管理*\n\n"
+            f"当前菜单结构：\n{body}\n\n"
+            "维护指令：\n"
+            "• /menu_add <父项编号> | <按钮文字> | <内容(可选)>（父项 0 = 根菜单）\n"
+            "• /menu_list 查看　• /menu_del <编号> 删除\n\n"
+            "用户可点开始页的「📋 浏览菜单」或发送 /menu 浏览。")
+
+    def _walk_menu(self, parent_id: int, depth: int, out: list[str]) -> None:
+        for ch in self.db.get_menu_children(self.tenant_id, parent_id):
+            out.append(f"{'　' * depth}#{ch['id']} {ch['label']}")
+            self._walk_menu(ch["id"], depth + 1, out)
+
+    def _form_view(self) -> str:
+        """表单管理视图：展示当前表单与维护指令。"""
+        forms = self.db.get_forms(self.tenant_id)
+        if forms:
+            lines = []
+            for f in forms:
+                steps = self.db.get_form_steps(f["id"])
+                lines.append(f"#{f['id']} {f['title']}（{len(steps)} 步）")
+            body = "\n".join(lines)
+        else:
+            body = "（暂无表单）"
+        return (
+            "📝 *表单管理*\n\n"
+            f"当前表单：\n{body}\n\n"
+            "维护指令：\n"
+            "• /form_new <标题> 创建表单\n"
+            "• /form_step <表单编号> | <问题> 添加步骤\n"
+            "• /form_list 查看　• /form_del <表单编号> 删除\n\n"
+            "用户可点开始页的「📝 填写表单」或发送 /forms 填写。")
+
+    def _store_view(self) -> str:
+        """商店管理视图：展示当前分类 / 商品与维护指令。"""
+        cats = self.db.get_categories(self.tenant_id)
+        if cats:
+            lines = []
+            for cat in cats:
+                lines.append(f"{cat['emoji']} #{cat['id']} {cat['name']}")
+                for p in self.db.get_products(self.tenant_id, cat["id"]):
+                    lines.append(f"　#{p['id']} {p['name']} ￥{p['price']:g}")
+            body = "\n".join(lines)
+        else:
+            body = "（暂无分类 / 商品）"
+        return (
+            "🛒 *商店管理*\n\n"
+            f"当前商品：\n{body}\n\n"
+            "维护指令：\n"
+            "• /shop_addcat <分类名>　• /shop_delcat <分类编号>\n"
+            "• /shop_addproduct <分类编号> | <名称> | <价格> | <描述(可选)>\n"
+            "• /shop_delproduct <商品编号>　• /shop_list 查看\n\n"
+            "用户可点开始页的「🛒 进入商店」或发送 /shop 选购。")
 
     async def cmd_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -332,6 +402,18 @@ class PrivateChatModule(BaseModule):
                 "*商店*：/shop_addcat　/shop_addproduct　/shop_list\n"
                 "*用户*：回复消息后 /ban /unban /info")
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
+        elif action == "menu":
+            await q.answer()
+            await q.edit_message_text(
+                self._menu_view(), parse_mode="Markdown", reply_markup=back)
+        elif action == "form":
+            await q.answer()
+            await q.edit_message_text(
+                self._form_view(), parse_mode="Markdown", reply_markup=back)
+        elif action == "store":
+            await q.answer()
+            await q.edit_message_text(
+                self._store_view(), parse_mode="Markdown", reply_markup=back)
         elif action == "bans":
             await q.answer()
             text, markup = self._bans_view()
@@ -430,8 +512,7 @@ class PrivateChatModule(BaseModule):
         except TelegramError as e:
             logger.warning("转发失败: %s", e)
             return
-        if self.received:
-            await msg.reply_text(self.received)
+        await self._notify_sent(ctx, msg)
 
     # ── 相册（媒体组）聚合 ───────────────────────────────────
 
@@ -465,8 +546,7 @@ class PrivateChatModule(BaseModule):
         except TelegramError as e:
             logger.warning("相册转发失败: %s", e)
             return
-        if self.received:
-            await messages[-1].reply_text(self.received)
+        await self._notify_sent(ctx, messages[-1])
 
     async def _forward_to_dm(self, ctx, user, msg) -> None:
         header = await ctx.bot.send_message(
@@ -641,3 +721,42 @@ class PrivateChatModule(BaseModule):
             await msg.set_reaction("👍")
         except (TelegramError, AttributeError):
             pass
+
+    async def _notify_sent(self, ctx, msg) -> None:
+        """用户消息成功转发后给出回执。
+
+        • 若租户自定义了 ``received`` 文案：保持原行为（持久提示，不自动删除）。
+        • 否则发送默认「已发送成功」轻提示，并在 ``_ack_delete_delay`` 秒后自动删除，
+          保持用户对话整洁。
+        """
+        if self.received:
+            try:
+                await msg.reply_text(self.received)
+            except TelegramError as e:
+                logger.warning("发送回执失败: %s", e)
+            return
+        if not self.sent_ack:
+            return
+        try:
+            sent = await msg.reply_text(self.sent_ack)
+        except TelegramError as e:
+            logger.warning("发送已送达提示失败: %s", e)
+            return
+        if sent is None or self._ack_delete_delay is None:
+            return
+        chat_id = getattr(sent, "chat_id", None)
+        message_id = getattr(sent, "message_id", None)
+        if chat_id is None or message_id is None:
+            return
+        asyncio.create_task(  # noqa: RUF006 — 即发即忘的延时删除任务
+            self._delete_later(ctx, chat_id, message_id, self._ack_delete_delay))
+
+    @staticmethod
+    async def _delete_later(ctx, chat_id, message_id, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            await ctx.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except (TelegramError, asyncio.CancelledError):
+            pass
+        except Exception as e:  # noqa: BLE001 — 删除失败不应影响主流程
+            logger.debug("删除已送达提示失败: %s", e)

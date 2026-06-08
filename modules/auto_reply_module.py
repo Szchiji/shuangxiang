@@ -101,7 +101,7 @@ class AutoReplyModule(BaseModule):
         if not rows:
             await update.message.reply_text("暂无自动回复。用 /ar_add 添加。")
             return
-        lines = [f"#{r['id']} 「{r['keyword']}」→ {r['reply']}"
+        lines = [f"#{r['id']} 「{r['keyword']}」{self._type_tag(r)}→ {r['reply']}"
                  f"{' [拦截]' if r['stop'] else ''}" for r in rows]
         await update.message.reply_text("📝 自动回复：\n" + "\n".join(lines))
 
@@ -212,12 +212,34 @@ class AutoReplyModule(BaseModule):
 
         # 3) 自动回复
         for r in self.db.get_auto_replies(self.tenant_id):
-            if r["keyword"] in text:
+            if self._matches(r, text):
                 markup = self._reply_markup(r)
                 await msg.reply_text(r["reply"], reply_markup=markup)
                 if r["stop"]:
                     raise ApplicationHandlerStop
                 return
+
+    @staticmethod
+    def _matches(row, text: str) -> bool:
+        """判断一条自动回复是否命中。
+
+        match_type='regex' → 把 keyword 当作正则表达式（不区分大小写）匹配；
+        其它（默认 'contains'）→ 子串包含匹配。无效正则视为不命中。
+        """
+        keyword = row["keyword"]
+        match_type = (row["match_type"] if "match_type" in row.keys() else "") or "contains"
+        if match_type == "regex":
+            try:
+                return re.search(keyword, text, re.IGNORECASE) is not None
+            except re.error:
+                return False
+        return keyword in text
+
+    @staticmethod
+    def _type_tag(row) -> str:
+        """命中方式标签：正则显示「[正则] 」，包含匹配不额外标注。"""
+        match_type = (row["match_type"] if "match_type" in row.keys() else "") or "contains"
+        return "[正则] " if match_type == "regex" else ""
 
     @staticmethod
     def _reply_markup(row):

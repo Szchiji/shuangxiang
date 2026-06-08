@@ -39,6 +39,10 @@ class FakeBot:
         self._mid += 1
         return FakeMsgId(self._mid)
 
+    async def delete_message(self, **k):
+        self.calls.append(("delete_message", k))
+        return True
+
     async def copy_messages(self, **k):
         self.calls.append(("copy_messages", k))
         return [FakeMsgId(self._mid + i) for i, _ in enumerate(k["message_ids"])]
@@ -68,6 +72,8 @@ class FakeMessage:
 
     async def reply_text(self, *a, **k):
         self.replies.append(a[0] if a else "")
+        return types.SimpleNamespace(
+            message_id=self.message_id + 10000, chat_id=self.chat_id)
 
     async def set_reaction(self, *a, **k):
         pass

@@ -189,3 +189,43 @@ def test_stats_text_empty_and_nonempty(db):
     assert "还没有用户" in mod._stats_text()
     db.upsert_tenant_user(1, 42, "a", "Alice")
     assert "总用户：1" in mod._stats_text()
+
+
+# ── 内容功能进入控制面板（菜单 / 表单 / 商店）────────────────
+
+def test_panel_surfaces_content_features(db):
+    mod = make_module(db)
+    cbs = _callbacks(mod._panel_markup())
+    assert "pc:menu" in cbs    # 📋 菜单
+    assert "pc:form" in cbs    # 📝 表单
+    assert "pc:store" in cbs   # 🛒 商店
+
+
+@pytest.mark.asyncio
+async def test_panel_content_views_render(db):
+    mod = make_module(db)
+    db.add_menu_item(1, 0, "关于我们", "简介")
+    db.add_form(1, "报名")
+    cid = db.add_category(1, "会员")
+    db.add_product(1, cid, "月卡", "", 9.9)
+    cases = [
+        ("pc:menu", "菜单管理", "关于我们"),
+        ("pc:form", "表单管理", "报名"),
+        ("pc:store", "商店管理", "月卡"),
+    ]
+    for action, title, item in cases:
+        q = FakeQuery(99, action)
+        await mod.on_panel(make_cbk_update(q), None)
+        text = q.edits[0][0]
+        assert title in text and item in text
+        # 提供返回面板按钮
+        assert "pc:home" in _callbacks(q.edits[0][1]["reply_markup"])
+
+
+@pytest.mark.asyncio
+async def test_panel_content_views_admin_only(db):
+    mod = make_module(db)
+    q = FakeQuery(1234, "pc:menu")
+    await mod.on_panel(make_cbk_update(q), None)
+    assert not q.edits
+    assert q.answers and q.answers[0][1].get("show_alert") is True
