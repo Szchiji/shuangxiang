@@ -107,7 +107,9 @@ class Database:
                     reply      TEXT NOT NULL,
                     match_type TEXT DEFAULT 'contains',
                     stop       INTEGER DEFAULT 0,
-                    buttons    TEXT DEFAULT ''
+                    buttons    TEXT DEFAULT '',
+                    media_type TEXT DEFAULT '',
+                    media_id   TEXT DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS filters (
                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,6 +150,8 @@ class Database:
             ],
             "auto_replies": [
                 ("buttons", "TEXT DEFAULT ''"),
+                ("media_type", "TEXT DEFAULT ''"),
+                ("media_id", "TEXT DEFAULT ''"),
             ],
         }
         with self._conn() as c:
@@ -434,12 +438,25 @@ class Database:
     # ── 自动回复 / 过滤 ─────────────────────────────────────
 
     def add_auto_reply(self, tenant_id, keyword, reply, match_type="contains", stop=0,
-                       buttons=""):
+                       buttons="", media_type="", media_id=""):
         with self._conn() as c:
             return c.execute(
-                """INSERT INTO auto_replies(tenant_id,keyword,reply,match_type,stop,buttons)
-                   VALUES(?,?,?,?,?,?)""",
-                (tenant_id, keyword, reply, match_type, stop, buttons)).lastrowid
+                """INSERT INTO auto_replies
+                       (tenant_id,keyword,reply,match_type,stop,buttons,media_type,media_id)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (tenant_id, keyword, reply, match_type, stop, buttons,
+                 media_type, media_id)).lastrowid
+
+    def update_auto_reply(self, tenant_id, rid, keyword, reply, match_type="contains",
+                          stop=0, buttons="", media_type="", media_id=""):
+        with self._conn() as c:
+            c.execute(
+                """UPDATE auto_replies
+                       SET keyword=?, reply=?, match_type=?, stop=?, buttons=?,
+                           media_type=?, media_id=?
+                   WHERE tenant_id=? AND id=?""",
+                (keyword, reply, match_type, stop, buttons, media_type, media_id,
+                 tenant_id, rid))
 
     def get_auto_replies(self, tenant_id):
         with self._conn() as c:

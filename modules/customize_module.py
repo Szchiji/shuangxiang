@@ -35,10 +35,38 @@ logger = logging.getLogger("shuangxiang.customize")
 # 设置键（存于 tenant_kv）
 SK_WELCOME_TEXT = "welcome_text"      # 自定义启动语文本
 SK_WELCOME_BTNS = "welcome_buttons"   # 启动语内联按钮（JSON）
+SK_WELCOME_MEDIA_TYPE = "welcome_media_type"  # 启动语封面媒体类型（photo/video/...）
+SK_WELCOME_MEDIA_ID   = "welcome_media_id"    # 启动语封面媒体 file_id
 SK_FORCE_SUB    = "force_sub"          # 强制订阅频道列表（JSON）
 SK_FORCE_SUB_ON = "force_sub_on"       # 强制订阅总开关
 
 _JOINED_STATUSES = ("member", "administrator", "creator", "owner")
+
+# 支持作为启动语 / 自动回复封面的媒体类型（按优先级匹配）。
+_MEDIA_TYPES = ("photo", "video", "animation", "document", "audio", "voice")
+
+
+def extract_media(message):
+    """从一条消息中提取媒体类型与 file_id，无媒体时返回 ("", "")。"""
+    for mtype in _MEDIA_TYPES:
+        val = getattr(message, mtype, None)
+        if val:
+            # 图片以多尺寸列表形式提供，取最大尺寸。
+            file_id = val[-1].file_id if mtype == "photo" else val.file_id
+            return mtype, file_id
+    return "", ""
+
+
+async def reply_with_optional_media(message, text, media_type, media_id,
+                                    reply_markup=None, parse_mode=None):
+    """以可选媒体回复一条消息：有媒体则发媒体并把文本作为标题，否则发纯文本。"""
+    if media_id and media_type:
+        method = getattr(message, f"reply_{media_type}", None)
+        if method is not None:
+            await method(media_id, caption=text or None,
+                         reply_markup=reply_markup, parse_mode=parse_mode)
+            return
+    await message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
 
 
 # ── 按钮序列化 / 解析（供其它模块复用）──────────────────────
@@ -182,6 +210,7 @@ class CustomizeModule(BaseModule):
             "wbtns":       self._show_welcome,
             "wbtns:edit":  self._start_wbtns,
             "wbtns:clear": self._clear_wbtns,
+            "wmedia:clear": self._clear_wmedia,
             "ar":          self._show_ar,
             "ar:add":      self._start_ar,
             "fsub":        self._show_fsub,
@@ -199,6 +228,8 @@ class CustomizeModule(BaseModule):
             await self._pick_ar_match(q, ctx, action.rsplit(":", 1)[1])
         elif action.startswith("ar:del:"):
             await self._del_ar(q, ctx, int(action.rsplit(":", 1)[1]))
+        elif action.startswith("ar:edit:"):
+            await self._start_ar_edit(q, ctx, int(action.rsplit(":", 1)[1]))
         elif action.startswith("fsub:del:"):
             await self._del_fsub(q, ctx, int(action.rsplit(":", 1)[1]))
         else:
@@ -231,18 +262,26 @@ class CustomizeModule(BaseModule):
         cur = self.db.get_setting(self.tenant_id, SK_WELCOME_TEXT, "") or "（未设置，使用默认）"
         rows = load_button_rows(self.db, self.tenant_id, SK_WELCOME_BTNS)
         btns = "、".join(b.text for row in rows for b in row) or "（无）"
+        mtype, _ = self._welcome_media()
+        media_label = {
+            "photo": "图片", "video": "视频", "animation": "动图",
+            "document": "文件", "audio": "音频", "voice": "语音",
+        }.get(mtype, "（无）")
+        kb = [
+            [InlineKeyboardButton("✏️ 编辑启动语", callback_data="cz:welcome:text")],
+            [InlineKeyboardButton("🔘 编辑按钮", callback_data="cz:wbtns:edit"),
+             InlineKeyboardButton("🗑 清空按钮", callback_data="cz:wbtns:clear")],
+        ]
+        if mtype:
+            kb.append([InlineKeyboardButton("🗑 清空媒体", callback_data="cz:wmedia:clear")])
+        kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")])
+        kb.append([InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")])
         await q.edit_message_text(
-            "✏️ *启动语*\n\n启动语文本与启动按钮在此统一设置，"
+            "✏️ *启动语*\n\n启动语文本、封面媒体与启动按钮在此统一设置，"
             "它们会一起显示在用户的 /start 启动信息中。\n\n"
-            f"当前启动语：\n{cur}\n\n当前按钮：{btns}",
+            f"当前启动语：\n{cur}\n\n当前封面：{media_label}\n当前按钮：{btns}",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✏️ 编辑启动语", callback_data="cz:welcome:text")],
-                [InlineKeyboardButton("🔘 编辑按钮", callback_data="cz:wbtns:edit"),
-                 InlineKeyboardButton("🗑 清空按钮", callback_data="cz:wbtns:clear")],
-                [InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")],
-                [InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")],
-            ]))
+            reply_markup=InlineKeyboardMarkup(kb))
 
     async def _start_welcome(self, q, ctx) -> None:
         ctx.user_data["cz"] = {"flow": "welcome"}
@@ -250,8 +289,22 @@ class CustomizeModule(BaseModule):
         await q.answer()
         await q.edit_message_text(
             "✏️ *自定义启动语*\n\n请发送新的欢迎语文本。\n\n"
+            "💡 也可直接发送一张*图片 / 视频*作为封面（图说即为欢迎语）。\n\n"
             f"当前：\n{cur}\n\n发送 /cancel 取消。",
             parse_mode="Markdown")
+
+    def _welcome_media(self):
+        """读取启动语封面媒体，返回 (media_type, media_id)（未设置则为空串）。"""
+        return (
+            self.db.get_setting(self.tenant_id, SK_WELCOME_MEDIA_TYPE, "") or "",
+            self.db.get_setting(self.tenant_id, SK_WELCOME_MEDIA_ID, "") or "",
+        )
+
+    async def _clear_wmedia(self, q, ctx) -> None:
+        self.db.set_setting(self.tenant_id, SK_WELCOME_MEDIA_TYPE, "")
+        self.db.set_setting(self.tenant_id, SK_WELCOME_MEDIA_ID, "")
+        await q.answer("已清空封面媒体")
+        await self._show_welcome(q, ctx)
 
     async def _start_wbtns(self, q, ctx) -> None:
         ctx.user_data["cz"] = {"flow": "wbtns"}
@@ -278,9 +331,13 @@ class CustomizeModule(BaseModule):
             mt = (r["match_type"] if "match_type" in r.keys() else "") or "contains"
             mt_tag = " [正则]" if mt == "regex" else ""
             has_btn = " 🔘" if (r["buttons"] or "") else ""
-            lines.append(f"#{r['id']} 「{r['keyword']}」{mt_tag}{tag}{has_btn}")
-            kb.append([InlineKeyboardButton(
-                f"🗑 删除 #{r['id']}", callback_data=f"cz:ar:del:{r['id']}")])
+            has_media = " 🖼" if self._ar_media(r)[1] else ""
+            lines.append(f"#{r['id']} 「{r['keyword']}」{mt_tag}{tag}{has_btn}{has_media}")
+            kb.append([
+                InlineKeyboardButton(
+                    f"✏️ 编辑 #{r['id']}", callback_data=f"cz:ar:edit:{r['id']}"),
+                InlineKeyboardButton(
+                    f"🗑 删除 #{r['id']}", callback_data=f"cz:ar:del:{r['id']}")])
         kb.append([InlineKeyboardButton("➕ 新增自动回复", callback_data="cz:ar:add")])
         kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home"),
                    InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")])
@@ -288,11 +345,35 @@ class CustomizeModule(BaseModule):
             "💬 *自动回复*\n\n" + ("\n".join(lines) if lines else "（暂无）"),
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
+    @staticmethod
+    def _ar_media(row):
+        """读取一条自动回复的媒体 (media_type, media_id)（兼容旧库无该列）。"""
+        keys = row.keys()
+        mtype = (row["media_type"] if "media_type" in keys else "") or ""
+        mid = (row["media_id"] if "media_id" in keys else "") or ""
+        return mtype, mid
+
     async def _start_ar(self, q, ctx) -> None:
         ctx.user_data["cz"] = {"flow": "ar", "step": "keyword", "buf": {}}
         await q.answer()
         await q.edit_message_text(
             "➕ *新增自动回复*（第 1/4 步）\n\n请发送要匹配的*关键词*。\n\n发送 /cancel 取消。",
+            parse_mode="Markdown")
+
+    async def _start_ar_edit(self, q, ctx, rid: int) -> None:
+        """编辑已有自动回复：复用新增向导，从关键词开始逐步覆盖，最终更新该记录。"""
+        row = next((r for r in self.db.get_auto_replies(self.tenant_id)
+                    if r["id"] == rid), None)
+        if row is None:
+            await q.answer("该自动回复已不存在。", show_alert=True)
+            await self._show_ar(q, ctx)
+            return
+        ctx.user_data["cz"] = {
+            "flow": "ar", "step": "keyword", "buf": {"edit_id": rid}}
+        await q.answer()
+        await q.edit_message_text(
+            f"✏️ *编辑自动回复 #{rid}*（第 1/4 步）\n\n"
+            f"当前关键词：「{row['keyword']}」\n\n请发送*新的关键词*。\n\n发送 /cancel 取消。",
             parse_mode="Markdown")
 
     async def _pick_ar_match(self, q, ctx, match_type: str) -> None:
@@ -315,7 +396,8 @@ class CustomizeModule(BaseModule):
         await q.answer()
         label = "正则匹配" if match_type == "regex" else "包含匹配"
         await q.edit_message_text(
-            f"匹配方式：*{label}*\n\n（第 3/4 步）请发送命中后要*自动回复的文本*。",
+            f"匹配方式：*{label}*\n\n（第 3/4 步）请发送命中后要*自动回复的内容*。\n"
+            "可发送文本，或直接发送*图片 / 视频*等媒体（图说作为回复文字）。",
             parse_mode="Markdown")
 
     async def _del_ar(self, q, ctx, rid: int) -> None:
@@ -457,13 +539,20 @@ class CustomizeModule(BaseModule):
         raise ApplicationHandlerStop
 
     async def _wizard_welcome(self, msg, ctx) -> None:
-        text = (msg.text or "").strip()
+        text = (msg.text or msg.caption or "").strip()
+        media_type, media_id = extract_media(msg)
         ctx.user_data.pop("cz", None)
-        if not text:
+        if not text and not media_id:
             await msg.reply_text("⚠️ 启动语不能为空，已取消。")
             return
-        self.db.set_setting(self.tenant_id, SK_WELCOME_TEXT, text)
-        await msg.reply_text("✅ 启动语已更新。", reply_markup=self._welcome_back_markup())
+        if text:
+            self.db.set_setting(self.tenant_id, SK_WELCOME_TEXT, text)
+        if media_id:
+            self.db.set_setting(self.tenant_id, SK_WELCOME_MEDIA_TYPE, media_type)
+            self.db.set_setting(self.tenant_id, SK_WELCOME_MEDIA_ID, media_id)
+        extra = "（含封面媒体）" if media_id else ""
+        await msg.reply_text(
+            f"✅ 启动语已更新。{extra}", reply_markup=self._welcome_back_markup())
 
     async def _wizard_wbtns(self, msg, ctx) -> None:
         rows = parse_buttons(msg.text or "")
@@ -491,7 +580,7 @@ class CustomizeModule(BaseModule):
             await msg.reply_text(
                 "（第 2/4 步）请选择*匹配方式*：\n\n"
                 "• 包含匹配：消息中*包含*该关键词即命中（推荐）。\n"
-                "• 正则匹配：把关键词当作*正则表达式*匹配（高级）。",
+                "• 正则匹配：把关键词当作*正则表达式*，*整条消息*需完全匹配（高级）。",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔡 包含匹配（推荐）",
@@ -502,10 +591,14 @@ class CustomizeModule(BaseModule):
         elif step == "match":
             await msg.reply_text("请点击上方按钮选择匹配方式（或发送 /cancel 取消）。")
         elif step == "reply":
-            if not text:
-                await msg.reply_text("⚠️ 回复内容不能为空，请重新发送。")
+            media_type, media_id = extract_media(msg)
+            reply_text = (msg.text or msg.caption or "").strip()
+            if not reply_text and not media_id:
+                await msg.reply_text("⚠️ 回复内容不能为空，请发送文本或图片/视频等媒体。")
                 return
-            buf["reply"] = text
+            buf["reply"] = reply_text
+            buf["media_type"] = media_type
+            buf["media_id"] = media_id
             state["step"] = "buttons"
             await msg.reply_text(
                 "（第 4/4 步）请发送随回复附带的*内联按钮*，每行一个：\n"
@@ -517,14 +610,28 @@ class CustomizeModule(BaseModule):
                 rows = parse_buttons(msg.text or "")
                 if rows:
                     buttons_json = json.dumps(rows, ensure_ascii=False)
-            rid = self.db.add_auto_reply(
+            edit_id = buf.get("edit_id")
+            args = (
                 self.tenant_id, buf["keyword"], buf["reply"],
-                buf.get("match_type", "contains"), 0, buttons_json)
+                buf.get("match_type", "contains"), 0, buttons_json,
+                buf.get("media_type", ""), buf.get("media_id", ""))
+            if edit_id:
+                self.db.update_auto_reply(
+                    self.tenant_id, edit_id, buf["keyword"], buf["reply"],
+                    buf.get("match_type", "contains"), 0, buttons_json,
+                    buf.get("media_type", ""), buf.get("media_id", ""))
+                rid = edit_id
+                verb = "已更新"
+            else:
+                rid = self.db.add_auto_reply(*args)
+                verb = "已添加"
             ctx.user_data.pop("cz", None)
             mt_note = "（正则）" if buf.get("match_type") == "regex" else ""
+            extras = "".join([
+                "（含按钮）" if buttons_json else "",
+                "（含媒体）" if buf.get("media_id") else ""])
             await msg.reply_text(
-                f"✅ 已添加自动回复 #{rid}：「{buf['keyword']}」{mt_note}"
-                f"{'（含按钮）' if buttons_json else ''}",
+                f"✅ {verb}自动回复 #{rid}：「{buf['keyword']}」{mt_note}{extras}",
                 reply_markup=self._back_markup())
 
     async def _wizard_fsub(self, msg, ctx) -> None:

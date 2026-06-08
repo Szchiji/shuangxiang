@@ -37,14 +37,22 @@ class FakeBot:
 
 
 class FakeMessage:
-    def __init__(self, text=None, chat_id=7, message_id=1):
+    def __init__(self, text=None, caption=None, chat_id=7, message_id=1):
         self.text = text
+        self.caption = caption
         self.chat_id = chat_id
         self.message_id = message_id
         self.replies = []
+        self.media_replies = []
 
     async def reply_text(self, text, **k):
         self.replies.append((text, k))
+
+    async def reply_photo(self, file_id, **k):
+        self.media_replies.append(("photo", file_id, k))
+
+    async def reply_video(self, file_id, **k):
+        self.media_replies.append(("video", file_id, k))
 
 
 def make_cz(db, admin_id=99):
@@ -127,6 +135,21 @@ async def test_cmd_start_falls_back_to_default_welcome(db):
     await pc.cmd_start(make_update(7, msg), None)
     text, _ = msg.replies[0]
     assert "默认欢迎" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_start_sends_welcome_media(db):
+    from modules.customize_module import SK_WELCOME_MEDIA_ID, SK_WELCOME_MEDIA_TYPE
+    pc = _make_pc(db)
+    db.set_setting(1, SK_WELCOME_TEXT, "带图欢迎")
+    db.set_setting(1, SK_WELCOME_MEDIA_TYPE, "photo")
+    db.set_setting(1, SK_WELCOME_MEDIA_ID, "WPIC")
+    msg = FakeMessage()
+    await pc.cmd_start(make_update(7, msg), None)
+    assert not msg.replies  # 不走纯文本路径
+    assert msg.media_replies and msg.media_replies[0][0] == "photo"
+    assert msg.media_replies[0][1] == "WPIC"
+    assert "带图欢迎" in msg.media_replies[0][2]["caption"]
 
 
 # ── 自动回复按钮渲染 ─────────────────────────────────────────
@@ -269,6 +292,78 @@ async def test_wizard_ar_skip_buttons(db):
     ctx.user_data["cz"] = state
     await cz._wizard_ar(FakeMessage(text="跳过"), ctx, state)
     assert db.get_auto_replies(1)[0]["buttons"] == ""
+
+
+# ── 引导式向导：自动回复编辑 / 多媒体 ────────────────────────
+
+@pytest.mark.asyncio
+async def test_wizard_ar_edit_updates_existing(db):
+    cz = make_cz(db)
+    ctx = make_ctx()
+    rid = db.add_auto_reply(1, "旧词", "旧回复", "contains", 0)
+    # 进入编辑：复用向导，预置 edit_id
+    q = _CbQuery(99, f"cz:ar:edit:{rid}")
+    await cz._start_ar_edit(q, ctx, rid)
+    state = ctx.user_data["cz"]
+    assert state["buf"]["edit_id"] == rid
+    await cz._wizard_ar(FakeMessage(text="新词"), ctx, state)
+    await cz._pick_ar_match(_CbQuery(99, "cz:ar:mt:contains"), ctx, "contains")
+    await cz._wizard_ar(FakeMessage(text="新回复"), ctx, state)
+    await cz._wizard_ar(FakeMessage(text="跳过"), ctx, state)
+    rows = db.get_auto_replies(1)
+    # 仍是同一条记录（未新增），内容已更新
+    assert len(rows) == 1
+    assert rows[0]["id"] == rid
+    assert rows[0]["keyword"] == "新词"
+    assert rows[0]["reply"] == "新回复"
+
+
+@pytest.mark.asyncio
+async def test_wizard_ar_reply_accepts_media(db):
+    import types as _t
+    cz = make_cz(db)
+    ctx = make_ctx()
+    state = {"flow": "ar", "step": "reply", "buf": {"keyword": "k"}}
+    ctx.user_data["cz"] = state
+    msg = FakeMessage(caption="看图")
+    msg.photo = [_t.SimpleNamespace(file_id="PHOTO123")]
+    await cz._wizard_ar(msg, ctx, state)
+    await cz._wizard_ar(FakeMessage(text="跳过"), ctx, state)
+    row = db.get_auto_replies(1)[0]
+    assert row["reply"] == "看图"
+    assert row["media_type"] == "photo"
+    assert row["media_id"] == "PHOTO123"
+
+
+@pytest.mark.asyncio
+async def test_wizard_welcome_saves_media(db):
+    import types as _t
+
+    from modules.customize_module import (
+        SK_WELCOME_MEDIA_ID,
+        SK_WELCOME_MEDIA_TYPE,
+    )
+    cz = make_cz(db)
+    ctx = make_ctx()
+    ctx.user_data["cz"] = {"flow": "welcome"}
+    msg = FakeMessage(caption="封面欢迎")
+    msg.video = _t.SimpleNamespace(file_id="VID9")
+    await cz._wizard_welcome(msg, ctx)
+    assert db.get_setting(1, SK_WELCOME_TEXT) == "封面欢迎"
+    assert db.get_setting(1, SK_WELCOME_MEDIA_TYPE) == "video"
+    assert db.get_setting(1, SK_WELCOME_MEDIA_ID) == "VID9"
+
+
+def test_show_ar_lists_edit_buttons(db):
+    cz = make_cz(db)
+    rid = db.add_auto_reply(1, "价格", "见官网")
+
+    import asyncio
+    q = _CbQuery(99, "cz:ar")
+    asyncio.run(cz._show_ar(q, types.SimpleNamespace(user_data={})))
+    cbs = _cz_callbacks(q.edits[0][1]["reply_markup"])
+    assert f"cz:ar:edit:{rid}" in cbs
+    assert f"cz:ar:del:{rid}" in cbs
 
 
 # ── 引导式向导：强制订阅 ─────────────────────────────────────

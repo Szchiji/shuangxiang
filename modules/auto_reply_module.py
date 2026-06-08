@@ -31,7 +31,7 @@ from telegram.ext import (
 
 from core.base_module import BaseModule
 from core.database import Database
-from modules.customize_module import rows_to_keyboard
+from modules.customize_module import reply_with_optional_media, rows_to_keyboard
 
 logger = logging.getLogger("shuangxiang.auto_reply")
 
@@ -219,7 +219,9 @@ class AutoReplyModule(BaseModule):
         for r in self.db.get_auto_replies(self.tenant_id):
             if self._matches(r, text):
                 markup = self._reply_markup(r)
-                await msg.reply_text(r["reply"], reply_markup=markup)
+                media_type, media_id = self._media_of(r)
+                await reply_with_optional_media(
+                    msg, r["reply"], media_type, media_id, reply_markup=markup)
                 # 自动回复命中即视为已处理：不再把关键词消息转发给租户机器人（管理员），
                 # 也不向其发送任何提示。
                 raise ApplicationHandlerStop
@@ -228,14 +230,15 @@ class AutoReplyModule(BaseModule):
     def _matches(row, text: str) -> bool:
         """判断一条自动回复是否命中。
 
-        match_type='regex' → 把 keyword 当作正则表达式（不区分大小写）匹配；
+        match_type='regex' → 把 keyword 当作正则表达式（不区分大小写），
+        要求*整条消息*完全匹配该正则（re.fullmatch）；
         其它（默认 'contains'）→ 子串包含匹配。无效正则视为不命中。
         """
         keyword = row["keyword"]
         match_type = match_type_of(row)
         if match_type == "regex":
             try:
-                return re.search(keyword, text, re.IGNORECASE) is not None
+                return re.fullmatch(keyword, text, re.IGNORECASE) is not None
             except re.error:
                 return False
         return keyword in text
@@ -244,6 +247,14 @@ class AutoReplyModule(BaseModule):
     def _type_tag(row) -> str:
         """命中方式标签：正则显示「[正则] 」，包含匹配不额外标注。"""
         return "[正则] " if match_type_of(row) == "regex" else ""
+
+    @staticmethod
+    def _media_of(row):
+        """读取一条自动回复的媒体 (media_type, media_id)（兼容旧库无该列）。"""
+        keys = row.keys()
+        mtype = (row["media_type"] if "media_type" in keys else "") or ""
+        mid = (row["media_id"] if "media_id" in keys else "") or ""
+        return mtype, mid
 
     @staticmethod
     def _reply_markup(row):

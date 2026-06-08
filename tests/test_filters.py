@@ -116,10 +116,21 @@ async def test_auto_reply_regex_match(db):
     mod = make_module(db)
     db.add_auto_reply(1, r"价格|报价", "见官网", "regex", 0)
     ctx = make_ctx(FakeBot())
-    msg = FakeMessage(1, text="请问报价多少")
+    msg = FakeMessage(1, text="报价")  # 整条消息完全匹配该正则
     with pytest.raises(ApplicationHandlerStop):
         await mod.on_message(make_update(7, msg), ctx)
     assert msg.replies and msg.replies[0] == "见官网"
+
+
+@pytest.mark.asyncio
+async def test_auto_reply_regex_requires_full_match(db):
+    """正则模式下，仅*包含*关键词的消息不应命中（整条消息需完全匹配）。"""
+    mod = make_module(db)
+    db.add_auto_reply(1, r"价格|报价", "见官网", "regex", 0)
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="请问报价多少")  # 仅包含，非完全匹配
+    await mod.on_message(make_update(7, msg), ctx)
+    assert not msg.replies
 
 
 @pytest.mark.asyncio
@@ -140,3 +151,18 @@ async def test_auto_reply_invalid_regex_does_not_crash(db):
     msg = FakeMessage(1, text="任意内容")
     await mod.on_message(make_update(7, msg), ctx)
     assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_auto_reply_sends_media_when_configured(db):
+    mod = make_module(db)
+    db.add_auto_reply(1, "图", "看图", "contains", 0, "", "photo", "PIC1")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="发个图")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    # 命中后以媒体形式回复（图说为回复文本），不走纯文本路径
+    assert not msg.replies
+    assert msg.media_replies and msg.media_replies[0][0] == "photo"
+    assert msg.media_replies[0][1] == "PIC1"
+    assert msg.media_replies[0][2]["caption"] == "看图"

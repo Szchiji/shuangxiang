@@ -25,7 +25,14 @@ from telegram.ext import (
 from core.base_module import BaseModule
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
-from modules.customize_module import SK_WELCOME_BTNS, SK_WELCOME_TEXT, load_button_rows
+from modules.customize_module import (
+    SK_WELCOME_BTNS,
+    SK_WELCOME_MEDIA_ID,
+    SK_WELCOME_MEDIA_TYPE,
+    SK_WELCOME_TEXT,
+    load_button_rows,
+    reply_with_optional_media,
+)
 from modules.platform_module import platform_footer_username
 
 logger = logging.getLogger("shuangxiang.private_chat")
@@ -136,8 +143,13 @@ class PrivateChatModule(BaseModule):
                 self.tenant_id, SK_WELCOME_TEXT, "") or self.welcome
             text = welcome + (f"\n\n{self.brand}" if self.brand else "")
             text += self._platform_footer()
-            await update.message.reply_text(
-                text, reply_markup=self._user_home_markup())
+            media_type = self.db.get_setting(
+                self.tenant_id, SK_WELCOME_MEDIA_TYPE, "") or ""
+            media_id = self.db.get_setting(
+                self.tenant_id, SK_WELCOME_MEDIA_ID, "") or ""
+            await reply_with_optional_media(
+                update.message, text, media_type, media_id,
+                reply_markup=self._user_home_markup())
 
     async def cmd_setgroup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
