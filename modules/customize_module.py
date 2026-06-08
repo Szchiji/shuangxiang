@@ -800,6 +800,8 @@ class CustomizeModule(BaseModule):
 
     async def _warn_owner_unverifiable(self, ctx, ch, err) -> None:
         """频道无法校验时，去抖后私信提醒拥有者把机器人设为该频道管理员。"""
+        # ``_fsub_alerts`` 在 setup() 中初始化；此处容错处理未经 setup 的实例
+        # （如单元测试通过 __new__ 构造），无去抖状态时直接跳过提醒。
         alerts = getattr(self, "_fsub_alerts", None)
         if alerts is None:
             return
