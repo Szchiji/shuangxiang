@@ -1,0 +1,133 @@
+"""控制面板与用户导航按钮（UI 升级）测试。"""
+
+import types
+
+import pytest
+
+from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
+from modules.private_chat_module import PrivateChatModule
+
+
+def make_module(db, manage_group=None, admin_id=99):
+    mod = PrivateChatModule.__new__(PrivateChatModule)
+    mod.db = db
+    mod.tenant_id = 1
+    mod.admin_id = admin_id
+    mod._manage_group = lambda: manage_group
+    return mod
+
+
+def _button_texts(markup):
+    return [b.text for row in markup.inline_keyboard for b in row]
+
+
+def _callbacks(markup):
+    return [b.callback_data for row in markup.inline_keyboard for b in row]
+
+
+class FakeQuery:
+    def __init__(self, user_id, data):
+        self.from_user = types.SimpleNamespace(id=user_id)
+        self.data = data
+        self.answers = []
+        self.edits = []
+
+    async def answer(self, *a, **k):
+        self.answers.append((a, k))
+
+    async def edit_message_text(self, text, **k):
+        self.edits.append((text, k))
+
+
+def make_cbk_update(query):
+    return types.SimpleNamespace(callback_query=query)
+
+
+# ── 控制面板按钮反映开关状态 ─────────────────────────────────
+
+def test_panel_markup_default_states(db):
+    mod = make_module(db)
+    texts = _button_texts(mod._panel_markup())
+    assert any("防刷屏：✅ 开" in t for t in texts)      # 默认开启
+    assert any("拦截英文：⛔ 关" in t for t in texts)     # 默认关闭
+    assert any("Topics 模式：未启用" in t for t in texts)
+
+
+def test_panel_markup_reflects_topics_enabled(db):
+    mod = make_module(db, manage_group=-100)
+    texts = _button_texts(mod._panel_markup())
+    assert any("Topics 模式：✅ 已启用" in t for t in texts)
+
+
+# ── 按钮切换防刷屏 / 英文拦截 ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_toggle_antiflood_via_button(db):
+    mod = make_module(db)
+    assert db.get_bool_setting(1, SK_ANTIFLOOD, True) is True
+    q = FakeQuery(99, "pc:toggle:antiflood")
+    await mod.on_panel(make_cbk_update(q), None)
+    assert db.get_bool_setting(1, SK_ANTIFLOOD, True) is False
+    # 再点一次切回开启
+    q2 = FakeQuery(99, "pc:toggle:antiflood")
+    await mod.on_panel(make_cbk_update(q2), None)
+    assert db.get_bool_setting(1, SK_ANTIFLOOD, True) is True
+
+
+@pytest.mark.asyncio
+async def test_toggle_alphabet_via_button(db):
+    mod = make_module(db)
+    q = FakeQuery(99, "pc:toggle:alphabet")
+    await mod.on_panel(make_cbk_update(q), None)
+    assert db.get_bool_setting(1, SK_ALPHABET_LATIN, False) is True
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_use_panel(db):
+    mod = make_module(db)
+    q = FakeQuery(1234, "pc:toggle:antiflood")
+    await mod.on_panel(make_cbk_update(q), None)
+    # 设置未被改动，且收到拒绝提示
+    assert db.get_bool_setting(1, SK_ANTIFLOOD, True) is True
+    assert q.answers and q.answers[0][1].get("show_alert") is True
+
+
+# ── 用户导航按钮：仅在有内容时出现 ──────────────────────────
+
+def test_user_home_markup_empty_when_no_content(db):
+    mod = make_module(db)
+    assert mod._user_home_markup() is None
+
+
+def test_user_home_markup_shows_available_features(db):
+    mod = make_module(db)
+    db.add_menu_item(1, 0, "关于我们", "简介")
+    db.add_form(1, "报名")
+    db.add_category(1, "会员")
+    cbs = _callbacks(mod._user_home_markup())
+    assert "menu:0" in cbs
+    assert "pc:forms" in cbs
+    assert "shop:cats" in cbs
+
+
+# ── 用户「填写表单」按钮：非拥有者也可用 ────────────────────
+
+@pytest.mark.asyncio
+async def test_forms_callback_public_for_users(db):
+    mod = make_module(db)
+    db.add_form(1, "报名")
+    q = FakeQuery(1234, "pc:forms")  # 普通用户
+    await mod.on_panel(make_cbk_update(q), None)
+    assert q.edits  # 正常渲染表单列表，未被拒绝
+    text, kwargs = q.edits[0]
+    cbs = _callbacks(kwargs["reply_markup"])
+    assert any(c.startswith("form:") for c in cbs)
+
+
+# ── 统计文案 ─────────────────────────────────────────────────
+
+def test_stats_text_empty_and_nonempty(db):
+    mod = make_module(db)
+    assert "还没有用户" in mod._stats_text()
+    db.upsert_tenant_user(1, 42, "a", "Alice")
+    assert "总用户：1" in mod._stats_text()
