@@ -121,13 +121,13 @@ class CustomizeModule(BaseModule):
     def _settings_markup(self) -> InlineKeyboardMarkup:
         fsub_on = self.db.get_bool_setting(self.tenant_id, SK_FORCE_SUB_ON, False)
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("✏️ 自定义启动语", callback_data="cz:welcome")],
-            [InlineKeyboardButton("🔘 启动按钮", callback_data="cz:wbtns")],
+            [InlineKeyboardButton("✏️ 启动语", callback_data="cz:welcome")],
             [InlineKeyboardButton("💬 自动回复（带按钮）", callback_data="cz:ar")],
             [InlineKeyboardButton(
                 f"📢 强制订阅：{'✅ 开' if fsub_on else '⛔ 关'}",
                 callback_data="cz:fsub")],
             [InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
+            [InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")],
         ])
 
     @staticmethod
@@ -176,8 +176,9 @@ class CustomizeModule(BaseModule):
 
         handler = {
             "home":        self._show_home,
-            "welcome":     self._start_welcome,
-            "wbtns":       self._show_wbtns,
+            "welcome":     self._show_welcome,
+            "welcome:text": self._start_welcome,
+            "wbtns":       self._show_welcome,
             "wbtns:edit":  self._start_wbtns,
             "wbtns:clear": self._clear_wbtns,
             "ar":          self._show_ar,
@@ -201,8 +202,16 @@ class CustomizeModule(BaseModule):
             await q.answer()
 
     def _back_markup(self):
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")]])
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")],
+            [InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")],
+        ])
+
+    def _welcome_back_markup(self):
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ 启动语设置", callback_data="cz:welcome")],
+            [InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")],
+        ])
 
     async def _show_home(self, q, ctx) -> None:
         ctx.user_data.pop("cz", None)
@@ -211,7 +220,26 @@ class CustomizeModule(BaseModule):
             self._settings_text(), parse_mode="Markdown",
             reply_markup=self._settings_markup())
 
-    # ── 启动语文本 ──────────────────────────────────────────
+    # ── 启动语（文本 + 按钮，统一管理）──────────────────────
+
+    async def _show_welcome(self, q, ctx) -> None:
+        ctx.user_data.pop("cz", None)
+        await q.answer()
+        cur = self.db.get_setting(self.tenant_id, SK_WELCOME_TEXT, "") or "（未设置，使用默认）"
+        rows = load_button_rows(self.db, self.tenant_id, SK_WELCOME_BTNS)
+        btns = "、".join(b.text for row in rows for b in row) or "（无）"
+        await q.edit_message_text(
+            "✏️ *启动语*\n\n启动语文本与启动按钮在此统一设置，"
+            "它们会一起显示在用户的 /start 启动信息中。\n\n"
+            f"当前启动语：\n{cur}\n\n当前按钮：{btns}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✏️ 编辑启动语", callback_data="cz:welcome:text")],
+                [InlineKeyboardButton("🔘 编辑按钮", callback_data="cz:wbtns:edit"),
+                 InlineKeyboardButton("🗑 清空按钮", callback_data="cz:wbtns:clear")],
+                [InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")],
+                [InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")],
+            ]))
 
     async def _start_welcome(self, q, ctx) -> None:
         ctx.user_data["cz"] = {"flow": "welcome"}
@@ -221,22 +249,6 @@ class CustomizeModule(BaseModule):
             "✏️ *自定义启动语*\n\n请发送新的欢迎语文本。\n\n"
             f"当前：\n{cur}\n\n发送 /cancel 取消。",
             parse_mode="Markdown")
-
-    # ── 启动按钮 ────────────────────────────────────────────
-
-    async def _show_wbtns(self, q, ctx) -> None:
-        await q.answer()
-        rows = load_button_rows(self.db, self.tenant_id, SK_WELCOME_BTNS)
-        cur = "\n".join(b.text for row in rows for b in row) or "（无）"
-        await q.edit_message_text(
-            "🔘 *启动按钮*\n\n这些链接按钮会显示在启动语下方。\n\n"
-            f"当前按钮：\n{cur}",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✏️ 编辑按钮", callback_data="cz:wbtns:edit")],
-                [InlineKeyboardButton("🗑 清空", callback_data="cz:wbtns:clear")],
-                [InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")],
-            ]))
 
     async def _start_wbtns(self, q, ctx) -> None:
         ctx.user_data["cz"] = {"flow": "wbtns"}
@@ -250,7 +262,7 @@ class CustomizeModule(BaseModule):
     async def _clear_wbtns(self, q, ctx) -> None:
         self.db.set_setting(self.tenant_id, SK_WELCOME_BTNS, "")
         await q.answer("已清空启动按钮")
-        await self._show_wbtns(q, ctx)
+        await self._show_welcome(q, ctx)
 
     # ── 自动回复（带按钮）──────────────────────────────────
 
@@ -265,7 +277,8 @@ class CustomizeModule(BaseModule):
             kb.append([InlineKeyboardButton(
                 f"🗑 删除 #{r['id']}", callback_data=f"cz:ar:del:{r['id']}")])
         kb.append([InlineKeyboardButton("➕ 新增自动回复", callback_data="cz:ar:add")])
-        kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")])
+        kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home"),
+                   InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")])
         await q.edit_message_text(
             "💬 *自动回复*\n\n" + ("\n".join(lines) if lines else "（暂无）"),
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -310,7 +323,8 @@ class CustomizeModule(BaseModule):
         kb.append([InlineKeyboardButton(
             f"{'⛔ 关闭' if on else '✅ 开启'}强制订阅", callback_data="cz:fsub:toggle")])
         kb.append([InlineKeyboardButton("➕ 添加频道", callback_data="cz:fsub:add")])
-        kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home")])
+        kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home"),
+                   InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")])
         await q.edit_message_text(
             "📢 *强制订阅*\n\n"
             f"状态：{'✅ 已开启' if on else '⛔ 已关闭'}\n"
@@ -421,7 +435,7 @@ class CustomizeModule(BaseModule):
             await msg.reply_text("⚠️ 启动语不能为空，已取消。")
             return
         self.db.set_setting(self.tenant_id, SK_WELCOME_TEXT, text)
-        await msg.reply_text("✅ 启动语已更新。", reply_markup=self._back_markup())
+        await msg.reply_text("✅ 启动语已更新。", reply_markup=self._welcome_back_markup())
 
     async def _wizard_wbtns(self, msg, ctx) -> None:
         rows = parse_buttons(msg.text or "")
@@ -434,7 +448,7 @@ class CustomizeModule(BaseModule):
                             json.dumps(rows, ensure_ascii=False))
         await msg.reply_text(
             f"✅ 已设置 {sum(len(r) for r in rows)} 个启动按钮。",
-            reply_markup=self._back_markup())
+            reply_markup=self._welcome_back_markup())
 
     async def _wizard_ar(self, msg, ctx, state) -> None:
         step = state.get("step")

@@ -160,6 +160,53 @@ async def test_wizard_welcome_saves(db):
     assert "cz" not in ctx.user_data
 
 
+# ── 启动语：文本与按钮统一管理（合并为一个功能）────────────
+
+class _CbQuery:
+    def __init__(self, user_id, data):
+        self.from_user = types.SimpleNamespace(id=user_id)
+        self.data = data
+        self.answers = []
+        self.edits = []
+
+    async def answer(self, *a, **k):
+        self.answers.append((a, k))
+
+    async def edit_message_text(self, text, **k):
+        self.edits.append((text, k))
+
+
+def _cz_callbacks(markup):
+    return [b.callback_data for row in markup.inline_keyboard for b in row]
+
+
+@pytest.mark.asyncio
+async def test_welcome_screen_combines_text_and_buttons(db):
+    cz = make_cz(db)
+    q = _CbQuery(99, "cz:welcome")
+    await cz._show_welcome(q, types.SimpleNamespace(user_data={}))
+    cbs = _cz_callbacks(q.edits[0][1]["reply_markup"])
+    # 同一界面同时提供编辑文本、编辑按钮、清空按钮，以及返回控制面板
+    assert "cz:welcome:text" in cbs
+    assert "cz:wbtns:edit" in cbs
+    assert "cz:wbtns:clear" in cbs
+    assert "pc:home" in cbs
+
+
+def test_settings_markup_has_single_welcome_entry_and_panel_return(db):
+    cz = make_cz(db)
+    cbs = _cz_callbacks(cz._settings_markup())
+    assert "cz:welcome" in cbs
+    assert "cz:wbtns" not in cbs       # 启动按钮已并入启动语
+    assert "pc:home" in cbs            # 返回控制面板
+
+
+def test_back_markup_returns_to_control_panel(db):
+    cz = make_cz(db)
+    assert "pc:home" in _cz_callbacks(cz._back_markup())
+
+
+
 # ── 引导式向导：自动回复（含按钮）───────────────────────────
 
 @pytest.mark.asyncio

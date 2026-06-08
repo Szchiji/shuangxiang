@@ -18,6 +18,21 @@ async def _clear_platform_commands(bot) -> None:
         logger.warning("清除平台命令菜单失败: %s", e)
 
 
+async def _store_platform_username(bot) -> None:
+    """记录平台主机器人的真实用户名，供租户机器人启动信息底部署名使用。"""
+    from modules.platform_module import (
+        PLATFORM_TID,
+        SK_PLATFORM_BOT_USERNAME_AUTO,
+    )
+    try:
+        me = await bot.get_me()
+        if me.username:
+            Database().set_setting(
+                PLATFORM_TID, SK_PLATFORM_BOT_USERNAME_AUTO, me.username)
+    except Exception as e:
+        logger.warning("记录平台用户名失败: %s", e)
+
+
 async def main():
     # 0. 初始化日志（含 Token 脱敏）
     setup_logging()
@@ -45,6 +60,8 @@ async def main():
         logger.info("平台主机器人已启动")
 
         await _clear_platform_commands(bot.app.bot)
+
+        await _store_platform_username(bot.app.bot)
 
         await tm.load_all()
 

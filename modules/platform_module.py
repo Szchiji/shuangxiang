@@ -12,6 +12,7 @@
   • 创建成功后的新手引导与「分享我的机器人」按钮。
 """
 
+import json
 import re
 from urllib.parse import quote
 
@@ -31,8 +32,27 @@ from telegram.ext import (
 
 from core.base_module import BaseModule
 from core.database import Database
+from modules.customize_module import load_button_rows, parse_buttons
 
 TOKEN_RE = re.compile(r"^\d{6,}:[A-Za-z0-9_-]{30,}$")
+
+# 平台级设置统一存于 tenant_kv 的 tenant_id=0 行（租户机器人共享同一数据库）。
+PLATFORM_TID = 0
+SK_PLATFORM_START_TEXT = "platform_start_text"          # 平台机器人自定义启动语
+SK_PLATFORM_START_BTNS = "platform_start_buttons"       # 平台机器人启动语附加按钮(JSON)
+SK_PLATFORM_BOT_USERNAME = "platform_bot_username"      # 超级管理员自定义的平台用户名
+SK_PLATFORM_BOT_USERNAME_AUTO = "platform_bot_username_auto"  # 启动时自动探测的平台用户名
+
+
+def platform_footer_username(db: Database) -> str:
+    """返回要展示在租户启动信息底部的平台机器人用户名（去掉 @，可能为空）。
+
+    优先使用超级管理员自定义值，其次回退到启动时自动探测到的真实用户名。
+    """
+    name = (db.get_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "")
+            or db.get_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME_AUTO, "")
+            or "")
+    return name.lstrip("@").strip()
 
 START_TEXT = (
     "🤖 *双向私聊机器人 · 工厂*\n\n"
@@ -65,13 +85,13 @@ def _botfather_button() -> InlineKeyboardButton:
     return InlineKeyboardButton("➡️ 打开 @BotFather", url="https://t.me/BotFather")
 
 
-def _start_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+def _default_start_buttons() -> list:
+    return [
         [InlineKeyboardButton("🪄 创建我的机器人", callback_data="pf:newbot")],
         [InlineKeyboardButton("📖 如何创建", callback_data="pf:create")],
         [InlineKeyboardButton("🤖 我的机器人", callback_data="pf:mybots")],
         [InlineKeyboardButton("❓ 常见问题", callback_data="pf:faq")],
-    ])
+    ]
 
 
 def _help_create_keyboard() -> InlineKeyboardMarkup:
@@ -110,54 +130,155 @@ class PlatformModule(BaseModule):
 
     def setup(self, app: Application) -> None:
         self.db = Database()
+        self.super_admin = int(self.config["bot"]["admin_id"])
         app.add_handler(CommandHandler("start", self.cmd_start))
         app.add_handler(CommandHandler("help", self.cmd_start))
         app.add_handler(CommandHandler("newbot", self.cmd_newbot))
         app.add_handler(CommandHandler("mybots", self.cmd_mybots))
         app.add_handler(CommandHandler("delbot", self.cmd_delbot))
+        app.add_handler(CommandHandler("cancel", self.cmd_cancel))
         app.add_handler(CallbackQueryHandler(self.on_callback, pattern=r"^pf:"))
         # 无参数引导态：用户发送 /newbot 后，直接粘贴的 Token 文本由此捕获。
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
             self.on_text), group=9)
 
+    def _is_super_admin(self, uid: int) -> bool:
+        return uid == self.super_admin
+
+    async def cmd_cancel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        cleared = ctx.user_data.pop("pf_admin_flow", None) is not None
+        if ctx.chat_data.pop("awaiting_token", None):
+            cleared = True
+        if cleared:
+            await update.effective_message.reply_text("已取消当前操作。")
+
+    def _start_text(self) -> str:
+        return self.db.get_setting(
+            PLATFORM_TID, SK_PLATFORM_START_TEXT, "") or START_TEXT
+
+    def _home_markup(self, user_id: int | None = None) -> InlineKeyboardMarkup:
+        """平台启动面板：内置按钮 + 超级管理员自定义的附加按钮（及管理入口）。"""
+        rows = _default_start_buttons()
+        rows += load_button_rows(self.db, PLATFORM_TID, SK_PLATFORM_START_BTNS)
+        if user_id is not None and self._is_super_admin(user_id):
+            rows.append([InlineKeyboardButton(
+                "⚙️ 平台设置", callback_data="pf:admin")])
+        return InlineKeyboardMarkup(rows)
+
     async def cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         u = update.effective_user
         self.db.upsert_user(u.id, u.username or "", u.full_name)
         await update.message.reply_text(
-            START_TEXT, parse_mode="Markdown", reply_markup=_start_keyboard())
+            self._start_text(), parse_mode="Markdown",
+            reply_markup=self._home_markup(u.id))
 
     # ── 内联按钮回调 ────────────────────────────────────────
 
     async def on_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
-        await q.answer()
         action = q.data.split(":", 1)[1]
         if action == "home":
+            await q.answer()
             ctx.chat_data["awaiting_token"] = False
+            ctx.user_data.pop("pf_admin_flow", None)
             await q.edit_message_text(
-                START_TEXT, parse_mode="Markdown", reply_markup=_start_keyboard())
+                self._start_text(), parse_mode="Markdown",
+                reply_markup=self._home_markup(q.from_user.id))
         elif action == "create":
+            await q.answer()
             await q.edit_message_text(
                 HELP_CREATE_TEXT, parse_mode="Markdown",
                 reply_markup=_help_create_keyboard())
         elif action == "faq":
+            await q.answer()
             await q.edit_message_text(
                 FAQ_TEXT, parse_mode="Markdown", reply_markup=_back_keyboard())
         elif action == "mybots":
+            await q.answer()
             text, markup = self._mybots_view(q.from_user.id)
             await q.edit_message_text(
                 text, parse_mode="Markdown", reply_markup=markup)
         elif action == "newbot":
+            await q.answer()
             ctx.chat_data["awaiting_token"] = True
             await q.edit_message_text(
                 "🪄 请把从 @BotFather 拿到的 *Token* 直接发给我即可。\n"
                 "（形如 `123456:ABC-DEF1234ghIkl...`）",
                 parse_mode="Markdown", reply_markup=_await_token_keyboard())
+        elif action.startswith("admin"):
+            await self._on_admin(q, ctx, action)
+        else:
+            await q.answer()
+
+    # ── 平台设置（仅超级管理员）─────────────────────────────
+
+    def _admin_markup(self) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("✏️ 自定义启动信息", callback_data="pf:admin:text")],
+            [InlineKeyboardButton("🔘 启动信息按钮", callback_data="pf:admin:btns")],
+            [InlineKeyboardButton("🏷 平台用户名（租户底部署名）",
+                                  callback_data="pf:admin:uname")],
+            [InlineKeyboardButton("⬅️ 返回", callback_data="pf:home")],
+        ])
+
+    def _admin_text(self) -> str:
+        btn_rows = load_button_rows(self.db, PLATFORM_TID, SK_PLATFORM_START_BTNS)
+        btns = "、".join(b.text for row in btn_rows for b in row) or "（无）"
+        custom = self.db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "")
+        uname = platform_footer_username(self.db)
+        uname_line = f"@{uname}" if uname else "（未设置）"
+        return (
+            "⚙️ *平台设置*\n\n"
+            f"启动信息：{'已自定义' if custom else '默认'}\n"
+            f"启动按钮：{btns}\n"
+            f"平台用户名：{uname_line}")
+
+    async def _on_admin(self, q, ctx, action: str) -> None:
+        if not self._is_super_admin(q.from_user.id):
+            await q.answer("仅平台超级管理员可用。", show_alert=True)
+            return
+        if action == "admin":
+            ctx.user_data.pop("pf_admin_flow", None)
+            await q.answer()
+            await q.edit_message_text(
+                self._admin_text(), parse_mode="Markdown",
+                reply_markup=self._admin_markup())
+        elif action == "admin:text":
+            ctx.user_data["pf_admin_flow"] = "text"
+            await q.answer()
+            cur = self.db.get_setting(
+                PLATFORM_TID, SK_PLATFORM_START_TEXT, "") or "（未设置，使用默认）"
+            await q.edit_message_text(
+                "✏️ *自定义启动信息*\n\n请发送新的启动信息文本。\n\n"
+                f"当前：\n{cur}\n\n发送 /cancel 取消。",
+                parse_mode="Markdown")
+        elif action == "admin:btns":
+            ctx.user_data["pf_admin_flow"] = "btns"
+            await q.answer()
+            await q.edit_message_text(
+                "🔘 *设置启动信息按钮*\n\n每行一个按钮，格式：\n`按钮文字 - 链接`\n\n"
+                "例如：\n`官方频道 - https://t.me/yourchannel`\n\n"
+                "发送「清空」可移除全部自定义按钮，发送 /cancel 取消。",
+                parse_mode="Markdown")
+        elif action == "admin:uname":
+            ctx.user_data["pf_admin_flow"] = "uname"
+            await q.answer()
+            await q.edit_message_text(
+                "🏷 *平台用户名*\n\n该用户名会显示在每个租户机器人启动信息的最下方。\n"
+                "请发送平台机器人的用户名（可带或不带 @）。\n\n"
+                "发送「清空」可恢复为自动探测的真实用户名，发送 /cancel 取消。",
+                parse_mode="Markdown")
+        else:
+            await q.answer()
 
     # ── 无参数引导态：粘贴 Token ─────────────────────────────
 
     async def on_text(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        flow = ctx.user_data.get("pf_admin_flow")
+        if flow and self._is_super_admin(update.effective_user.id):
+            await self._handle_admin_input(update, ctx, flow)
+            return
         if not ctx.chat_data.get("awaiting_token"):
             return
         token = (update.message.text or "").strip()
@@ -165,6 +286,51 @@ class PlatformModule(BaseModule):
             return  # 非 Token 文本，忽略，等待用户重新发送或使用按钮
         ctx.chat_data["awaiting_token"] = False
         await self._create_bot(update, ctx, token)
+
+    async def _handle_admin_input(self, update: Update,
+                                  ctx: ContextTypes.DEFAULT_TYPE, flow: str) -> None:
+        ctx.user_data.pop("pf_admin_flow", None)
+        text = (update.message.text or "").strip()
+        back = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ 返回平台设置", callback_data="pf:admin")]])
+        if flow == "text":
+            if not text:
+                await update.message.reply_text(
+                    "⚠️ 启动信息不能为空，已取消。", reply_markup=back)
+                return
+            self.db.set_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, text)
+            await update.message.reply_text("✅ 启动信息已更新。", reply_markup=back)
+        elif flow == "btns":
+            if text == "清空":
+                self.db.set_setting(PLATFORM_TID, SK_PLATFORM_START_BTNS, "")
+                await update.message.reply_text(
+                    "✅ 已清空启动信息按钮。", reply_markup=back)
+                return
+            rows = parse_buttons(text)
+            if not rows:
+                await update.message.reply_text(
+                    "⚠️ 未识别到有效按钮（格式：文字 - 链接，链接需以 http/https 开头），已取消。",
+                    reply_markup=back)
+                return
+            self.db.set_setting(PLATFORM_TID, SK_PLATFORM_START_BTNS,
+                                json.dumps(rows, ensure_ascii=False))
+            await update.message.reply_text(
+                f"✅ 已设置 {sum(len(r) for r in rows)} 个启动信息按钮。",
+                reply_markup=back)
+        elif flow == "uname":
+            if text == "清空":
+                self.db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "")
+                await update.message.reply_text(
+                    "✅ 已恢复为自动探测的平台用户名。", reply_markup=back)
+                return
+            uname = text.lstrip("@").strip()
+            if not uname:
+                await update.message.reply_text(
+                    "⚠️ 用户名不能为空，已取消。", reply_markup=back)
+                return
+            self.db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, uname)
+            await update.message.reply_text(
+                f"✅ 平台用户名已设置为 @{uname}。", reply_markup=back)
 
     # ── 创建机器人 ──────────────────────────────────────────
 
