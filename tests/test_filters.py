@@ -105,7 +105,9 @@ async def test_auto_reply_contains_match(db):
     db.add_auto_reply(1, "价格", "见官网")  # 默认 contains
     ctx = make_ctx(FakeBot())
     msg = FakeMessage(1, text="请问价格多少")
-    await mod.on_message(make_update(7, msg), ctx)
+    # 命中自动回复后应拦截：不再转发关键词消息给管理员。
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
     assert msg.replies and msg.replies[0] == "见官网"
 
 
@@ -115,7 +117,8 @@ async def test_auto_reply_regex_match(db):
     db.add_auto_reply(1, r"价格|报价", "见官网", "regex", 0)
     ctx = make_ctx(FakeBot())
     msg = FakeMessage(1, text="请问报价多少")
-    await mod.on_message(make_update(7, msg), ctx)
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
     assert msg.replies and msg.replies[0] == "见官网"
 
 

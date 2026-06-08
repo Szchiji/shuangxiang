@@ -1,7 +1,7 @@
 """自动回复 + 关键词过滤（每个租户机器人各运行一份）。
 
 拥有者可配置：
-  • 自动回复：命中关键词时机器人自动回复，可选「拦截」（不再转发给管理员）。
+  • 自动回复：命中关键词时机器人自动回复，并拦截该消息（不再转发给管理员、不发送任何提示）。
   • 关键词过滤：用户消息含违禁词时拦截并提示。
   • 防刷屏过滤器：限制单用户短时间内的消息频率（默认开启，可关闭）。
   • 字母表过滤器：可屏蔽包含特定文字（如拉丁字母 / 英文）的消息（默认关闭）。
@@ -220,9 +220,9 @@ class AutoReplyModule(BaseModule):
             if self._matches(r, text):
                 markup = self._reply_markup(r)
                 await msg.reply_text(r["reply"], reply_markup=markup)
-                if r["stop"]:
-                    raise ApplicationHandlerStop
-                return
+                # 自动回复命中即视为已处理：不再把关键词消息转发给租户机器人（管理员），
+                # 也不向其发送任何提示。
+                raise ApplicationHandlerStop
 
     @staticmethod
     def _matches(row, text: str) -> bool:
