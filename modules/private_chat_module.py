@@ -21,6 +21,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.helpers import escape_markdown
 
 from core.base_module import BaseModule
 from core.database import Database
@@ -108,8 +109,12 @@ class PrivateChatModule(BaseModule):
         return f"\n\n🏭 由 @{uname} 创建" if uname else ""
 
     def _user_label(self, user) -> str:
-        uname = f"@{user.username}" if user.username else "无用户名"
-        return f"👤 {user.full_name} ({uname})\n🆔 ID: `{user.id}`"
+        name = escape_markdown(user.full_name or "", version=1)
+        uname = (
+            f"@{escape_markdown(user.username, version=1)}"
+            if user.username else "无用户名"
+        )
+        return f"👤 {name} ({uname})\n🆔 ID: `{user.id}`"
 
     def _resolve_target(self, update: Update):
         reply = update.message.reply_to_message
