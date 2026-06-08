@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+
+# 本地数据库（不上传）
+*.db
+*.sqlite3
+
+# 环境变量（绝对不能上传！）
+.env
+config.local.yaml
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 系统文件
+.DS_Store
+Thumbs.db
