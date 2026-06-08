@@ -113,6 +113,19 @@ async def test_admin_can_open_admin_panel(db):
     assert "pf:admin:text" in cbs and "pf:admin:uname" in cbs
 
 
+def test_admin_text_escapes_username_underscores(db):
+    """平台用户名含下划线时，平台设置面板文本须转义，避免 Markdown 解析失败。
+
+    复现「超级管理员点击平台设置按钮无反应」：自动探测到的平台机器人用户名
+    （常以 _bot 结尾）含奇数个下划线，未转义会导致 edit_message_text 报错。
+    """
+    pf = make_pf(db)
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "my_factory_bot")
+    text = pf._admin_text()
+    assert "@my\\_factory\\_bot" in text
+    assert "my_factory_bot" not in text
+
+
 # ── 管理员输入：保存启动信息 / 按钮 / 平台用户名 ─────────────
 
 @pytest.mark.asyncio

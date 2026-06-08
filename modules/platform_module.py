@@ -29,6 +29,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.helpers import escape_markdown
 
 from core.base_module import BaseModule
 from core.database import Database
@@ -227,11 +228,11 @@ class PlatformModule(BaseModule):
         btns = "、".join(b.text for row in btn_rows for b in row) or "（无）"
         custom = self.db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "")
         uname = platform_footer_username(self.db)
-        uname_line = f"@{uname}" if uname else "（未设置）"
+        uname_line = f"@{escape_markdown(uname, version=1)}" if uname else "（未设置）"
         return (
             "⚙️ *平台设置*\n\n"
             f"启动信息：{'已自定义' if custom else '默认'}\n"
-            f"启动按钮：{btns}\n"
+            f"启动按钮：{escape_markdown(btns, version=1)}\n"
             f"平台用户名：{uname_line}")
 
     async def _on_admin(self, q, ctx, action: str) -> None:
@@ -251,7 +252,7 @@ class PlatformModule(BaseModule):
                 PLATFORM_TID, SK_PLATFORM_START_TEXT, "") or "（未设置，使用默认）"
             await q.edit_message_text(
                 "✏️ *自定义启动信息*\n\n请发送新的启动信息文本。\n\n"
-                f"当前：\n{cur}\n\n发送 /cancel 取消。",
+                f"当前：\n{escape_markdown(cur, version=1)}\n\n发送 /cancel 取消。",
                 parse_mode="Markdown")
         elif action == "admin:btns":
             ctx.user_data["pf_admin_flow"] = "btns"
