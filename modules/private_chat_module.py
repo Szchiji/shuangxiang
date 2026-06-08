@@ -748,8 +748,12 @@ class PrivateChatModule(BaseModule):
         message_id = getattr(sent, "message_id", None)
         if chat_id is None or message_id is None:
             return
-        asyncio.create_task(  # noqa: RUF006 — 即发即忘的延时删除任务
+        # 保留任务引用，避免被垃圾回收而中断延时删除。
+        tasks = self.__dict__.setdefault("_bg_tasks", set())
+        task = asyncio.create_task(
             self._delete_later(ctx, chat_id, message_id, self._ack_delete_delay))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
 
     @staticmethod
     async def _delete_later(ctx, chat_id, message_id, delay: float) -> None:

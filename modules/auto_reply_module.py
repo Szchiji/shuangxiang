@@ -47,6 +47,11 @@ _FLOOD_MAX_MSGS = 5     # 窗口内最多消息数
 _LATIN_RE = re.compile(r"[A-Za-z\u00C0-\u024F]")
 
 
+def match_type_of(row) -> str:
+    """从自动回复记录中读取匹配方式（sqlite3.Row 无 .get，需手动判断）。"""
+    return (row["match_type"] if "match_type" in row.keys() else "") or "contains"
+
+
 class AutoReplyModule(BaseModule):
 
     def setup(self, app: Application) -> None:
@@ -227,7 +232,7 @@ class AutoReplyModule(BaseModule):
         其它（默认 'contains'）→ 子串包含匹配。无效正则视为不命中。
         """
         keyword = row["keyword"]
-        match_type = (row["match_type"] if "match_type" in row.keys() else "") or "contains"
+        match_type = match_type_of(row)
         if match_type == "regex":
             try:
                 return re.search(keyword, text, re.IGNORECASE) is not None
@@ -238,8 +243,7 @@ class AutoReplyModule(BaseModule):
     @staticmethod
     def _type_tag(row) -> str:
         """命中方式标签：正则显示「[正则] 」，包含匹配不额外标注。"""
-        match_type = (row["match_type"] if "match_type" in row.keys() else "") or "contains"
-        return "[正则] " if match_type == "regex" else ""
+        return "[正则] " if match_type_of(row) == "regex" else ""
 
     @staticmethod
     def _reply_markup(row):
