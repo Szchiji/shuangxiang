@@ -11,10 +11,11 @@
 import asyncio
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -23,6 +24,7 @@ from telegram.ext import (
 
 from core.base_module import BaseModule
 from core.database import Database
+from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
 
 logger = logging.getLogger("shuangxiang.private_chat")
 
@@ -55,14 +57,10 @@ class PrivateChatModule(BaseModule):
         self.brand    = (msgs.get("brand") or "").strip()
         # 拥有者首次进入时的「下一步」上手清单
         self.admin_onboarding = (
-            "\n\n🚀 *新手上手清单：*\n"
-            "1️⃣ 自动回复：`/ar_add 你好 | 您好，有什么可以帮您？`\n"
-            "2️⃣ 关键词过滤：`/filter_add 广告`\n"
-            "3️⃣ 搭建菜单：`/menu_add 0 | 关于我们 | 这里是简介`\n"
-            "4️⃣ 收集表单：`/form_new 报名`\n"
-            "5️⃣ 数字商店：`/shop_addcat 会员`\n"
-            "6️⃣ 多人协作：把我加入论坛群并运行 /setgroup\n"
-            "查看用户统计：/stats")
+            "\n\n🚀 *快速上手：*\n"
+            "点击下方 *⚙️ 控制面板* 即可用按钮管理统计、过滤器与各项功能，"
+            "无需记忆指令。\n"
+            "💡 进阶：把我加入开启「话题」的论坛群并运行 /setgroup 可启用多人协作。")
 
         # 指令
         app.add_handler(CommandHandler("start", self.cmd_start))
@@ -73,6 +71,8 @@ class PrivateChatModule(BaseModule):
         app.add_handler(CommandHandler("stats", self.cmd_stats))
         app.add_handler(CommandHandler("setgroup", self.cmd_setgroup))
         app.add_handler(CommandHandler("unsetgroup", self.cmd_unsetgroup))
+        app.add_handler(CommandHandler("panel", self.cmd_panel))
+        app.add_handler(CallbackQueryHandler(self.on_panel, pattern=r"^pc:"))
 
         # 私聊消息（用户 ↔ DM 模式拥有者）—— 放在较低优先级 group，
         # 让自动回复/过滤模块（group=-1）有机会先拦截。
@@ -117,12 +117,14 @@ class PrivateChatModule(BaseModule):
         user = update.effective_user
         if self._is_admin(user.id):
             await update.message.reply_text(
-                self.admin_welcome + self.admin_onboarding, parse_mode="Markdown")
+                self.admin_welcome + self.admin_onboarding, parse_mode="Markdown",
+                reply_markup=self._panel_markup())
         else:
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)
             text = self.welcome + (f"\n\n{self.brand}" if self.brand else "")
-            await update.message.reply_text(text)
+            await update.message.reply_text(
+                text, reply_markup=self._user_home_markup())
 
     async def cmd_setgroup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -191,22 +193,142 @@ class PrivateChatModule(BaseModule):
     async def cmd_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
             return
+        await update.effective_message.reply_text(
+            self._stats_text(), parse_mode="Markdown")
+
+    def _stats_text(self) -> str:
         s = self.db.get_tenant_user_count(self.tenant_id)
         if s["total"] == 0:
-            await update.effective_message.reply_text(
+            return (
                 "📊 *统计*\n\n还没有用户来联系你。\n"
-                "把你的机器人分享出去，并用 /ar_add 设置自动回复来留住第一批用户吧！",
-                parse_mode="Markdown")
-            return
-        await update.effective_message.reply_text(
+                "把你的机器人分享出去，并设置自动回复来留住第一批用户吧！")
+        return (
             "📊 *统计*\n\n"
             f"总用户：{s['total']}\n"
             f"正常：{s['active']}\n"
             f"封禁：{s['banned']}\n"
             f"近 7 天活跃：{s['active_7d']}\n"
-            f"近 7 天新增：{s['new_7d']}",
-            parse_mode="Markdown",
-        )
+            f"近 7 天新增：{s['new_7d']}")
+
+    # ── 控制面板（拥有者，按钮式管理）────────────────────────
+
+    def _panel_markup(self) -> InlineKeyboardMarkup:
+        """拥有者控制面板：用按钮代替常用指令。"""
+        antiflood = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
+        latin     = self.db.get_bool_setting(self.tenant_id, SK_ALPHABET_LATIN, False)
+        topics    = self._manage_group() is not None
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 用户统计", callback_data="pc:stats")],
+            [InlineKeyboardButton(
+                f"🛡 防刷屏：{'✅ 开' if antiflood else '⛔ 关'}",
+                callback_data="pc:toggle:antiflood")],
+            [InlineKeyboardButton(
+                f"🔤 拦截英文：{'✅ 开' if latin else '⛔ 关'}",
+                callback_data="pc:toggle:alphabet")],
+            [InlineKeyboardButton(
+                f"💬 Topics 模式：{'✅ 已启用' if topics else '未启用'}",
+                callback_data="pc:topics")],
+            [InlineKeyboardButton("📖 指令速查", callback_data="pc:help")],
+        ])
+
+    def _panel_text(self) -> str:
+        return (
+            "⚙️ *控制面板*\n\n"
+            "点击下方按钮即可管理机器人，开关类设置点一下即可切换。")
+
+    async def cmd_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._is_admin(update.effective_user.id):
+            return
+        await update.effective_message.reply_text(
+            self._panel_text(), parse_mode="Markdown",
+            reply_markup=self._panel_markup())
+
+    async def on_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        q = update.callback_query
+        action = q.data.split(":", 1)[1]
+
+        # 公开导航：用户「填写表单」按钮（非拥有者也可用）
+        if action == "forms":
+            await q.answer()
+            markup = self._forms_markup()
+            if markup is None:
+                await q.edit_message_text("暂无可填写的表单。")
+            else:
+                await q.edit_message_text("请选择要填写的表单：", reply_markup=markup)
+            return
+
+        # 其余均为拥有者控制面板操作
+        if not self._is_admin(q.from_user.id):
+            await q.answer("仅机器人拥有者可用。", show_alert=True)
+            return
+        back = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]])
+
+        if action == "home":
+            await q.answer()
+            await q.edit_message_text(
+                self._panel_text(), parse_mode="Markdown",
+                reply_markup=self._panel_markup())
+        elif action == "stats":
+            await q.answer()
+            await q.edit_message_text(
+                self._stats_text(), parse_mode="Markdown", reply_markup=back)
+        elif action == "topics":
+            await q.answer()
+            text = (
+                "💬 *Topics 模式*\n\n"
+                "把我加入一个开启「话题」的论坛群，在群里发送 /setgroup 即可启用；"
+                "之后每位用户的对话会进入独立话题，方便多人协作。\n"
+                "发送 /unsetgroup 可恢复为私聊(DM)模式。")
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
+        elif action == "help":
+            await q.answer()
+            text = (
+                "📖 *指令速查*\n\n"
+                "*自动回复*：/ar_add 关键词 | 回复　/ar_list　/ar_del\n"
+                "*关键词过滤*：/filter_add 词　/filter_list　/filter_del\n"
+                "*菜单*：/menu_add 0 | 名称 | 内容　/menu_list　/menu_del\n"
+                "*表单*：/form_new 标题　/form_step　/form_list　/form_del\n"
+                "*商店*：/shop_addcat　/shop_addproduct　/shop_list\n"
+                "*用户*：回复消息后 /ban /unban /info")
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
+        elif action == "toggle:antiflood":
+            cur = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
+            self.db.set_setting(self.tenant_id, SK_ANTIFLOOD, "0" if cur else "1")
+            await q.answer("防刷屏已" + ("关闭" if cur else "开启"))
+            await q.edit_message_text(
+                self._panel_text(), parse_mode="Markdown",
+                reply_markup=self._panel_markup())
+        elif action == "toggle:alphabet":
+            cur = self.db.get_bool_setting(self.tenant_id, SK_ALPHABET_LATIN, False)
+            self.db.set_setting(self.tenant_id, SK_ALPHABET_LATIN, "0" if cur else "1")
+            await q.answer("英文拦截已" + ("关闭" if cur else "开启"))
+            await q.edit_message_text(
+                self._panel_text(), parse_mode="Markdown",
+                reply_markup=self._panel_markup())
+        else:
+            await q.answer()
+
+    # ── 用户主页导航（按钮代替命令）──────────────────────────
+
+    def _user_home_markup(self):
+        """根据已配置内容，为用户生成「菜单/表单/商店」导航按钮。"""
+        rows = []
+        if self.db.get_menu_children(self.tenant_id, 0):
+            rows.append([InlineKeyboardButton("📋 浏览菜单", callback_data="menu:0")])
+        if self.db.get_forms(self.tenant_id):
+            rows.append([InlineKeyboardButton("📝 填写表单", callback_data="pc:forms")])
+        if self.db.get_categories(self.tenant_id):
+            rows.append([InlineKeyboardButton("🛒 进入商店", callback_data="shop:cats")])
+        return InlineKeyboardMarkup(rows) if rows else None
+
+    def _forms_markup(self):
+        forms = self.db.get_forms(self.tenant_id)
+        if not forms:
+            return None
+        rows = [[InlineKeyboardButton(f["title"], callback_data=f"form:{f['id']}")]
+                for f in forms]
+        return InlineKeyboardMarkup(rows)
 
     def _topic_target(self, update: Update):
         """Topics 模式下，从当前话题解析对应用户。"""
