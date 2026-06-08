@@ -239,6 +239,10 @@ class PlatformModule(BaseModule):
             text, markup = self._mybots_view(q.from_user.id)
             await q.edit_message_text(
                 text, parse_mode="Markdown", reply_markup=markup)
+        elif action.startswith("delask:"):
+            await self._on_delete_ask(q, action)
+        elif action.startswith("delyes:"):
+            await self._on_delete_confirm(q, ctx, action)
         elif action == "newbot":
             await q.answer()
             ctx.chat_data["awaiting_token"] = True
@@ -501,18 +505,70 @@ class PlatformModule(BaseModule):
                     [InlineKeyboardButton("📖 如何创建", callback_data="pf:create")],
                 ]),
             )
-        lines = [f"#{r['id']} @{r['bot_username']}（{r['bot_name']}）" for r in active]
-        buttons = [
-            [InlineKeyboardButton(f"📣 分享 @{r['bot_username']}",
-                                  url=f"https://t.me/{r['bot_username']}")]
-            for r in active if r["bot_username"]
+        lines = [
+            f"#{r['id']} @{escape_markdown(r['bot_username'] or '', version=1)}"
+            f"（{escape_markdown(r['bot_name'] or '', version=1)}）"
+            for r in active
         ]
+        buttons = []
+        for r in active:
+            row = []
+            if r["bot_username"]:
+                row.append(InlineKeyboardButton(
+                    f"📣 分享 @{r['bot_username']}",
+                    url=f"https://t.me/{r['bot_username']}"))
+            row.append(InlineKeyboardButton(
+                f"🗑 删除 #{r['id']}", callback_data=f"pf:delask:{r['id']}"))
+            buttons.append(row)
         buttons.append(
             [InlineKeyboardButton("➕ 再创建一个", callback_data="pf:newbot")])
         return (
-            "🤖 *我的机器人：*\n" + "\n".join(lines) + "\n\n删除：/delbot <编号>",
+            "🤖 *我的机器人：*\n" + "\n".join(lines)
+            + "\n\n点击 🗑 删除按钮可移除对应机器人（也可使用 /delbot <编号>）。",
             InlineKeyboardMarkup(buttons),
         )
+
+    def _delete_confirm_view(self, tid: int):
+        return (
+            f"⚠️ 确认删除机器人 #{tid}？此操作不可恢复，"
+            "机器人将立即下线且其数据会被清除。",
+            InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ 确认删除",
+                                      callback_data=f"pf:delyes:{tid}")],
+                [InlineKeyboardButton("⬅️ 取消", callback_data="pf:mybots")],
+            ]),
+        )
+
+    async def _delete_tenant(self, ctx: ContextTypes.DEFAULT_TYPE,
+                             tid: int) -> None:
+        tm = ctx.application.bot_data.get("tenant_manager")
+        if tm:
+            await tm.stop_tenant(tid)
+        self.db.delete_tenant(tid)
+
+    async def _on_delete_ask(self, q, action: str) -> None:
+        tid = int(action.split(":", 1)[1])
+        tenant = self.db.get_tenant(tid)
+        if not tenant or tenant["owner_user_id"] != q.from_user.id:
+            await q.answer("未找到该机器人，或它不属于你。", show_alert=True)
+            return
+        await q.answer()
+        text, markup = self._delete_confirm_view(tid)
+        await q.edit_message_text(text, reply_markup=markup)
+
+    async def _on_delete_confirm(self, q, ctx: ContextTypes.DEFAULT_TYPE,
+                                 action: str) -> None:
+        tid = int(action.split(":", 1)[1])
+        tenant = self.db.get_tenant(tid)
+        if not tenant or tenant["owner_user_id"] != q.from_user.id:
+            await q.answer("未找到该机器人，或它不属于你。", show_alert=True)
+            return
+        await q.answer("已删除")
+        await self._delete_tenant(ctx, tid)
+        text, markup = self._mybots_view(q.from_user.id)
+        await q.edit_message_text(
+            f"✅ 已删除机器人 #{tid}。\n\n" + text,
+            parse_mode="Markdown", reply_markup=markup)
 
     async def cmd_mybots(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         text, markup = self._mybots_view(update.effective_user.id)
@@ -528,8 +584,5 @@ class PlatformModule(BaseModule):
         if not tenant or tenant["owner_user_id"] != update.effective_user.id:
             await update.message.reply_text("⚠️ 未找到该机器人，或它不属于你。")
             return
-        tm = ctx.application.bot_data.get("tenant_manager")
-        if tm:
-            await tm.stop_tenant(tid)
-        self.db.delete_tenant(tid)
+        await self._delete_tenant(ctx, tid)
         await update.message.reply_text(f"✅ 已删除机器人 #{tid}。")
