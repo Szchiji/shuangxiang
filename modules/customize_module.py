@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
@@ -42,6 +43,10 @@ SK_FORCE_SUB    = "force_sub"          # 强制订阅频道列表（JSON）
 SK_FORCE_SUB_ON = "force_sub_on"       # 强制订阅总开关
 
 _JOINED_STATUSES = ("member", "administrator", "creator", "owner")
+# 机器人需具备其中之一的身份，才能校验其他用户在该频道的成员资格。
+_ADMIN_STATUSES = ("administrator", "creator", "owner")
+# 同一频道两次「无法校验」告警之间的最短间隔（秒），避免刷屏打扰拥有者。
+_FSUB_ALERT_INTERVAL = 3600.0
 
 # 支持作为启动语 / 自动回复封面的媒体类型（按优先级匹配）。
 _MEDIA_TYPES = ("photo", "video", "animation", "document", "audio", "voice")
@@ -140,6 +145,8 @@ class CustomizeModule(BaseModule):
         self.db        = Database()
         self.tenant_id = int(self.config.get("tenant_id", 0))
         self.admin_id  = int(self.config["bot"]["admin_id"])
+        # 「强制订阅频道无法校验」告警的去抖记录：chat -> 上次告警的单调时间。
+        self._fsub_alerts: dict = {}
 
         app.add_handler(CommandHandler("settings", self.cmd_settings))
         app.add_handler(CommandHandler("broadcast", self.cmd_broadcast))
@@ -442,21 +449,31 @@ class CustomizeModule(BaseModule):
         on = self.db.get_bool_setting(self.tenant_id, SK_FORCE_SUB_ON, False)
         channels = self._load_fsub()
         kb = []
+        unverified = 0
         for i, ch in enumerate(channels):
+            ok = await self._bot_is_admin(ctx, ch.get("chat", ""))
+            if not ok:
+                unverified += 1
+            mark = "✅" if ok else "⚠️"
             kb.append([InlineKeyboardButton(
-                f"🗑 {ch.get('title') or ch.get('chat')}",
+                f"{mark} 🗑 {ch.get('title') or ch.get('chat')}",
                 callback_data=f"cz:fsub:del:{i}")])
         kb.append([InlineKeyboardButton(
             f"{'⛔ 关闭' if on else '✅ 开启'}强制订阅", callback_data="cz:fsub:toggle")])
         kb.append([InlineKeyboardButton("➕ 添加频道", callback_data="cz:fsub:add")])
         kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home"),
                    InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")])
+        warn = ""
+        if unverified:
+            warn = (f"\n\n⚠️ 有 {unverified} 个频道无法校验（标记为 ⚠️）。\n"
+                    "请把本机器人设为这些频道的*管理员*，否则强制订阅对它们不会生效。")
         await q.edit_message_text(
             "📢 *强制订阅*\n\n"
             f"状态：{'✅ 已开启' if on else '⛔ 已关闭'}\n"
             f"频道数：{len(channels)}\n\n"
             "开启后，未加入下列频道的用户消息会被拦截并提示加入。\n"
-            "⚠️ 需先把本机器人设为各频道的管理员，否则无法校验。",
+            "⚠️ 需先把本机器人设为各频道的管理员，否则无法校验。"
+            f"{warn}",
             parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
     async def _toggle_fsub(self, q, ctx) -> None:
@@ -673,9 +690,18 @@ class CustomizeModule(BaseModule):
             return
         self._save_fsub(channels)
         self.db.set_setting(self.tenant_id, SK_FORCE_SUB_ON, "1")
+        unverified = []
+        for ch in channels[-added:]:
+            if not await self._bot_is_admin(ctx, ch.get("chat", "")):
+                unverified.append(ch.get("title") or ch.get("chat"))
+        note = ""
+        if unverified:
+            note = ("\n\n⚠️ 以下频道暂时无法校验，强制订阅对它们*不会生效*：\n"
+                    + "\n".join(f"• {t}" for t in unverified)
+                    + "\n\n请把本机器人设为这些频道的*管理员*后再试。")
         await msg.reply_text(
-            f"✅ 已添加 {added} 个频道，强制订阅已开启。",
-            reply_markup=self._back_markup())
+            f"✅ 已添加 {added} 个频道，强制订阅已开启。{note}",
+            parse_mode="Markdown", reply_markup=self._back_markup())
 
     async def _wizard_bc(self, msg, ctx) -> None:
         ctx.user_data["cz"] = {
@@ -755,9 +781,42 @@ class CustomizeModule(BaseModule):
                 if member.status not in _JOINED_STATUSES:
                     missing.append(ch)
             except TelegramError as e:
-                # 无法校验（如机器人不是该频道管理员）→ 放行，避免误锁用户。
+                # 无法校验（如机器人不是该频道管理员）→ 放行，避免误锁用户，
+                # 同时（去抖后）私信提醒拥有者修正配置，否则强制订阅形同虚设。
                 logger.warning("强制订阅校验失败 chat=%s: %s", chat, e)
+                await self._warn_owner_unverifiable(ctx, ch, e)
         return missing
+
+    async def _bot_is_admin(self, ctx, chat) -> bool:
+        """机器人是否为 ``chat`` 的管理员（校验他人成员资格的前提）。"""
+        target = _normalize_chat(chat)
+        if target is None:
+            return False
+        try:
+            member = await ctx.bot.get_chat_member(target, ctx.bot.id)
+        except TelegramError:
+            return False
+        return getattr(member, "status", None) in _ADMIN_STATUSES
+
+    async def _warn_owner_unverifiable(self, ctx, ch, err) -> None:
+        """频道无法校验时，去抖后私信提醒拥有者把机器人设为该频道管理员。"""
+        alerts = getattr(self, "_fsub_alerts", None)
+        if alerts is None:
+            return
+        chat = ch.get("chat", "")
+        now = time.monotonic()
+        last = alerts.get(chat)
+        if last is not None and now - last < _FSUB_ALERT_INTERVAL:
+            return
+        alerts[chat] = now
+        title = ch.get("title") or chat
+        try:
+            await ctx.bot.send_message(
+                self.admin_id,
+                f"⚠️ 强制订阅无法校验频道「{title}」：{err}\n"
+                "请把本机器人设为该频道的管理员，否则强制订阅对该频道不会生效。")
+        except TelegramError:
+            pass
 
     def _join_markup(self, channels) -> InlineKeyboardMarkup:
         rows = [[InlineKeyboardButton(

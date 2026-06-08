@@ -20,16 +20,27 @@ from modules.private_chat_module import PrivateChatModule
 # ── 假对象 ───────────────────────────────────────────────────
 
 class FakeBot:
-    def __init__(self, member_status=None, fail=False):
+    def __init__(self, member_status=None, fail=False, bot_status=None,
+                 bot_id=4242):
         self.member_status = member_status
+        self.bot_status = bot_status
         self.fail = fail
+        self.id = bot_id
         self.copies = []
+        self.sent = []
 
     async def get_chat_member(self, chat, user_id):
         if self.fail:
             from telegram.error import TelegramError
             raise TelegramError("not admin")
+        # 查询机器人自身 → 返回其在频道中的身份；否则返回目标用户的成员状态。
+        if user_id == self.id:
+            return types.SimpleNamespace(status=self.bot_status)
         return types.SimpleNamespace(status=self.member_status)
+
+    async def send_message(self, chat_id, text, **k):
+        self.sent.append((chat_id, text, k))
+        return types.SimpleNamespace(message_id=1)
 
     async def copy_message(self, **k):
         self.copies.append(k)
@@ -396,13 +407,26 @@ def test_show_ar_lists_edit_buttons(db):
 @pytest.mark.asyncio
 async def test_wizard_fsub_adds_and_enables(db):
     cz = make_cz(db)
-    ctx = make_ctx()
+    ctx = make_ctx(FakeBot(bot_status="administrator"))
     ctx.user_data["cz"] = {"flow": "fsub"}
     msg = FakeMessage(text="官方 | @chan | https://t.me/chan")
     await cz._wizard_fsub(msg, ctx)
     channels = json.loads(db.get_setting(1, SK_FORCE_SUB))
     assert channels[0]["chat"] == "@chan"
     assert db.get_bool_setting(1, SK_FORCE_SUB_ON, False) is True
+    # 机器人是频道管理员 → 不应出现「无法校验」警告
+    assert not any("无法校验" in text for text, _ in msg.replies)
+
+
+@pytest.mark.asyncio
+async def test_wizard_fsub_warns_when_bot_not_admin(db):
+    cz = make_cz(db)
+    ctx = make_ctx(FakeBot(bot_status="left"))  # 机器人不是频道管理员
+    ctx.user_data["cz"] = {"flow": "fsub"}
+    msg = FakeMessage(text="官方 | @chan | https://t.me/chan")
+    await cz._wizard_fsub(msg, ctx)
+    assert any("无法校验" in text for text, _ in msg.replies)
+    assert any("@chan" in text or "官方" in text for text, _ in msg.replies)
 
 
 # ── 强制订阅拦截 ─────────────────────────────────────────────
@@ -443,6 +467,24 @@ async def test_guard_fail_open_on_error(db):
     msg = FakeMessage(text="hi")
     await cz.on_guard(make_update(7, msg), ctx)  # 校验失败时放行
     assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_guard_warns_owner_when_unverifiable(db):
+    cz = make_cz(db)
+    cz._fsub_alerts = {}
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    bot = FakeBot(fail=True)
+    ctx = make_ctx(bot)
+    await cz.on_guard(make_update(7, FakeMessage(text="hi")), ctx)  # 放行
+    # 拥有者收到一次「无法校验」提醒
+    assert bot.sent and bot.sent[0][0] == cz.admin_id
+    assert "无法校验" in bot.sent[0][1]
+    # 去抖：短时间内再次校验不应重复打扰
+    await cz.on_guard(make_update(8, FakeMessage(text="hi")), ctx)
+    assert len(bot.sent) == 1
 
 
 @pytest.mark.asyncio
