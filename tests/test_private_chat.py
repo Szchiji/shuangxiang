@@ -15,6 +15,8 @@ def make_module(db, manage_group=None, admin_id=99):
     mod.tenant_id = 1
     mod.admin_id = admin_id
     mod.received = ""
+    mod.sent_ack = "✅ 已发送成功，管理员会尽快回复你。"
+    mod._ack_delete_delay = 0
     mod._albums = {}
     mod._album_delay = 0.05
     mod._topic_locks = {}
@@ -98,3 +100,17 @@ def test_reply_snippet_truncates(db):
     msg = FakeMessage(2, text="reply", reply_to_message=FakeMessage(1, text=long))
     snippet = mod._reply_snippet(msg)
     assert snippet is not None and len(snippet) <= 80 and snippet.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_incoming_user_acks_and_autodeletes(db):
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(60, text="你好")
+    update = types.SimpleNamespace(message=msg, effective_user=USER)
+    await mod._incoming_user(update, ctx)
+    # 用户收到「已发送成功」轻提示
+    assert any("已发送成功" in r for r in msg.replies)
+    # 提示在延时（测试中为 0）后被自动删除
+    await asyncio.sleep(0.05)
+    assert ctx.bot.of("delete_message"), "应安排删除已送达提示"

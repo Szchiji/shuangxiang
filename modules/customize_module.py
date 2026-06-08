@@ -13,6 +13,7 @@
 import asyncio
 import json
 import logging
+import re
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
@@ -194,7 +195,9 @@ class CustomizeModule(BaseModule):
         if handler is not None:
             await handler(q, ctx)
             return
-        if action.startswith("ar:del:"):
+        if action.startswith("ar:mt:"):
+            await self._pick_ar_match(q, ctx, action.rsplit(":", 1)[1])
+        elif action.startswith("ar:del:"):
             await self._del_ar(q, ctx, int(action.rsplit(":", 1)[1]))
         elif action.startswith("fsub:del:"):
             await self._del_fsub(q, ctx, int(action.rsplit(":", 1)[1]))
@@ -272,8 +275,10 @@ class CustomizeModule(BaseModule):
         lines, kb = [], []
         for r in rows:
             tag = " [拦截]" if r["stop"] else ""
+            mt = (r["match_type"] if "match_type" in r.keys() else "") or "contains"
+            mt_tag = " [正则]" if mt == "regex" else ""
             has_btn = " 🔘" if (r["buttons"] or "") else ""
-            lines.append(f"#{r['id']} 「{r['keyword']}」{tag}{has_btn}")
+            lines.append(f"#{r['id']} 「{r['keyword']}」{mt_tag}{tag}{has_btn}")
             kb.append([InlineKeyboardButton(
                 f"🗑 删除 #{r['id']}", callback_data=f"cz:ar:del:{r['id']}")])
         kb.append([InlineKeyboardButton("➕ 新增自动回复", callback_data="cz:ar:add")])
@@ -287,7 +292,30 @@ class CustomizeModule(BaseModule):
         ctx.user_data["cz"] = {"flow": "ar", "step": "keyword", "buf": {}}
         await q.answer()
         await q.edit_message_text(
-            "➕ *新增自动回复*（第 1/3 步）\n\n请发送要匹配的*关键词*。\n\n发送 /cancel 取消。",
+            "➕ *新增自动回复*（第 1/4 步）\n\n请发送要匹配的*关键词*。\n\n发送 /cancel 取消。",
+            parse_mode="Markdown")
+
+    async def _pick_ar_match(self, q, ctx, match_type: str) -> None:
+        """向导第 2/4 步：选择匹配方式（包含 / 正则）。"""
+        state = ctx.user_data.get("cz")
+        if not state or state.get("flow") != "ar" or state.get("step") != "match":
+            await q.answer()
+            return
+        buf = state.setdefault("buf", {})
+        if match_type == "regex":
+            try:
+                re.compile(buf.get("keyword", ""))
+            except re.error:
+                await q.answer(
+                    "⚠️ 该关键词不是合法的正则表达式，请改用包含匹配或发送 /cancel 重来。",
+                    show_alert=True)
+                return
+        buf["match_type"] = match_type
+        state["step"] = "reply"
+        await q.answer()
+        label = "正则匹配" if match_type == "regex" else "包含匹配"
+        await q.edit_message_text(
+            f"匹配方式：*{label}*\n\n（第 3/4 步）请发送命中后要*自动回复的文本*。",
             parse_mode="Markdown")
 
     async def _del_ar(self, q, ctx, rid: int) -> None:
@@ -459,9 +487,20 @@ class CustomizeModule(BaseModule):
                 await msg.reply_text("⚠️ 关键词不能为空，请重新发送。")
                 return
             buf["keyword"] = text
-            state["step"] = "reply"
-            await msg.reply_text("（第 2/3 步）请发送命中后要*自动回复的文本*。",
-                                 parse_mode="Markdown")
+            state["step"] = "match"
+            await msg.reply_text(
+                "（第 2/4 步）请选择*匹配方式*：\n\n"
+                "• 包含匹配：消息中*包含*该关键词即命中（推荐）。\n"
+                "• 正则匹配：把关键词当作*正则表达式*匹配（高级）。",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔡 包含匹配（推荐）",
+                                          callback_data="cz:ar:mt:contains")],
+                    [InlineKeyboardButton("🧩 正则匹配",
+                                          callback_data="cz:ar:mt:regex")],
+                ]))
+        elif step == "match":
+            await msg.reply_text("请点击上方按钮选择匹配方式（或发送 /cancel 取消）。")
         elif step == "reply":
             if not text:
                 await msg.reply_text("⚠️ 回复内容不能为空，请重新发送。")
@@ -469,7 +508,7 @@ class CustomizeModule(BaseModule):
             buf["reply"] = text
             state["step"] = "buttons"
             await msg.reply_text(
-                "（第 3/3 步）请发送随回复附带的*内联按钮*，每行一个：\n"
+                "（第 4/4 步）请发送随回复附带的*内联按钮*，每行一个：\n"
                 "`文字 - 链接`\n\n若不需要按钮，发送「跳过」。",
                 parse_mode="Markdown")
         elif step == "buttons":
@@ -480,10 +519,11 @@ class CustomizeModule(BaseModule):
                     buttons_json = json.dumps(rows, ensure_ascii=False)
             rid = self.db.add_auto_reply(
                 self.tenant_id, buf["keyword"], buf["reply"],
-                "contains", 0, buttons_json)
+                buf.get("match_type", "contains"), 0, buttons_json)
             ctx.user_data.pop("cz", None)
+            mt_note = "（正则）" if buf.get("match_type") == "regex" else ""
             await msg.reply_text(
-                f"✅ 已添加自动回复 #{rid}：「{buf['keyword']}」"
+                f"✅ 已添加自动回复 #{rid}：「{buf['keyword']}」{mt_note}"
                 f"{'（含按钮）' if buttons_json else ''}",
                 reply_markup=self._back_markup())
 

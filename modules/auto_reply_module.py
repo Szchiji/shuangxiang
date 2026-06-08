@@ -1,7 +1,7 @@
 """自动回复 + 关键词过滤（每个租户机器人各运行一份）。
 
 拥有者可配置：
-  • 自动回复：命中关键词时机器人自动回复，可选「拦截」（不再转发给管理员）。
+  • 自动回复：命中关键词时机器人自动回复，并拦截该消息（不再转发给管理员、不发送任何提示）。
   • 关键词过滤：用户消息含违禁词时拦截并提示。
   • 防刷屏过滤器：限制单用户短时间内的消息频率（默认开启，可关闭）。
   • 字母表过滤器：可屏蔽包含特定文字（如拉丁字母 / 英文）的消息（默认关闭）。
@@ -45,6 +45,11 @@ _FLOOD_MAX_MSGS = 5     # 窗口内最多消息数
 
 # 拉丁字母（英语等使用的基本/扩展拉丁字母）
 _LATIN_RE = re.compile(r"[A-Za-z\u00C0-\u024F]")
+
+
+def match_type_of(row) -> str:
+    """从自动回复记录中读取匹配方式（sqlite3.Row 无 .get，需手动判断）。"""
+    return (row["match_type"] if "match_type" in row.keys() else "") or "contains"
 
 
 class AutoReplyModule(BaseModule):
@@ -101,7 +106,7 @@ class AutoReplyModule(BaseModule):
         if not rows:
             await update.message.reply_text("暂无自动回复。用 /ar_add 添加。")
             return
-        lines = [f"#{r['id']} 「{r['keyword']}」→ {r['reply']}"
+        lines = [f"#{r['id']} 「{r['keyword']}」{self._type_tag(r)}→ {r['reply']}"
                  f"{' [拦截]' if r['stop'] else ''}" for r in rows]
         await update.message.reply_text("📝 自动回复：\n" + "\n".join(lines))
 
@@ -212,12 +217,33 @@ class AutoReplyModule(BaseModule):
 
         # 3) 自动回复
         for r in self.db.get_auto_replies(self.tenant_id):
-            if r["keyword"] in text:
+            if self._matches(r, text):
                 markup = self._reply_markup(r)
                 await msg.reply_text(r["reply"], reply_markup=markup)
-                if r["stop"]:
-                    raise ApplicationHandlerStop
-                return
+                # 自动回复命中即视为已处理：不再把关键词消息转发给租户机器人（管理员），
+                # 也不向其发送任何提示。
+                raise ApplicationHandlerStop
+
+    @staticmethod
+    def _matches(row, text: str) -> bool:
+        """判断一条自动回复是否命中。
+
+        match_type='regex' → 把 keyword 当作正则表达式（不区分大小写）匹配；
+        其它（默认 'contains'）→ 子串包含匹配。无效正则视为不命中。
+        """
+        keyword = row["keyword"]
+        match_type = match_type_of(row)
+        if match_type == "regex":
+            try:
+                return re.search(keyword, text, re.IGNORECASE) is not None
+            except re.error:
+                return False
+        return keyword in text
+
+    @staticmethod
+    def _type_tag(row) -> str:
+        """命中方式标签：正则显示「[正则] 」，包含匹配不额外标注。"""
+        return "[正则] " if match_type_of(row) == "regex" else ""
 
     @staticmethod
     def _reply_markup(row):

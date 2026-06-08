@@ -216,14 +216,49 @@ async def test_wizard_ar_full_flow(db):
     state = {"flow": "ar", "step": "keyword", "buf": {}}
     ctx.user_data["cz"] = state
     await cz._wizard_ar(FakeMessage(text="价格"), ctx, state)
+    assert state["step"] == "match"
+    # 第 2 步：选择匹配方式（包含）
+    await cz._pick_ar_match(_CbQuery(99, "cz:ar:mt:contains"), ctx, "contains")
+    assert state["step"] == "reply"
     await cz._wizard_ar(FakeMessage(text="见官网"), ctx, state)
     await cz._wizard_ar(
         FakeMessage(text="官网 - https://e.com"), ctx, state)
     rows = db.get_auto_replies(1)
     assert len(rows) == 1
     assert rows[0]["keyword"] == "价格"
+    assert rows[0]["match_type"] == "contains"
     btns = json.loads(rows[0]["buttons"])
     assert btns[0][0]["url"] == "https://e.com"
+
+
+@pytest.mark.asyncio
+async def test_wizard_ar_regex_flow(db):
+    cz = make_cz(db)
+    ctx = make_ctx()
+    state = {"flow": "ar", "step": "keyword", "buf": {}}
+    ctx.user_data["cz"] = state
+    await cz._wizard_ar(FakeMessage(text=r"价格|报价"), ctx, state)
+    await cz._pick_ar_match(_CbQuery(99, "cz:ar:mt:regex"), ctx, "regex")
+    assert state["step"] == "reply"
+    await cz._wizard_ar(FakeMessage(text="见官网"), ctx, state)
+    await cz._wizard_ar(FakeMessage(text="跳过"), ctx, state)
+    rows = db.get_auto_replies(1)
+    assert rows[0]["match_type"] == "regex"
+
+
+@pytest.mark.asyncio
+async def test_wizard_ar_regex_rejects_invalid_pattern(db):
+    cz = make_cz(db)
+    ctx = make_ctx()
+    state = {"flow": "ar", "step": "keyword", "buf": {}}
+    ctx.user_data["cz"] = state
+    await cz._wizard_ar(FakeMessage(text="("), ctx, state)  # 非法正则
+    q = _CbQuery(99, "cz:ar:mt:regex")
+    await cz._pick_ar_match(q, ctx, "regex")
+    # 仍停留在 match 步，并弹出告警
+    assert state["step"] == "match"
+    assert q.answers and q.answers[-1][1].get("show_alert") is True
+    assert db.get_auto_replies(1) == []
 
 
 @pytest.mark.asyncio
