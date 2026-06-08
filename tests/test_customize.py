@@ -505,10 +505,6 @@ async def test_guard_cmd_ignores_admin(db):
     assert not msg.replies
 
 
-class FakeCbMessage(FakeMessage):
-    pass
-
-
 def make_cb_update(user_id, data, message):
     query = types.SimpleNamespace(
         data=data, from_user=types.SimpleNamespace(id=user_id),
@@ -532,7 +528,7 @@ async def test_guard_cb_blocks_unsubscribed_button(db):
     db.set_setting(1, SK_FORCE_SUB,
                    json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
     ctx = make_ctx(FakeBot(member_status="left"))
-    msg = FakeCbMessage()
+    msg = FakeMessage()
     upd = make_cb_update(7, "pc:home", msg)
     from telegram.ext import ApplicationHandlerStop
     with pytest.raises(ApplicationHandlerStop):
@@ -548,7 +544,7 @@ async def test_guard_cb_allows_checksub_button(db):
     db.set_setting(1, SK_FORCE_SUB,
                    json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
     ctx = make_ctx(FakeBot(member_status="left"))
-    msg = FakeCbMessage()
+    msg = FakeMessage()
     upd = make_cb_update(7, "cz:checksub", msg)
     await cz.on_guard_cb(upd, ctx)  # 「我已订阅」复核不被拦截
     assert not upd.callback_query.answers
@@ -562,7 +558,7 @@ async def test_guard_cb_allows_subscribed_button(db):
     db.set_setting(1, SK_FORCE_SUB,
                    json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
     ctx = make_ctx(FakeBot(member_status="member"))
-    msg = FakeCbMessage()
+    msg = FakeMessage()
     upd = make_cb_update(7, "pc:home", msg)
     await cz.on_guard_cb(upd, ctx)  # 已订阅用户正常放行
     assert not upd.callback_query.answers

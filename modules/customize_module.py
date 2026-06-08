@@ -739,6 +739,7 @@ class CustomizeModule(BaseModule):
         return missing or None
 
     async def _send_join_prompt(self, target, missing) -> None:
+        """向 ``target`` 发送加入频道提示；``missing`` 为待加入频道列表。"""
         await target.reply_text(
             "🔒 请先加入以下频道后再继续：",
             reply_markup=self._join_markup(missing))
