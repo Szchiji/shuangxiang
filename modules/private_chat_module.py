@@ -40,6 +40,18 @@ class PrivateChatModule(BaseModule):
             "💡 把我加入一个开启「话题」的群并运行 /setgroup 可启用 Topics 管理模式。")
         self.received = msgs.get("received", "")
         self.banned   = msgs.get("banned", "⛔ 你已被封禁，无法发送消息。")
+        # 可配置品牌署名页脚（默认关闭，尊重租户；设置后追加到用户欢迎语末尾）
+        self.brand    = (msgs.get("brand") or "").strip()
+        # 拥有者首次进入时的「下一步」上手清单
+        self.admin_onboarding = (
+            "\n\n🚀 *新手上手清单：*\n"
+            "1️⃣ 自动回复：`/ar_add 你好 | 您好，有什么可以帮您？`\n"
+            "2️⃣ 关键词过滤：`/filter_add 广告`\n"
+            "3️⃣ 搭建菜单：`/menu_add 0 | 关于我们 | 这里是简介`\n"
+            "4️⃣ 收集表单：`/form_new 报名`\n"
+            "5️⃣ 数字商店：`/shop_addcat 会员`\n"
+            "6️⃣ 多人协作：把我加入论坛群并运行 /setgroup\n"
+            "查看用户统计：/stats")
 
         # 指令
         app.add_handler(CommandHandler("start", self.cmd_start))
@@ -93,11 +105,13 @@ class PrivateChatModule(BaseModule):
             return
         user = update.effective_user
         if self._is_admin(user.id):
-            await update.message.reply_text(self.admin_welcome)
+            await update.message.reply_text(
+                self.admin_welcome + self.admin_onboarding, parse_mode="Markdown")
         else:
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)
-            await update.message.reply_text(self.welcome)
+            text = self.welcome + (f"\n\n{self.brand}" if self.brand else "")
+            await update.message.reply_text(text)
 
     async def cmd_setgroup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -167,8 +181,19 @@ class PrivateChatModule(BaseModule):
         if not self._is_admin(update.effective_user.id):
             return
         s = self.db.get_tenant_user_count(self.tenant_id)
+        if s["total"] == 0:
+            await update.effective_message.reply_text(
+                "📊 *统计*\n\n还没有用户来联系你。\n"
+                "把你的机器人分享出去，并用 /ar_add 设置自动回复来留住第一批用户吧！",
+                parse_mode="Markdown")
+            return
         await update.effective_message.reply_text(
-            f"📊 *统计*\n\n总用户：{s['total']}\n正常：{s['active']}\n封禁：{s['banned']}",
+            "📊 *统计*\n\n"
+            f"总用户：{s['total']}\n"
+            f"正常：{s['active']}\n"
+            f"封禁：{s['banned']}\n"
+            f"近 7 天活跃：{s['active_7d']}\n"
+            f"近 7 天新增：{s['new_7d']}",
             parse_mode="Markdown",
         )
 

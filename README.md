@@ -28,10 +28,14 @@
 
 | 指令 | 说明 |
 | --- | --- |
-| `/start`、`/help` | 显示帮助 |
-| `/newbot <token>` | 用 @BotFather 给的 Token 创建你自己的机器人（立即上线） |
-| `/mybots` | 查看你创建的机器人列表 |
+| `/start`、`/help` | 显示图文引导（内联按钮：如何创建 / 我的机器人 / 常见问题） |
+| `/newbot <token>` | 用 @BotFather 给的 Token 创建你自己的机器人（立即上线）；也可只发 `/newbot`，再直接粘贴 Token |
+| `/mybots` | 查看你创建的机器人列表，并可一键分享 |
 | `/delbot <id>` | 删除某个机器人 |
+
+> 💡 平台主机器人与每个租户机器人启动时都会通过 `set_my_commands` 注册「/」命令菜单，
+> 在输入框旁即可看到可用命令；租户机器人会为拥有者额外展示管理命令。
+> 创建成功后会给出「三步上手」引导与「分享我的机器人」按钮，便于传播。
 
 ### 2. 租户机器人 —— 管理员（机器人拥有者）指令
 
@@ -144,4 +148,9 @@ tenant_modules:
   - modules.menu_module
   - modules.form_module
   - modules.store_module
+
+# 租户机器人提示文案（可选 brand 为品牌署名页脚，留空表示关闭）
+messages:
+  welcome: "👋 你好！直接发送消息即可联系管理员，我们会尽快回复你。"
+  brand:   ""
 ```

@@ -298,7 +298,21 @@ class Database:
             banned = c.execute(
                 "SELECT COUNT(*) FROM tenant_users WHERE tenant_id=? AND is_banned=1",
                 (tenant_id,)).fetchone()[0]
-            return {"total": total, "active": total - banned, "banned": banned}
+            active_7d = c.execute(
+                "SELECT COUNT(*) FROM tenant_users "
+                "WHERE tenant_id=? AND last_seen >= datetime('now','-7 days')",
+                (tenant_id,)).fetchone()[0]
+            new_7d = c.execute(
+                "SELECT COUNT(*) FROM tenant_users "
+                "WHERE tenant_id=? AND joined_at >= datetime('now','-7 days')",
+                (tenant_id,)).fetchone()[0]
+            return {
+                "total": total,
+                "active": total - banned,
+                "banned": banned,
+                "active_7d": active_7d,
+                "new_7d": new_7d,
+            }
 
     # ── 双向私聊消息映射（按租户隔离）───────────────────────
 

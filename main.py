@@ -1,9 +1,27 @@
 import asyncio
 
+from telegram import BotCommand
+
 from core.config_loader import load_config
 from core.database import Database
 from core.bot import ModularBot
 from core.tenant_manager import TenantManager
+
+
+# 平台主机器人「/」命令菜单（出现在输入框旁，提升可发现性）
+PLATFORM_COMMANDS = [
+    BotCommand("start",  "开始 / 帮助"),
+    BotCommand("newbot", "用 Token 创建我的机器人"),
+    BotCommand("mybots", "查看我创建的机器人"),
+    BotCommand("delbot", "删除我的机器人"),
+]
+
+
+async def _set_platform_commands(bot) -> None:
+    try:
+        await bot.set_my_commands(PLATFORM_COMMANDS)
+    except Exception as e:
+        print(f"⚠️ 设置平台命令菜单失败: {e}")
 
 
 async def main():
@@ -28,6 +46,8 @@ async def main():
         await bot.app.start()
         await bot.app.updater.start_polling(drop_pending_updates=True)
         print("🤖 平台主机器人已启动")
+
+        await _set_platform_commands(bot.app.bot)
 
         await tm.load_all()
 
