@@ -334,7 +334,7 @@ class PrivateChatModule(BaseModule):
             try:
                 target = int(action.split(":", 1)[1])
             except ValueError:
-                await q.answer()
+                await q.answer("⚠️ 无效的用户 ID")
                 return
             self.db.unban_user(self.tenant_id, target)
             await q.answer("已解封")
