@@ -117,6 +117,7 @@ python main.py
 | `ADMIN_ID` | 平台拥有者用户 ID |
 | `DB_PATH` | SQLite 数据库路径（默认 `bot.db`） |
 | `LOG_LEVEL` | 日志级别（`DEBUG`/`INFO`/`WARNING`/`ERROR`，默认 `INFO`） |
+| `TENANT_STARTUP_CONCURRENCY` | 启动时并发拉起租户机器人的上限（默认 `10`） |
 
 ## 稳定性与性能
 

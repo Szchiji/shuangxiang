@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+import os
 
 from telegram import Bot, BotCommand, BotCommandScopeChat
 from telegram.error import TelegramError
@@ -123,7 +124,12 @@ class TenantManager:
         logger.info("正在启动 %d 个已有租户机器人...", len(tenants))
         # 受控并发批量启动：相比逐个 sleep(0.2) 串行启动，租户多时显著更快，
         # 同时用信号量限制并发，避免一次性建立过多连接触发 Telegram 限制。
-        sem = asyncio.Semaphore(10)
+        # 并发上限可经环境变量 TENANT_STARTUP_CONCURRENCY 调整（默认 10）。
+        try:
+            limit = max(1, int(os.getenv("TENANT_STARTUP_CONCURRENCY", "10")))
+        except ValueError:
+            limit = 10
+        sem = asyncio.Semaphore(limit)
 
         async def _start(t):
             async with sem:
