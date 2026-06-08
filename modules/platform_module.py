@@ -4,7 +4,7 @@
   • /newbot <token>  —— 校验 token、登记并立即上线（也支持无参数引导态）
   • /mybots          —— 查看自己创建的机器人
   • /delbot <编号>   —— 停用并删除自己的机器人
-新建的机器人会自动加载平台配置中的 tenant_modules（私聊 / 自动回复 / 菜单 / 表单 / 商店等）。
+新建的机器人会自动加载平台配置中的 tenant_modules（双向私聊 / 交互式自定义 / 自动回复）。
 
 为了降低上手门槛并促进传播，本模块提供：
   • 内联按钮引导（如何创建 / 我的机器人 / 常见问题）；
@@ -387,17 +387,21 @@ class PlatformModule(BaseModule):
         tenant = self.db.get_tenant(tid)
         ok = await tm.start_tenant(tenant)
         if ok:
+            uname = me.username or ""
+            bot_link = f"https://t.me/{uname}"
+            uname_md = escape_markdown(uname)
             await update.message.reply_text(
-                f"✅ *创建成功！* 你的机器人：@{me.username}\n\n"
+                f"✅ *创建成功！* 你的机器人：[@{uname_md}]({bot_link})\n\n"
                 "🚀 *接下来三步上手：*\n"
-                f"1️⃣ 打开 t.me/{me.username} 给它发送 /start 测试收发\n"
-                "2️⃣ 设置自动回复：`/ar_add 你好 | 您好，请问有什么可以帮您？`\n"
-                "3️⃣ 搭建菜单：`/menu_add 0 | 关于我们 | 这里是简介`\n\n"
-                "💡 进阶：/setgroup 启用 Topics 多人协作、/form_new 收集表单、"
-                "/shop_addcat 开数字商店。\n"
+                f"1️⃣ 点击上方链接打开 [@{uname_md}]({bot_link})，发送 `/start` 测试收发\n"
+                "2️⃣ 发送 `/settings` 打开设置面板：自定义启动语、按钮、"
+                "自动回复与强制订阅\n"
+                "3️⃣ 发送 `/broadcast` 可一键群发给全部用户\n\n"
+                "💡 进阶：把我加入论坛群后发送 `/setgroup` 可启用 Topics 多人协作。\n"
                 "把机器人分享给朋友，让更多人来联系你 👇",
                 parse_mode="Markdown",
-                reply_markup=_share_keyboard(me.username or ""))
+                disable_web_page_preview=True,
+                reply_markup=_share_keyboard(uname))
         else:
             self.db.deactivate_tenant(tid)
             await update.message.reply_text(
