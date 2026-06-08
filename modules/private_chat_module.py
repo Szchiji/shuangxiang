@@ -8,6 +8,8 @@
 所有用户、封禁状态与消息映射均按 tenant_id 隔离。
 """
 
+import asyncio
+
 from telegram import Update
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -29,6 +31,12 @@ class PrivateChatModule(BaseModule):
         self.db        = Database()
         self.tenant_id = int(self.config.get("tenant_id", 0))
         self.admin_id  = int(self.config["bot"]["admin_id"])
+        # 相册（媒体组）缓冲：media_group_id -> {"user", "messages", "task"}。
+        # 同一相册的多张媒体以多个独立消息到达，需聚合后整体转发。
+        self._albums       = {}
+        self._album_delay  = 1.0
+        # 每用户话题创建锁，避免并发首条消息为同一用户重复建话题。
+        self._topic_locks  = {}
         msgs           = self.config.get("messages", {})
         self.welcome   = msgs.get(
             "welcome",
@@ -229,6 +237,11 @@ class PrivateChatModule(BaseModule):
             await msg.reply_text(self.banned)
             return
 
+        # 相册（媒体组）：聚合后整体转发，避免逐张拆散。
+        if getattr(msg, "media_group_id", None):
+            self._buffer_album(ctx, user, msg)
+            return
+
         group = self._manage_group()
         try:
             if group is not None:
@@ -242,6 +255,41 @@ class PrivateChatModule(BaseModule):
         if self.received:
             await msg.reply_text(self.received)
 
+    # ── 相册（媒体组）聚合 ───────────────────────────────────
+
+    def _buffer_album(self, ctx, user, msg) -> None:
+        mgid = msg.media_group_id
+        buf = self._albums.get(mgid)
+        if buf is None:
+            buf = {"user": user, "messages": [], "task": None}
+            self._albums[mgid] = buf
+        buf["messages"].append(msg)
+        if buf["task"] is not None:
+            buf["task"].cancel()
+        buf["task"] = asyncio.create_task(self._flush_album_later(ctx, mgid))
+
+    async def _flush_album_later(self, ctx, mgid) -> None:
+        try:
+            await asyncio.sleep(self._album_delay)
+        except asyncio.CancelledError:
+            return
+        buf = self._albums.pop(mgid, None)
+        if not buf or not buf["messages"]:
+            return
+        user = buf["user"]
+        messages = sorted(buf["messages"], key=lambda m: m.message_id)
+        group = self._manage_group()
+        try:
+            if group is not None:
+                await self._forward_album_to_topic(ctx, group, user, messages)
+            else:
+                await self._forward_album_to_dm(ctx, user, messages)
+        except TelegramError as e:
+            print(f"[私聊] 相册转发失败: {e}")
+            return
+        if self.received:
+            await messages[-1].reply_text(self.received)
+
     async def _forward_to_dm(self, ctx, user, msg) -> None:
         header = await ctx.bot.send_message(
             chat_id=self.admin_id,
@@ -253,19 +301,54 @@ class PrivateChatModule(BaseModule):
             chat_id=self.admin_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
         self.db.save_message_map(self.tenant_id, copied.message_id, user.id, msg.message_id)
 
+    async def _forward_album_to_dm(self, ctx, user, messages) -> None:
+        first = messages[0]
+        header = await ctx.bot.send_message(
+            chat_id=self.admin_id,
+            text=f"📩 *新消息*\n\n{self._user_label(user)}\n\n_回复本消息即可回复该用户_",
+            parse_mode="Markdown",
+        )
+        self.db.save_message_map(self.tenant_id, header.message_id, user.id, first.message_id)
+        copied = await ctx.bot.copy_messages(
+            chat_id=self.admin_id, from_chat_id=first.chat_id,
+            message_ids=[m.message_id for m in messages])
+        for mid in copied:
+            self.db.save_message_map(self.tenant_id, mid.message_id, user.id, first.message_id)
+
+    def _topic_lock(self, user_id: int) -> asyncio.Lock:
+        lock = self._topic_locks.get(user_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._topic_locks[user_id] = lock
+        return lock
+
+    async def _ensure_topic(self, ctx, group, user):
+        """获取用户对应话题，没有则创建。加锁避免并发重复创建。"""
+        async with self._topic_lock(user.id):
+            thread_id = self.db.get_user_topic(self.tenant_id, user.id)
+            if thread_id is None:
+                topic = await ctx.bot.create_forum_topic(
+                    chat_id=group, name=f"{user.full_name} · {user.id}")
+                thread_id = topic.message_thread_id
+                self.db.set_topic(self.tenant_id, thread_id, user.id)
+                await ctx.bot.send_message(
+                    chat_id=group, message_thread_id=thread_id,
+                    text=f"🆕 新会话\n\n{self._user_label(user)}", parse_mode="Markdown")
+            return thread_id
+
     async def _forward_to_topic(self, ctx, group, user, msg) -> None:
-        thread_id = self.db.get_user_topic(self.tenant_id, user.id)
-        if thread_id is None:
-            topic = await ctx.bot.create_forum_topic(
-                chat_id=group, name=f"{user.full_name} · {user.id}")
-            thread_id = topic.message_thread_id
-            self.db.set_topic(self.tenant_id, thread_id, user.id)
-            await ctx.bot.send_message(
-                chat_id=group, message_thread_id=thread_id,
-                text=f"🆕 新会话\n\n{self._user_label(user)}", parse_mode="Markdown")
+        thread_id = await self._ensure_topic(ctx, group, user)
         await ctx.bot.copy_message(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=msg.chat_id, message_id=msg.message_id)
+
+    async def _forward_album_to_topic(self, ctx, group, user, messages) -> None:
+        thread_id = await self._ensure_topic(ctx, group, user)
+        first = messages[0]
+        await ctx.bot.copy_messages(
+            chat_id=group, message_thread_id=thread_id,
+            from_chat_id=first.chat_id,
+            message_ids=[m.message_id for m in messages])
 
     async def _admin_reply_dm(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg    = update.message
@@ -302,6 +385,12 @@ class PrivateChatModule(BaseModule):
         if self.db.is_banned(self.tenant_id, target):
             await msg.reply_text("⛔ 该用户已被封禁。")
             return
+
+        # 拥有者发来的相册（媒体组）：聚合后整体回传给用户。
+        if getattr(msg, "media_group_id", None):
+            self._buffer_admin_album(ctx, target, msg)
+            return
+
         try:
             await ctx.bot.copy_message(
                 chat_id=target, from_chat_id=msg.chat_id, message_id=msg.message_id)
@@ -309,6 +398,37 @@ class PrivateChatModule(BaseModule):
             await msg.reply_text(f"❌ 发送失败：{e}")
             return
         await self._ack(msg)
+
+    def _buffer_admin_album(self, ctx, target, msg) -> None:
+        mgid = msg.media_group_id
+        buf = self._albums.get(mgid)
+        if buf is None:
+            buf = {"target": target, "messages": [], "task": None}
+            self._albums[mgid] = buf
+        buf["messages"].append(msg)
+        if buf["task"] is not None:
+            buf["task"].cancel()
+        buf["task"] = asyncio.create_task(self._flush_admin_album_later(ctx, mgid))
+
+    async def _flush_admin_album_later(self, ctx, mgid) -> None:
+        try:
+            await asyncio.sleep(self._album_delay)
+        except asyncio.CancelledError:
+            return
+        buf = self._albums.pop(mgid, None)
+        if not buf or not buf["messages"]:
+            return
+        target = buf["target"]
+        messages = sorted(buf["messages"], key=lambda m: m.message_id)
+        first = messages[0]
+        try:
+            await ctx.bot.copy_messages(
+                chat_id=target, from_chat_id=first.chat_id,
+                message_ids=[m.message_id for m in messages])
+        except TelegramError as e:
+            await first.reply_text(f"❌ 发送失败：{e}")
+            return
+        await self._ack(messages[-1])
 
     @staticmethod
     async def _ack(msg) -> None:
