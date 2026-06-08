@@ -102,6 +102,16 @@ def test_reply_snippet_truncates(db):
     assert snippet is not None and len(snippet) <= 80 and snippet.endswith("…")
 
 
+def test_user_label_escapes_markdown(db):
+    mod = make_module(db)
+    user = types.SimpleNamespace(
+        id=7, full_name="A_B*C[d]", username="foo_bar")
+    label = mod._user_label(user)
+    # Markdown 特殊字符被转义，避免实体解析失败
+    assert "A\\_B\\*C\\[d]" in label
+    assert "@foo\\_bar" in label
+
+
 @pytest.mark.asyncio
 async def test_incoming_user_acks_and_autodeletes(db):
     mod = make_module(db, manage_group=None)
