@@ -31,6 +31,8 @@ TENANT_USER_COMMANDS = [
 
 TENANT_ADMIN_COMMANDS = TENANT_USER_COMMANDS + [
     BotCommand("panel",      "打开控制面板（按钮式管理）"),
+    BotCommand("settings",   "高级设置（启动语/按钮/强制订阅/广播）"),
+    BotCommand("broadcast",  "群发广播给所有用户"),
     BotCommand("stats",      "查看用户统计"),
     BotCommand("info",       "查看用户资料（回复消息）"),
     BotCommand("ban",        "封禁用户（回复消息）"),
