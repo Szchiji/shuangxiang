@@ -201,12 +201,16 @@ class Database:
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
 
     def _migrate(self) -> None:
-        """对早期版本创建的数据库补充后续新增的列。
+        """对早期版本创建的数据库补充后续新增的列 / 重建不兼容的旧表。
 
-        ``CREATE TABLE IF NOT EXISTS`` 不会向已存在的表追加新列，因此旧库会缺少
-        诸如 ``tenants.bot_id`` 等后来新增的字段。这里通过 PRAGMA table_info
-        检测缺失列并用 ALTER TABLE ADD COLUMN 补齐（幂等，可重复执行）。
+        ``CREATE TABLE IF NOT EXISTS`` 不会修改已存在的表，因此旧库可能：
+          • 缺少诸如 ``tenants.bot_id`` 等后来新增的字段；
+          • 残留早期 schema 的 ``tenants.admin_id NOT NULL`` 列——新版 INSERT 不再
+            写入该列，导致 ``NOT NULL constraint failed: tenants.admin_id``。
+        这里先重建带有遗留列的 tenants 表，再通过 PRAGMA table_info 检测缺失列并用
+        ALTER TABLE ADD COLUMN 补齐（均为幂等，可重复执行）。
         """
+        self._rebuild_legacy_tenants()
         expected_columns = {
             "tenants": [
                 ("bot_id", "INTEGER"),
@@ -234,6 +238,66 @@ class Database:
                         c.execute(
                             f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
                         logger.info("数据库迁移：为 %s 增加列 %s", table, name)
+
+    def _rebuild_legacy_tenants(self) -> None:
+        """重建残留早期 ``admin_id`` 列的 tenants 表。
+
+        早期版本的 ``tenants`` 表带有 ``admin_id NOT NULL`` 列；新版 ``add_tenant``
+        不再写入该列，旧库插入时会触发
+        ``NOT NULL constraint failed: tenants.admin_id``。这里把旧表数据迁移到符合
+        当前 schema 的新表（如 ``owner_user_id`` 缺失/为空则回退使用 ``admin_id``），
+        然后用新表替换旧表。幂等：表中已无 ``admin_id`` 列时直接返回。
+        """
+        # 单独使用一条连接，便于在事务外关闭外键约束以安全地重命名/替换表。
+        conn = sqlite3.connect(self._db_path, timeout=30.0)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=30000")
+            cols = {row["name"] for row in
+                    conn.execute("PRAGMA table_info(tenants)").fetchall()}
+            if not cols or "admin_id" not in cols:
+                return  # 表不存在或无遗留列，无需重建。
+
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("BEGIN")
+            conn.execute("""
+                CREATE TABLE tenants__new (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token         TEXT NOT NULL UNIQUE,
+                    bot_id        INTEGER,
+                    bot_username  TEXT,
+                    bot_name      TEXT,
+                    owner_user_id INTEGER NOT NULL,
+                    is_active     INTEGER DEFAULT 1,
+                    created_at    TEXT DEFAULT (datetime('now'))
+                )""")
+            # 仅复制两张表共有的列；owner_user_id 缺失/为空时回退到 admin_id。
+            owner_expr = ("COALESCE(owner_user_id, admin_id)"
+                          if "owner_user_id" in cols else "admin_id")
+            select_cols = ", ".join([
+                "id",
+                "token",
+                "bot_id" if "bot_id" in cols else "NULL",
+                "bot_username" if "bot_username" in cols else "NULL",
+                "bot_name" if "bot_name" in cols else "NULL",
+                owner_expr,
+                "is_active" if "is_active" in cols else "1",
+                "created_at" if "created_at" in cols else "datetime('now')",
+            ])
+            conn.execute(
+                f"""INSERT INTO tenants__new
+                    (id, token, bot_id, bot_username, bot_name,
+                     owner_user_id, is_active, created_at)
+                    SELECT {select_cols} FROM tenants""")
+            conn.execute("DROP TABLE tenants")
+            conn.execute("ALTER TABLE tenants__new RENAME TO tenants")
+            conn.execute("COMMIT")
+            logger.info("数据库迁移：重建 tenants 表以移除遗留列 admin_id")
+        except sqlite3.Error:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
 
     # ── 通用租户键值设置（用于过滤器开关等）─────────────────
 
