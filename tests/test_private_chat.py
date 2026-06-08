@@ -107,9 +107,10 @@ def test_user_label_escapes_markdown(db):
     user = types.SimpleNamespace(
         id=7, full_name="A_B*C[d]", username="foo_bar")
     label = mod._user_label(user)
-    # Markdown 特殊字符被转义，避免实体解析失败
-    assert "A\\_B\\*C\\[d]" in label
-    assert "@foo\\_bar" in label
+    # 使用 HTML 转义，避免用户名/昵称中的特殊字符导致实体解析失败
+    assert "A_B*C[d]" in label
+    assert "@foo_bar" in label
+    assert "<code>7</code>" in label
 
 
 @pytest.mark.asyncio

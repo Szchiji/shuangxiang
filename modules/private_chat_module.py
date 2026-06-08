@@ -9,6 +9,7 @@
 """
 
 import asyncio
+import html
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -21,7 +22,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telegram.helpers import escape_markdown
 
 from core.base_module import BaseModule
 from core.database import Database
@@ -109,12 +109,14 @@ class PrivateChatModule(BaseModule):
         return f"\n\n🏭 由 @{uname} 创建" if uname else ""
 
     def _user_label(self, user) -> str:
-        name = escape_markdown(user.full_name or "", version=1)
+        # 使用 HTML 转义/标记：用户名或昵称中的 _ * [ ` 等字符在 Telegram
+        # 旧版 Markdown 下无法可靠转义，会导致「Can't parse entities」报错。
+        name = html.escape(user.full_name or "")
         uname = (
-            f"@{escape_markdown(user.username, version=1)}"
+            f"@{html.escape(user.username)}"
             if user.username else "无用户名"
         )
-        return f"👤 {name} ({uname})\n🆔 ID: `{user.id}`"
+        return f"👤 {name} ({uname})\n🆔 ID: <code>{user.id}</code>"
 
     def _resolve_target(self, update: Update):
         reply = update.message.reply_to_message
@@ -211,13 +213,13 @@ class PrivateChatModule(BaseModule):
             return
         status = "⛔ 已封禁" if u["is_banned"] else "✅ 正常"
         await update.message.reply_text(
-            f"👤 {u['full_name']}\n"
-            f"🔗 @{u['username'] or '无'}\n"
-            f"🆔 `{u['user_id']}`\n"
+            f"👤 {html.escape(u['full_name'] or '')}\n"
+            f"🔗 @{html.escape(u['username'] or '无')}\n"
+            f"🆔 <code>{u['user_id']}</code>\n"
             f"📊 状态：{status}\n"
             f"🕐 首次：{u['joined_at']}\n"
             f"🕐 最近：{u['last_seen']}",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     async def cmd_stats(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -465,8 +467,8 @@ class PrivateChatModule(BaseModule):
     async def _forward_to_dm(self, ctx, user, msg) -> None:
         header = await ctx.bot.send_message(
             chat_id=self.admin_id,
-            text=f"📩 *新消息*\n\n{self._user_label(user)}\n\n_回复本消息即可回复该用户_",
-            parse_mode="Markdown",
+            text=f"📩 <b>新消息</b>\n\n{self._user_label(user)}\n\n<i>回复本消息即可回复该用户</i>",
+            parse_mode="HTML",
         )
         self.db.save_message_map(self.tenant_id, header.message_id, user.id, msg.message_id)
         copied = await ctx.bot.copy_message(
@@ -477,8 +479,8 @@ class PrivateChatModule(BaseModule):
         first = messages[0]
         header = await ctx.bot.send_message(
             chat_id=self.admin_id,
-            text=f"📩 *新消息*\n\n{self._user_label(user)}\n\n_回复本消息即可回复该用户_",
-            parse_mode="Markdown",
+            text=f"📩 <b>新消息</b>\n\n{self._user_label(user)}\n\n<i>回复本消息即可回复该用户</i>",
+            parse_mode="HTML",
         )
         self.db.save_message_map(self.tenant_id, header.message_id, user.id, first.message_id)
         copied = await ctx.bot.copy_messages(
@@ -505,7 +507,7 @@ class PrivateChatModule(BaseModule):
                 self.db.set_topic(self.tenant_id, thread_id, user.id)
                 await ctx.bot.send_message(
                     chat_id=group, message_thread_id=thread_id,
-                    text=f"🆕 新会话\n\n{self._user_label(user)}", parse_mode="Markdown")
+                    text=f"🆕 新会话\n\n{self._user_label(user)}", parse_mode="HTML")
             return thread_id
 
     @staticmethod
