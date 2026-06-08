@@ -241,6 +241,7 @@ async def test_menu_button_clears_pending_admin_flow(db):
 
 
 # ── 平台署名：自定义优先，回退自动探测 ──────────────────────
+
 def test_platform_footer_username_prefers_custom(db):
     assert platform_footer_username(db) == ""
     db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME_AUTO, "AutoBot")
