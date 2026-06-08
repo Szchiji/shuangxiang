@@ -10,11 +10,12 @@
 命中拦截时通过 ApplicationHandlerStop 阻止后续转发。
 """
 
+import json
 import logging
 import re
 import time
 
-from telegram import Update
+from telegram import InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -26,6 +27,7 @@ from telegram.ext import (
 
 from core.base_module import BaseModule
 from core.database import Database
+from modules.customize_module import rows_to_keyboard
 
 logger = logging.getLogger("shuangxiang.auto_reply")
 
@@ -206,7 +208,20 @@ class AutoReplyModule(BaseModule):
         # 3) 自动回复
         for r in self.db.get_auto_replies(self.tenant_id):
             if r["keyword"] in text:
-                await msg.reply_text(r["reply"])
+                markup = self._reply_markup(r)
+                await msg.reply_text(r["reply"], reply_markup=markup)
                 if r["stop"]:
                     raise ApplicationHandlerStop
                 return
+
+    @staticmethod
+    def _reply_markup(row):
+        """若该自动回复配置了内联按钮（JSON），构建 InlineKeyboardMarkup。"""
+        raw = row["buttons"] or ""
+        if not raw:
+            return None
+        try:
+            keyboard = rows_to_keyboard(json.loads(raw))
+        except (ValueError, TypeError, KeyError):
+            return None
+        return InlineKeyboardMarkup(keyboard) if keyboard else None

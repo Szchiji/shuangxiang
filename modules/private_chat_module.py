@@ -25,6 +25,7 @@ from telegram.ext import (
 from core.base_module import BaseModule
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
+from modules.customize_module import SK_WELCOME_BTNS, SK_WELCOME_TEXT, load_button_rows
 
 logger = logging.getLogger("shuangxiang.private_chat")
 
@@ -122,7 +123,9 @@ class PrivateChatModule(BaseModule):
         else:
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)
-            text = self.welcome + (f"\n\n{self.brand}" if self.brand else "")
+            welcome = self.db.get_setting(
+                self.tenant_id, SK_WELCOME_TEXT, "") or self.welcome
+            text = welcome + (f"\n\n{self.brand}" if self.brand else "")
             await update.message.reply_text(
                 text, reply_markup=self._user_home_markup())
 
@@ -228,6 +231,7 @@ class PrivateChatModule(BaseModule):
             [InlineKeyboardButton(
                 f"💬 Topics 模式：{'✅ 已启用' if topics else '未启用'}",
                 callback_data="pc:topics")],
+            [InlineKeyboardButton("🎛 高级设置", callback_data="cz:home")],
             [InlineKeyboardButton("📖 指令速查", callback_data="pc:help")],
         ])
 
@@ -312,8 +316,8 @@ class PrivateChatModule(BaseModule):
     # ── 用户主页导航（按钮代替命令）──────────────────────────
 
     def _user_home_markup(self):
-        """根据已配置内容，为用户生成「菜单/表单/商店」导航按钮。"""
-        rows = []
+        """根据已配置内容，为用户生成「自定义按钮 + 菜单/表单/商店」导航按钮。"""
+        rows = list(load_button_rows(self.db, self.tenant_id, SK_WELCOME_BTNS))
         if self.db.get_menu_children(self.tenant_id, 0):
             rows.append([InlineKeyboardButton("📋 浏览菜单", callback_data="menu:0")])
         if self.db.get_forms(self.tenant_id):

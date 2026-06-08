@@ -119,7 +119,8 @@ class Database:
                     keyword    TEXT NOT NULL,
                     reply      TEXT NOT NULL,
                     match_type TEXT DEFAULT 'contains',
-                    stop       INTEGER DEFAULT 0
+                    stop       INTEGER DEFAULT 0,
+                    buttons    TEXT DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS filters (
                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -222,6 +223,9 @@ class Database:
             "tenant_settings": [
                 ("manage_group", "INTEGER"),
                 ("welcome", "TEXT"),
+            ],
+            "auto_replies": [
+                ("buttons", "TEXT DEFAULT ''"),
             ],
         }
         with self._conn() as c:
@@ -465,6 +469,14 @@ class Database:
                 "new_7d": new_7d,
             }
 
+    def get_tenant_user_ids(self, tenant_id, only_active=True):
+        """返回该租户下的用户 ID 列表，用于群发广播。默认排除已封禁用户。"""
+        sql = "SELECT user_id FROM tenant_users WHERE tenant_id=?"
+        if only_active:
+            sql += " AND is_banned=0"
+        with self._conn() as c:
+            return [r["user_id"] for r in c.execute(sql, (tenant_id,)).fetchall()]
+
     # ── 双向私聊消息映射（按租户隔离）───────────────────────
 
     def save_message_map(self, tenant_id, admin_msg_id, user_id, user_msg_id=None):
@@ -508,12 +520,13 @@ class Database:
 
     # ── 自动回复 / 过滤 ─────────────────────────────────────
 
-    def add_auto_reply(self, tenant_id, keyword, reply, match_type="contains", stop=0):
+    def add_auto_reply(self, tenant_id, keyword, reply, match_type="contains", stop=0,
+                       buttons=""):
         with self._conn() as c:
             return c.execute(
-                """INSERT INTO auto_replies(tenant_id,keyword,reply,match_type,stop)
-                   VALUES(?,?,?,?,?)""",
-                (tenant_id, keyword, reply, match_type, stop)).lastrowid
+                """INSERT INTO auto_replies(tenant_id,keyword,reply,match_type,stop,buttons)
+                   VALUES(?,?,?,?,?,?)""",
+                (tenant_id, keyword, reply, match_type, stop, buttons)).lastrowid
 
     def get_auto_replies(self, tenant_id):
         with self._conn() as c:
