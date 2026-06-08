@@ -6,12 +6,17 @@ import types
 import pytest
 
 from modules.platform_module import (
+    MENU_ADMIN,
+    MENU_CREATE,
+    MENU_MYBOTS,
+    MENU_NEWBOT,
     PLATFORM_TID,
     SK_PLATFORM_BOT_USERNAME,
     SK_PLATFORM_BOT_USERNAME_AUTO,
     SK_PLATFORM_START_BTNS,
     SK_PLATFORM_START_TEXT,
     PlatformModule,
+    _reply_keyboard,
     platform_footer_username,
 )
 from modules.private_chat_module import PrivateChatModule
@@ -173,6 +178,65 @@ async def test_non_admin_text_not_treated_as_admin_flow(db):
     ctx = types.SimpleNamespace(
         chat_data={}, user_data={"pf_admin_flow": "text"})
     await pf.on_text(make_text_update(1234, FakeMessage(text="x")), ctx)
+    assert db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT) is None
+
+
+# ── 底部键盘菜单 ────────────────────────────────────────────
+
+def _reply_labels(markup):
+    return [b.text for row in markup.keyboard for b in row]
+
+
+def test_reply_keyboard_admin_shows_settings():
+    assert MENU_ADMIN in _reply_labels(_reply_keyboard(is_super_admin=True))
+    assert MENU_ADMIN not in _reply_labels(_reply_keyboard(is_super_admin=False))
+
+
+@pytest.mark.asyncio
+async def test_menu_button_newbot_enters_token_flow(db):
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(chat_data={}, user_data={})
+    await pf.on_text(make_text_update(1234, FakeMessage(text=MENU_NEWBOT)), ctx)
+    assert ctx.chat_data.get("awaiting_token") is True
+
+
+@pytest.mark.asyncio
+async def test_menu_button_mybots_shows_view(db):
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(chat_data={}, user_data={})
+    msg = FakeMessage(text=MENU_MYBOTS)
+    await pf.on_text(make_text_update(1234, msg), ctx)
+    assert msg.replies  # 渲染了「我的机器人」视图
+
+
+@pytest.mark.asyncio
+async def test_menu_admin_for_non_admin_falls_back_home(db):
+    pf = make_pf(db)
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "主页文本")
+    ctx = types.SimpleNamespace(chat_data={}, user_data={})
+    msg = FakeMessage(text=MENU_ADMIN)
+    await pf.on_text(make_text_update(1234, msg), ctx)
+    assert msg.replies[0][0] == "主页文本"  # 普通用户回退到主菜单
+
+
+@pytest.mark.asyncio
+async def test_menu_admin_for_admin_opens_settings(db):
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(chat_data={}, user_data={})
+    msg = FakeMessage(text=MENU_ADMIN)
+    await pf.on_text(make_text_update(99, msg), ctx)
+    cbs = _callbacks(msg.replies[0][1]["reply_markup"])
+    assert "pf:admin:text" in cbs
+
+
+@pytest.mark.asyncio
+async def test_menu_button_clears_pending_admin_flow(db):
+    """超级管理员处于输入流程时点击底部菜单，应取消流程而非保存输入。"""
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(
+        chat_data={}, user_data={"pf_admin_flow": "text"})
+    await pf.on_text(make_text_update(99, FakeMessage(text=MENU_CREATE)), ctx)
+    assert "pf_admin_flow" not in ctx.user_data
     assert db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT) is None
 
 

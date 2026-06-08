@@ -19,6 +19,8 @@ from urllib.parse import quote
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
     Update,
 )
 from telegram.ext import (
@@ -93,6 +95,39 @@ def _default_start_buttons() -> list:
         [InlineKeyboardButton("🤖 我的机器人", callback_data="pf:mybots")],
         [InlineKeyboardButton("❓ 常见问题", callback_data="pf:faq")],
     ]
+
+
+# ── 底部键盘菜单（持久 ReplyKeyboard）──────────────────────────
+# 与主页内联按钮对应，让用户无需记忆指令即可在输入框下方快速操作。
+MENU_NEWBOT = "🪄 创建机器人"
+MENU_MYBOTS = "🤖 我的机器人"
+MENU_CREATE = "📖 如何创建"
+MENU_FAQ    = "❓ 常见问题"
+MENU_HOME   = "🏠 主菜单"
+MENU_ADMIN  = "⚙️ 平台设置"
+
+# 底部菜单按钮文字 → 对应页面动作（与 on_callback 的 action 命名保持一致）。
+_MENU_ACTIONS = {
+    MENU_NEWBOT: "newbot",
+    MENU_MYBOTS: "mybots",
+    MENU_CREATE: "create",
+    MENU_FAQ:    "faq",
+    MENU_HOME:   "home",
+    MENU_ADMIN:  "admin",
+}
+
+
+def _reply_keyboard(is_super_admin: bool = False) -> ReplyKeyboardMarkup:
+    """构建平台机器人输入框下方的持久底部菜单。超级管理员额外显示「平台设置」。"""
+    rows = [
+        [KeyboardButton(MENU_NEWBOT), KeyboardButton(MENU_MYBOTS)],
+        [KeyboardButton(MENU_CREATE), KeyboardButton(MENU_FAQ)],
+    ]
+    if is_super_admin:
+        rows.append([KeyboardButton(MENU_HOME), KeyboardButton(MENU_ADMIN)])
+    else:
+        rows.append([KeyboardButton(MENU_HOME)])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
 
 
 def _help_create_keyboard() -> InlineKeyboardMarkup:
@@ -173,6 +208,10 @@ class PlatformModule(BaseModule):
         await update.message.reply_text(
             self._start_text(), parse_mode="Markdown",
             reply_markup=self._home_markup(u.id))
+        # 安装/刷新输入框下方的持久底部菜单（独立一条消息，因每条消息只能携带一种键盘）。
+        await update.message.reply_text(
+            "📋 底部菜单已就绪，点击下方按钮即可快速操作 👇",
+            reply_markup=_reply_keyboard(self._is_super_admin(u.id)))
 
     # ── 内联按钮回调 ────────────────────────────────────────
 
@@ -277,17 +316,58 @@ class PlatformModule(BaseModule):
     # ── 无参数引导态：粘贴 Token ─────────────────────────────
 
     async def on_text(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        text = (update.message.text or "").strip()
+        # 底部菜单按钮优先处理：点击即跳转对应页面，并清理进行中的引导态。
+        action = _MENU_ACTIONS.get(text)
+        if action:
+            ctx.chat_data["awaiting_token"] = False
+            ctx.user_data.pop("pf_admin_flow", None)
+            if action == "admin" and not self._is_super_admin(
+                    update.effective_user.id):
+                action = "home"
+            await self._send_menu_page(update, ctx, action)
+            return
         flow = ctx.user_data.get("pf_admin_flow")
         if flow and self._is_super_admin(update.effective_user.id):
             await self._handle_admin_input(update, ctx, flow)
             return
         if not ctx.chat_data.get("awaiting_token"):
             return
-        token = (update.message.text or "").strip()
+        token = text
         if not TOKEN_RE.match(token):
             return  # 非 Token 文本，忽略，等待用户重新发送或使用按钮
         ctx.chat_data["awaiting_token"] = False
         await self._create_bot(update, ctx, token)
+
+    async def _send_menu_page(self, update: Update,
+                              ctx: ContextTypes.DEFAULT_TYPE, action: str) -> None:
+        """底部菜单按钮对应的页面，复用主页 / 我的机器人 / 帮助 / 设置等视图。"""
+        msg = update.message
+        uid = update.effective_user.id
+        if action == "newbot":
+            ctx.chat_data["awaiting_token"] = True
+            await msg.reply_text(
+                "🪄 请把从 @BotFather 拿到的 *Token* 直接发给我即可。\n"
+                "（形如 `123456:ABC-DEF1234ghIkl...`）",
+                parse_mode="Markdown", reply_markup=_await_token_keyboard())
+        elif action == "mybots":
+            mtext, markup = self._mybots_view(uid)
+            await msg.reply_text(mtext, parse_mode="Markdown", reply_markup=markup)
+        elif action == "create":
+            await msg.reply_text(
+                HELP_CREATE_TEXT, parse_mode="Markdown",
+                reply_markup=_help_create_keyboard())
+        elif action == "faq":
+            await msg.reply_text(
+                FAQ_TEXT, parse_mode="Markdown", reply_markup=_back_keyboard())
+        elif action == "admin":
+            await msg.reply_text(
+                self._admin_text(), parse_mode="Markdown",
+                reply_markup=self._admin_markup())
+        else:  # home
+            await msg.reply_text(
+                self._start_text(), parse_mode="Markdown",
+                reply_markup=self._home_markup(uid))
 
     async def _handle_admin_input(self, update: Update,
                                   ctx: ContextTypes.DEFAULT_TYPE, flow: str) -> None:

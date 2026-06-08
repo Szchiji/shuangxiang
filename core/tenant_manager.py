@@ -10,7 +10,7 @@ import logging
 import os
 
 from telegram import Bot, BotCommandScopeChat
-from telegram.error import TelegramError
+from telegram.error import InvalidToken, TelegramError
 from telegram.ext import Application
 
 from core.app_factory import build_application
@@ -67,8 +67,48 @@ class TenantManager:
             return False
         self.bots[tid] = app
         logger.info("[租户#%s] 机器人已启动 (@%s)", tid, tenant["bot_username"])
+        self._supervise_polling(tid)
         await self._clear_tenant_commands(app.bot, tenant["owner_user_id"])
         return True
+
+    def _supervise_polling(self, tid: int) -> None:
+        """监控租户轮询任务：Token 在运行期间失效（如被 BotFather 撤销）时，
+        polling 循环会带 InvalidToken 异常退出。为其挂载完成回调，
+        避免异常被静默丢弃，并自动停用该租户、清理资源。"""
+        app = self.bots.get(tid)
+        updater = getattr(app, "updater", None) if app else None
+        # __polling_task 为 Updater 的私有属性（名称改写后为 _Updater__polling_task），
+        # 在 start_polling 之后创建；不同 PTB 版本若缺失则静默跳过监控。
+        task = getattr(updater, "_Updater__polling_task", None)
+        if task is None:
+            return
+
+        def _on_done(t) -> None:
+            if t.cancelled():
+                return
+            try:
+                exc = t.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is None:
+                return
+            asyncio.create_task(self._on_polling_failure(tid, exc))
+
+        task.add_done_callback(_on_done)
+
+    async def _on_polling_failure(self, tid: int, exc: BaseException) -> None:
+        """轮询任务异常退出后的处理：Token 失效则停用租户，其它异常仅记录。"""
+        if isinstance(exc, InvalidToken):
+            logger.warning(
+                "[租户#%s] Token 已失效（可能被 BotFather 撤销），已停用该机器人。", tid)
+            try:
+                self.db.deactivate_tenant(tid)
+            except Exception as e:
+                logger.warning("[租户#%s] 停用失败: %s", tid, e)
+            await self.stop_tenant(tid)
+        else:
+            logger.error(
+                "[租户#%s] 轮询循环异常退出: %s", tid, exc, exc_info=exc)
 
     @staticmethod
     async def _clear_tenant_commands(bot, owner_user_id: int) -> None:
