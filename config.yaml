@@ -13,9 +13,6 @@ tenant_modules:
   - modules.private_chat_module   # 双向私聊（DM / Topics 模式）
   - modules.customize_module      # 交互式自定义（启动语/按钮/强制订阅/广播）
   - modules.auto_reply_module     # 自动回复 + 关键词过滤
-  - modules.menu_module           # 菜单 / 子菜单
-  - modules.form_module           # 引导式表单
-  - modules.store_module          # 数字商店
 
 # 租户机器人可自定义的提示文案（默认值）
 messages:

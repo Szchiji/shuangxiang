@@ -69,9 +69,20 @@ class FakeMessage:
         self.chat_id = chat_id
         self.reply_to_message = reply_to_message
         self.replies = []
+        self.media_replies = []
 
     async def reply_text(self, *a, **k):
         self.replies.append(a[0] if a else "")
+        return types.SimpleNamespace(
+            message_id=self.message_id + 10000, chat_id=self.chat_id)
+
+    async def reply_photo(self, file_id, **k):
+        self.media_replies.append(("photo", file_id, k))
+        return types.SimpleNamespace(
+            message_id=self.message_id + 10000, chat_id=self.chat_id)
+
+    async def reply_video(self, file_id, **k):
+        self.media_replies.append(("video", file_id, k))
         return types.SimpleNamespace(
             message_id=self.message_id + 10000, chat_id=self.chat_id)
 

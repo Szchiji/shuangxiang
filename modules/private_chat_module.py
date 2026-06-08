@@ -25,7 +25,14 @@ from telegram.ext import (
 from core.base_module import BaseModule
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
-from modules.customize_module import SK_WELCOME_BTNS, SK_WELCOME_TEXT, load_button_rows
+from modules.customize_module import (
+    SK_WELCOME_BTNS,
+    SK_WELCOME_MEDIA_ID,
+    SK_WELCOME_MEDIA_TYPE,
+    SK_WELCOME_TEXT,
+    load_button_rows,
+    reply_with_optional_media,
+)
 from modules.platform_module import platform_footer_username
 
 logger = logging.getLogger("shuangxiang.private_chat")
@@ -136,8 +143,13 @@ class PrivateChatModule(BaseModule):
                 self.tenant_id, SK_WELCOME_TEXT, "") or self.welcome
             text = welcome + (f"\n\n{self.brand}" if self.brand else "")
             text += self._platform_footer()
-            await update.message.reply_text(
-                text, reply_markup=self._user_home_markup())
+            media_type = self.db.get_setting(
+                self.tenant_id, SK_WELCOME_MEDIA_TYPE, "") or ""
+            media_id = self.db.get_setting(
+                self.tenant_id, SK_WELCOME_MEDIA_ID, "") or ""
+            await reply_with_optional_media(
+                update.message, text, media_type, media_id,
+                reply_markup=self._user_home_markup())
 
     async def cmd_setgroup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -237,10 +249,6 @@ class PrivateChatModule(BaseModule):
             [InlineKeyboardButton("✏️ 启动语", callback_data="cz:welcome"),
              InlineKeyboardButton("📊 数据统计", callback_data="pc:stats")],
             [InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
-            # 内容功能（菜单 / 表单 / 商店）
-            [InlineKeyboardButton("📋 菜单", callback_data="pc:menu"),
-             InlineKeyboardButton("📝 表单", callback_data="pc:form"),
-             InlineKeyboardButton("🛒 商店", callback_data="pc:store")],
             # 安全开关（点一下即切换）
             [InlineKeyboardButton(
                 f"🛡 防刷屏：{'✅ 开' if antiflood else '⛔ 关'}",
@@ -260,7 +268,6 @@ class PrivateChatModule(BaseModule):
             "⚙️ *控制面板*\n\n"
             "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
             "• 自定义自动回复、启动语、群发等常用功能\n"
-            "• 管理菜单、表单、商店等内容功能\n"
             "• 一键开关安全过滤与 Topics 协作模式")
 
     def _bans_view(self):
@@ -285,66 +292,7 @@ class PrivateChatModule(BaseModule):
         kb.append([InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")])
         return text, InlineKeyboardMarkup(kb)
 
-    # ── 内容功能管理视图（菜单 / 表单 / 商店）────────────────
-
-    def _menu_view(self) -> str:
-        """菜单管理视图：展示当前菜单结构与维护指令。"""
-        lines: list[str] = []
-        self._walk_menu(0, 0, lines)
-        body = "\n".join(lines) if lines else "（暂无菜单项）"
-        return (
-            "📋 *菜单管理*\n\n"
-            f"当前菜单结构：\n{body}\n\n"
-            "维护指令：\n"
-            "• /menu_add <父项编号> | <按钮文字> | <内容(可选)>（父项 0 = 根菜单）\n"
-            "• /menu_list 查看　• /menu_del <编号> 删除\n\n"
-            "用户可点开始页的「📋 浏览菜单」或发送 /menu 浏览。")
-
-    def _walk_menu(self, parent_id: int, depth: int, out: list[str]) -> None:
-        for ch in self.db.get_menu_children(self.tenant_id, parent_id):
-            out.append(f"{'　' * depth}#{ch['id']} {ch['label']}")
-            self._walk_menu(ch["id"], depth + 1, out)
-
-    def _form_view(self) -> str:
-        """表单管理视图：展示当前表单与维护指令。"""
-        forms = self.db.get_forms(self.tenant_id)
-        if forms:
-            lines = []
-            for f in forms:
-                steps = self.db.get_form_steps(f["id"])
-                lines.append(f"#{f['id']} {f['title']}（{len(steps)} 步）")
-            body = "\n".join(lines)
-        else:
-            body = "（暂无表单）"
-        return (
-            "📝 *表单管理*\n\n"
-            f"当前表单：\n{body}\n\n"
-            "维护指令：\n"
-            "• /form_new <标题> 创建表单\n"
-            "• /form_step <表单编号> | <问题> 添加步骤\n"
-            "• /form_list 查看　• /form_del <表单编号> 删除\n\n"
-            "用户可点开始页的「📝 填写表单」或发送 /forms 填写。")
-
-    def _store_view(self) -> str:
-        """商店管理视图：展示当前分类 / 商品与维护指令。"""
-        cats = self.db.get_categories(self.tenant_id)
-        if cats:
-            lines = []
-            for cat in cats:
-                lines.append(f"{cat['emoji']} #{cat['id']} {cat['name']}")
-                for p in self.db.get_products(self.tenant_id, cat["id"]):
-                    lines.append(f"　#{p['id']} {p['name']} ￥{p['price']:g}")
-            body = "\n".join(lines)
-        else:
-            body = "（暂无分类 / 商品）"
-        return (
-            "🛒 *商店管理*\n\n"
-            f"当前商品：\n{body}\n\n"
-            "维护指令：\n"
-            "• /shop_addcat <分类名>　• /shop_delcat <分类编号>\n"
-            "• /shop_addproduct <分类编号> | <名称> | <价格> | <描述(可选)>\n"
-            "• /shop_delproduct <商品编号>　• /shop_list 查看\n\n"
-            "用户可点开始页的「🛒 进入商店」或发送 /shop 选购。")
+    # ── 内容功能管理视图 ────────────────────────────────────
 
     async def cmd_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -357,17 +305,7 @@ class PrivateChatModule(BaseModule):
         q = update.callback_query
         action = q.data.split(":", 1)[1]
 
-        # 公开导航：用户「填写表单」按钮（非拥有者也可用）
-        if action == "forms":
-            await q.answer()
-            markup = self._forms_markup()
-            if markup is None:
-                await q.edit_message_text("暂无可填写的表单。")
-            else:
-                await q.edit_message_text("请选择要填写的表单：", reply_markup=markup)
-            return
-
-        # 其余均为拥有者控制面板操作
+        # 控制面板操作均限拥有者
         if not self._is_admin(q.from_user.id):
             await q.answer("仅机器人拥有者可用。", show_alert=True)
             return
@@ -397,23 +335,8 @@ class PrivateChatModule(BaseModule):
                 "📖 *指令速查*\n\n"
                 "*自动回复*：/ar_add 关键词 | 回复　/ar_list　/ar_del\n"
                 "*关键词过滤*：/filter_add 词　/filter_list　/filter_del\n"
-                "*菜单*：/menu_add 0 | 名称 | 内容　/menu_list　/menu_del\n"
-                "*表单*：/form_new 标题　/form_step　/form_list　/form_del\n"
-                "*商店*：/shop_addcat　/shop_addproduct　/shop_list\n"
                 "*用户*：回复消息后 /ban /unban /info")
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
-        elif action == "menu":
-            await q.answer()
-            await q.edit_message_text(
-                self._menu_view(), parse_mode="Markdown", reply_markup=back)
-        elif action == "form":
-            await q.answer()
-            await q.edit_message_text(
-                self._form_view(), parse_mode="Markdown", reply_markup=back)
-        elif action == "store":
-            await q.answer()
-            await q.edit_message_text(
-                self._store_view(), parse_mode="Markdown", reply_markup=back)
         elif action == "bans":
             await q.answer()
             text, markup = self._bans_view()
@@ -448,23 +371,9 @@ class PrivateChatModule(BaseModule):
     # ── 用户主页导航（按钮代替命令）──────────────────────────
 
     def _user_home_markup(self):
-        """根据已配置内容，为用户生成「自定义按钮 + 菜单/表单/商店」导航按钮。"""
+        """根据已配置的自定义启动按钮，为用户生成导航按钮。"""
         rows = list(load_button_rows(self.db, self.tenant_id, SK_WELCOME_BTNS))
-        if self.db.get_menu_children(self.tenant_id, 0):
-            rows.append([InlineKeyboardButton("📋 浏览菜单", callback_data="menu:0")])
-        if self.db.get_forms(self.tenant_id):
-            rows.append([InlineKeyboardButton("📝 填写表单", callback_data="pc:forms")])
-        if self.db.get_categories(self.tenant_id):
-            rows.append([InlineKeyboardButton("🛒 进入商店", callback_data="shop:cats")])
         return InlineKeyboardMarkup(rows) if rows else None
-
-    def _forms_markup(self):
-        forms = self.db.get_forms(self.tenant_id)
-        if not forms:
-            return None
-        rows = [[InlineKeyboardButton(f["title"], callback_data=f"form:{f['id']}")]
-                for f in forms]
-        return InlineKeyboardMarkup(rows)
 
     def _topic_target(self, update: Update):
         """Topics 模式下，从当前话题解析对应用户。"""

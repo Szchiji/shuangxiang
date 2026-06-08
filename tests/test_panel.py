@@ -102,36 +102,22 @@ async def test_non_admin_cannot_use_panel(db):
     assert q.answers and q.answers[0][1].get("show_alert") is True
 
 
-# ── 用户导航按钮：仅在有内容时出现 ──────────────────────────
+# ── 用户导航按钮：仅在配置了自定义启动按钮时出现 ────────────
 
 def test_user_home_markup_empty_when_no_content(db):
     mod = make_module(db)
     assert mod._user_home_markup() is None
 
 
-def test_user_home_markup_shows_available_features(db):
+def test_user_home_markup_shows_custom_buttons(db):
+    import json
+
+    from modules.customize_module import SK_WELCOME_BTNS
     mod = make_module(db)
-    db.add_menu_item(1, 0, "关于我们", "简介")
-    db.add_form(1, "报名")
-    db.add_category(1, "会员")
-    cbs = _callbacks(mod._user_home_markup())
-    assert "menu:0" in cbs
-    assert "pc:forms" in cbs
-    assert "shop:cats" in cbs
-
-
-# ── 用户「填写表单」按钮：非拥有者也可用 ────────────────────
-
-@pytest.mark.asyncio
-async def test_forms_callback_public_for_users(db):
-    mod = make_module(db)
-    db.add_form(1, "报名")
-    q = FakeQuery(1234, "pc:forms")  # 普通用户
-    await mod.on_panel(make_cbk_update(q), None)
-    assert q.edits  # 正常渲染表单列表，未被拒绝
-    text, kwargs = q.edits[0]
-    cbs = _callbacks(kwargs["reply_markup"])
-    assert any(c.startswith("form:") for c in cbs)
+    db.set_setting(1, SK_WELCOME_BTNS,
+                   json.dumps([[{"text": "频道", "url": "https://t.me/x"}]]))
+    cbs = _button_texts(mod._user_home_markup())
+    assert "频道" in cbs
 
 
 # ── 封禁管理面板 ─────────────────────────────────────────────
@@ -189,43 +175,3 @@ def test_stats_text_empty_and_nonempty(db):
     assert "还没有用户" in mod._stats_text()
     db.upsert_tenant_user(1, 42, "a", "Alice")
     assert "总用户：1" in mod._stats_text()
-
-
-# ── 内容功能进入控制面板（菜单 / 表单 / 商店）────────────────
-
-def test_panel_surfaces_content_features(db):
-    mod = make_module(db)
-    cbs = _callbacks(mod._panel_markup())
-    assert "pc:menu" in cbs    # 📋 菜单
-    assert "pc:form" in cbs    # 📝 表单
-    assert "pc:store" in cbs   # 🛒 商店
-
-
-@pytest.mark.asyncio
-async def test_panel_content_views_render(db):
-    mod = make_module(db)
-    db.add_menu_item(1, 0, "关于我们", "简介")
-    db.add_form(1, "报名")
-    cid = db.add_category(1, "会员")
-    db.add_product(1, cid, "月卡", "", 9.9)
-    cases = [
-        ("pc:menu", "菜单管理", "关于我们"),
-        ("pc:form", "表单管理", "报名"),
-        ("pc:store", "商店管理", "月卡"),
-    ]
-    for action, title, item in cases:
-        q = FakeQuery(99, action)
-        await mod.on_panel(make_cbk_update(q), None)
-        text = q.edits[0][0]
-        assert title in text and item in text
-        # 提供返回面板按钮
-        assert "pc:home" in _callbacks(q.edits[0][1]["reply_markup"])
-
-
-@pytest.mark.asyncio
-async def test_panel_content_views_admin_only(db):
-    mod = make_module(db)
-    q = FakeQuery(1234, "pc:menu")
-    await mod.on_panel(make_cbk_update(q), None)
-    assert not q.edits
-    assert q.answers and q.answers[0][1].get("show_alert") is True
