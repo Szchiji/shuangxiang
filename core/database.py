@@ -450,6 +450,15 @@ class Database:
                 "new_7d": new_7d,
             }
 
+    def get_banned_tenant_users(self, tenant_id, limit=20):
+        """返回该租户下已封禁的用户（最近封禁的在前），用于控制面板的封禁管理。"""
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM tenant_users "
+                "WHERE tenant_id=? AND is_banned=1 "
+                "ORDER BY last_seen DESC LIMIT ?",
+                (tenant_id, limit)).fetchall()
+
     def get_tenant_user_ids(self, tenant_id, only_active=True):
         """返回该租户下的用户 ID 列表，用于群发广播。默认排除已封禁用户。"""
         sql = "SELECT user_id FROM tenant_users WHERE tenant_id=?"
