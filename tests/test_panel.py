@@ -134,6 +134,54 @@ async def test_forms_callback_public_for_users(db):
     assert any(c.startswith("form:") for c in cbs)
 
 
+# ── 封禁管理面板 ─────────────────────────────────────────────
+
+def test_panel_surfaces_ban_management(db):
+    mod = make_module(db)
+    cbs = _callbacks(mod._panel_markup())
+    assert "pc:bans" in cbs
+
+
+@pytest.mark.asyncio
+async def test_bans_view_empty(db):
+    mod = make_module(db)
+    q = FakeQuery(99, "pc:bans")
+    await mod.on_panel(make_cbk_update(q), None)
+    text, kwargs = q.edits[0]
+    assert "没有被封禁" in text
+    # 仅返回按钮，无解封按钮
+    cbs = _callbacks(kwargs["reply_markup"])
+    assert cbs == ["pc:home"]
+
+
+@pytest.mark.asyncio
+async def test_bans_view_lists_and_unbans(db):
+    mod = make_module(db)
+    db.upsert_tenant_user(1, 42, "alice", "Alice")
+    db.ban_user(1, 42)
+    # 列表中出现解封按钮
+    q = FakeQuery(99, "pc:bans")
+    await mod.on_panel(make_cbk_update(q), None)
+    cbs = _callbacks(q.edits[0][1]["reply_markup"])
+    assert "pc:unban:42" in cbs
+    # 点击解封按钮后用户被解封
+    q2 = FakeQuery(99, "pc:unban:42")
+    await mod.on_panel(make_cbk_update(q2), None)
+    assert db.is_banned(1, 42) is False
+    # 解封后列表为空
+    assert "没有被封禁" in q2.edits[0][0]
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_unban(db):
+    mod = make_module(db)
+    db.upsert_tenant_user(1, 42, "alice", "Alice")
+    db.ban_user(1, 42)
+    q = FakeQuery(1234, "pc:unban:42")
+    await mod.on_panel(make_cbk_update(q), None)
+    assert db.is_banned(1, 42) is True
+
+
 # ── 统计文案 ─────────────────────────────────────────────────
 
 def test_stats_text_empty_and_nonempty(db):

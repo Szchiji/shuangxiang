@@ -237,7 +237,8 @@ class PrivateChatModule(BaseModule):
             [InlineKeyboardButton(
                 f"💬 Topics 模式：{'✅ 已启用' if topics else '未启用'}",
                 callback_data="pc:topics")],
-            [InlineKeyboardButton("📖 指令速查", callback_data="pc:help")],
+            [InlineKeyboardButton("⛔ 封禁管理", callback_data="pc:bans"),
+             InlineKeyboardButton("📖 指令速查", callback_data="pc:help")],
         ])
 
     def _panel_text(self) -> str:
@@ -246,6 +247,28 @@ class PrivateChatModule(BaseModule):
             "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
             "• 自定义自动回复、启动语、群发等常用功能\n"
             "• 一键开关安全过滤与 Topics 协作模式")
+
+    def _bans_view(self):
+        """封禁管理视图：列出已封禁用户，并提供一键解封按钮。"""
+        users = self.db.get_banned_tenant_users(self.tenant_id)
+        if not users:
+            text = (
+                "⛔ *封禁管理*\n\n"
+                "当前没有被封禁的用户。\n"
+                "「回复」某位用户的消息（或在其话题内）发送 /ban 即可封禁。")
+            kb = [[InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]
+            return text, InlineKeyboardMarkup(kb)
+        text = (
+            "⛔ *封禁管理*\n\n"
+            "以下为已封禁用户，点按钮即可解封：")
+        kb = []
+        for u in users:
+            label = u["full_name"] or (f"@{u['username']}" if u["username"] else "")
+            label = (label or str(u["user_id"]))[:24]
+            kb.append([InlineKeyboardButton(
+                f"✅ 解封 {label}", callback_data=f"pc:unban:{u['user_id']}")])
+        kb.append([InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")])
+        return text, InlineKeyboardMarkup(kb)
 
     async def cmd_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -303,6 +326,20 @@ class PrivateChatModule(BaseModule):
                 "*商店*：/shop_addcat　/shop_addproduct　/shop_list\n"
                 "*用户*：回复消息后 /ban /unban /info")
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
+        elif action == "bans":
+            await q.answer()
+            text, markup = self._bans_view()
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        elif action.startswith("unban:"):
+            try:
+                target = int(action.split(":", 1)[1])
+            except ValueError:
+                await q.answer("⚠️ 无效的用户 ID")
+                return
+            self.db.unban_user(self.tenant_id, target)
+            await q.answer("已解封")
+            text, markup = self._bans_view()
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         elif action == "toggle:antiflood":
             cur = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
             self.db.set_setting(self.tenant_id, SK_ANTIFLOOD, "0" if cur else "1")

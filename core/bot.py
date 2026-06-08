@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from core.app_factory import build_application
@@ -21,13 +20,3 @@ class ModularBot:
         self.loader.load_all(self.app)
         logger.info("已加载 %d 个模块", len(self.loader.list_modules()))
 
-    def run(self) -> None:
-        self.app.run_polling()
-
-    async def run_async(self) -> None:
-        async with self.app:
-            await self.app.initialize()
-            await self.app.start()
-            await self.app.updater.start_polling()
-            logger.info("Telegram Bot 已启动")
-            await asyncio.Event().wait()

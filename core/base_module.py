@@ -18,5 +18,3 @@ class BaseModule(ABC):
     def on_load(self) -> None:
         logger.info("[模块加载] %s", self.name)
 
-    def on_unload(self) -> None:
-        logger.info("[模块卸载] %s", self.name)
