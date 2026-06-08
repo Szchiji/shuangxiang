@@ -1,6 +1,8 @@
 import asyncio
 import logging
 
+from telegram.error import InvalidToken
+
 from core.bot import ModularBot
 from core.config_loader import load_config
 from core.database import Database
@@ -53,24 +55,30 @@ async def main():
     logger.info("数据库路径：%s", config["db_path"])
 
     # 5. 启动平台主机器人 + 所有已有租户机器人
-    async with bot.app:
-        await bot.app.initialize()
-        await bot.app.start()
-        await bot.app.updater.start_polling(drop_pending_updates=True)
-        logger.info("平台主机器人已启动")
+    try:
+        async with bot.app:
+            await bot.app.initialize()
+            await bot.app.start()
+            await bot.app.updater.start_polling(drop_pending_updates=True)
+            logger.info("平台主机器人已启动")
 
-        await _clear_platform_commands(bot.app.bot)
+            await _clear_platform_commands(bot.app.bot)
 
-        await _store_platform_username(bot.app.bot)
+            await _store_platform_username(bot.app.bot)
 
-        await tm.load_all()
+            await tm.load_all()
 
-        try:
-            await asyncio.Event().wait()
-        finally:
-            await tm.stop_all()
-            await bot.app.updater.stop()
-            await bot.app.stop()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await tm.stop_all()
+                await bot.app.updater.stop()
+                await bot.app.stop()
+    except InvalidToken:
+        logger.error(
+            "平台主机器人 Token 无效（Unauthorized）。请检查环境变量 BOT_TOKEN "
+            "或 config.yaml 中的 bot.token 是否正确、是否已被 BotFather 撤销。")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
