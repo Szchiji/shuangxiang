@@ -240,8 +240,58 @@ async def test_menu_button_clears_pending_admin_flow(db):
     assert db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT) is None
 
 
-# ── 平台署名：自定义优先，回退自动探测 ──────────────────────
+# ── 我的机器人：转义 + 删除按钮 ──────────────────────────────
 
+def test_mybots_view_escapes_username_and_has_delete_button(db):
+    """机器人用户名常以 _bot 结尾，未转义会导致「我的机器人」点击无反应。"""
+    pf = make_pf(db)
+    tid = db.add_tenant("123:tok", owner_user_id=1234,
+                        bot_username="my_feedback_bot", bot_name="反馈_机器人")
+    text, markup = pf._mybots_view(1234)
+    assert "@my\\_feedback\\_bot" in text
+    assert "反馈\\_机器人" in text
+    assert f"pf:delask:{tid}" in _callbacks(markup)
+
+
+def test_mybots_view_empty_offers_create(db):
+    pf = make_pf(db)
+    text, markup = pf._mybots_view(1234)
+    assert "pf:newbot" in _callbacks(markup)
+
+
+@pytest.mark.asyncio
+async def test_delete_ask_then_confirm_removes_tenant(db):
+    pf = make_pf(db)
+    tid = db.add_tenant("123:tok", owner_user_id=1234,
+                        bot_username="b_bot", bot_name="B")
+    ctx = types.SimpleNamespace(
+        chat_data={}, user_data={},
+        application=types.SimpleNamespace(bot_data={}))
+    # 第一步：请求删除 → 显示确认按钮
+    q = FakeQuery(1234, f"pf:delask:{tid}")
+    await pf.on_callback(make_cbk_update(q), ctx)
+    assert f"pf:delyes:{tid}" in _callbacks(q.edits[0][1]["reply_markup"])
+    # 第二步：确认删除 → 租户被移除
+    q2 = FakeQuery(1234, f"pf:delyes:{tid}")
+    await pf.on_callback(make_cbk_update(q2), ctx)
+    assert db.get_tenant(tid) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_rejects_non_owner(db):
+    pf = make_pf(db)
+    tid = db.add_tenant("123:tok", owner_user_id=1234,
+                        bot_username="b_bot", bot_name="B")
+    ctx = types.SimpleNamespace(
+        chat_data={}, user_data={},
+        application=types.SimpleNamespace(bot_data={}))
+    q = FakeQuery(5678, f"pf:delyes:{tid}")
+    await pf.on_callback(make_cbk_update(q), ctx)
+    assert q.answers and q.answers[0][1].get("show_alert") is True
+    assert db.get_tenant(tid) is not None
+
+
+# ── 平台署名：自定义优先，回退自动探测 ──────────────────────
 def test_platform_footer_username_prefers_custom(db):
     assert platform_footer_username(db) == ""
     db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME_AUTO, "AutoBot")
