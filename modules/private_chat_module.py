@@ -588,6 +588,6 @@ class PrivateChatModule(BaseModule):
     @staticmethod
     async def _ack(msg) -> None:
         try:
-            await msg.set_reaction("��")
+            await msg.set_reaction("👍")
         except (TelegramError, AttributeError):
             pass
