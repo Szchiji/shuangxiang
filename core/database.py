@@ -294,7 +294,10 @@ class Database:
             conn.execute("COMMIT")
             logger.info("数据库迁移：重建 tenants 表以移除遗留列 admin_id")
         except sqlite3.Error:
-            conn.execute("ROLLBACK")
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
             raise
         finally:
             conn.close()
