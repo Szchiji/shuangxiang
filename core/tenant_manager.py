@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 
-from telegram import Bot, BotCommand, BotCommandScopeChat
+from telegram import Bot, BotCommandScopeChat
 from telegram.error import TelegramError
 from telegram.ext import Application
 
@@ -18,35 +18,6 @@ from core.database import Database
 from core.loader import ModuleLoader
 
 logger = logging.getLogger("shuangxiang.tenant")
-
-
-# 租户机器人「/」命令菜单：普通用户与拥有者（管理员）分别设置
-TENANT_USER_COMMANDS = [
-    BotCommand("start", "开始私聊，消息会转发给管理员"),
-    BotCommand("menu",  "浏览机器人菜单"),
-    BotCommand("forms", "填写表单"),
-    BotCommand("shop",  "浏览数字商店"),
-    BotCommand("cart",  "查看购物车"),
-]
-
-TENANT_ADMIN_COMMANDS = TENANT_USER_COMMANDS + [
-    BotCommand("panel",      "打开控制面板（按钮式管理）"),
-    BotCommand("settings",   "高级设置（启动语/按钮/强制订阅/广播）"),
-    BotCommand("broadcast",  "群发广播给所有用户"),
-    BotCommand("stats",      "查看用户统计"),
-    BotCommand("info",       "查看用户资料（回复消息）"),
-    BotCommand("ban",        "封禁用户（回复消息）"),
-    BotCommand("unban",      "解封用户（回复消息）"),
-    BotCommand("setgroup",   "在论坛群启用 Topics 模式"),
-    BotCommand("unsetgroup", "关闭 Topics 模式"),
-    BotCommand("ar_add",     "添加自动回复"),
-    BotCommand("filter_add", "添加关键词过滤"),
-    BotCommand("antiflood",  "防刷屏过滤器开关 on｜off"),
-    BotCommand("alphabet_latin", "屏蔽拉丁字母(英文) on｜off"),
-    BotCommand("menu_add",   "添加菜单项"),
-    BotCommand("form_new",   "新建表单"),
-    BotCommand("shop_addcat", "添加商品分类"),
-]
 
 
 class TenantManager:
@@ -96,19 +67,18 @@ class TenantManager:
             return False
         self.bots[tid] = app
         logger.info("[租户#%s] 机器人已启动 (@%s)", tid, tenant["bot_username"])
-        await self._set_tenant_commands(app.bot, tenant["owner_user_id"])
+        await self._clear_tenant_commands(app.bot, tenant["owner_user_id"])
         return True
 
     @staticmethod
-    async def _set_tenant_commands(bot, owner_user_id: int) -> None:
-        """设置租户机器人的「/」命令菜单：用户默认 + 拥有者专属。"""
+    async def _clear_tenant_commands(bot, owner_user_id: int) -> None:
+        """清空租户机器人左下角「/」命令栏（默认与拥有者作用域），改用控制面板按钮交互。"""
         try:
-            await bot.set_my_commands(TENANT_USER_COMMANDS)
-            await bot.set_my_commands(
-                TENANT_ADMIN_COMMANDS,
+            await bot.delete_my_commands()
+            await bot.delete_my_commands(
                 scope=BotCommandScopeChat(chat_id=owner_user_id))
         except Exception as e:
-            logger.warning("设置租户命令菜单失败: %s", e)
+            logger.warning("清除租户命令菜单失败: %s", e)
 
     async def stop_tenant(self, tid: int) -> None:
         app = self.bots.pop(tid, None)

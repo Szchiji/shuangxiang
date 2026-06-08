@@ -1,8 +1,6 @@
 import asyncio
 import logging
 
-from telegram import BotCommand
-
 from core.bot import ModularBot
 from core.config_loader import load_config
 from core.database import Database
@@ -12,20 +10,12 @@ from core.tenant_manager import TenantManager
 logger = logging.getLogger("shuangxiang.main")
 
 
-# 平台主机器人「/」命令菜单（出现在输入框旁，提升可发现性）
-PLATFORM_COMMANDS = [
-    BotCommand("start",  "开始 / 帮助"),
-    BotCommand("newbot", "用 Token 创建我的机器人"),
-    BotCommand("mybots", "查看我创建的机器人"),
-    BotCommand("delbot", "删除我的机器人"),
-]
-
-
-async def _set_platform_commands(bot) -> None:
+async def _clear_platform_commands(bot) -> None:
+    """清空平台主机器人左下角「/」命令栏，改用内联按钮面板交互。"""
     try:
-        await bot.set_my_commands(PLATFORM_COMMANDS)
+        await bot.delete_my_commands()
     except Exception as e:
-        logger.warning("设置平台命令菜单失败: %s", e)
+        logger.warning("清除平台命令菜单失败: %s", e)
 
 
 async def main():
@@ -54,7 +44,7 @@ async def main():
         await bot.app.updater.start_polling(drop_pending_updates=True)
         logger.info("平台主机器人已启动")
 
-        await _set_platform_commands(bot.app.bot)
+        await _clear_platform_commands(bot.app.bot)
 
         await tm.load_all()
 

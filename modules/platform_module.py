@@ -67,6 +67,7 @@ def _botfather_button() -> InlineKeyboardButton:
 
 def _start_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🪄 创建我的机器人", callback_data="pf:newbot")],
         [InlineKeyboardButton("📖 如何创建", callback_data="pf:create")],
         [InlineKeyboardButton("🤖 我的机器人", callback_data="pf:mybots")],
         [InlineKeyboardButton("❓ 常见问题", callback_data="pf:faq")],
@@ -76,6 +77,7 @@ def _start_keyboard() -> InlineKeyboardMarkup:
 def _help_create_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [_botfather_button()],
+        [InlineKeyboardButton("🪄 我已拿到 Token，去创建", callback_data="pf:newbot")],
         [InlineKeyboardButton("⬅️ 返回", callback_data="pf:home")],
     ])
 
