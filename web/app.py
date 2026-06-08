@@ -10,7 +10,7 @@ from web.auth import (
 )
 
 
-def create_app(config: dict) -> FastAPI:
+def create_app(config: dict, bot_app=None, tenant_manager=None) -> FastAPI:
     app        = FastAPI(title="双享Bot 管理面板", version="1.0.0")
     db         = Database()
     secret_key = get_secret_key(config)
@@ -45,10 +45,12 @@ def create_app(config: dict) -> FastAPI:
     async def dashboard(user=Depends(get_current_user)):
         counts  = db.get_user_count()
         tenants = db.get_all_tenants()
+        tm_count = tenant_manager.running_count() if tenant_manager else 0
         return {
-            "users":   counts,
-            "tenants": len(tenants),
-            "admins":  len(db.get_all_admins()),
+            "users":           counts,
+            "tenants":         len(tenants),
+            "tenants_running": tm_count,
+            "admins":          len(db.get_all_admins()),
         }
 
     # ── 用户管理 ──────────────────────────────────────────────
@@ -72,16 +74,32 @@ def create_app(config: dict) -> FastAPI:
     @app.get("/api/tenants")
     async def list_tenants(user=Depends(get_current_user)):
         rows = db.get_all_tenants()
-        return [{k: v for k, v in dict(r).items() if k != "token"} for r in rows]
+        result = []
+        for r in rows:
+            row = {k: v for k, v in dict(r).items() if k != "token"}
+            if tenant_manager:
+                row["running"] = tenant_manager.is_running(r["id"])
+            result.append(row)
+        return result
 
     @app.post("/api/tenants/{tid}/deactivate")
     async def deactivate_tenant(tid: int, user=Depends(get_current_user)):
-        db.deactivate_tenant(tid)
+        if tenant_manager:
+            await tenant_manager.stop_tenant(tid)
+        else:
+            db.deactivate_tenant(tid)
         return {"ok": True}
 
     @app.post("/api/tenants/{tid}/activate")
     async def activate_tenant(tid: int, user=Depends(get_current_user)):
-        db.activate_tenant(tid)
+        t = db.get_tenant(tid)
+        if not t:
+            raise HTTPException(status_code=404, detail="租户不存在")
+        if tenant_manager:
+            await tenant_manager.start_tenant(tid, t["token"], t["admin_id"])
+            db.activate_tenant(tid)
+        else:
+            db.activate_tenant(tid)
         return {"ok": True}
 
     # ── 商店管理 ──────────────────────────────────────────────
@@ -132,8 +150,8 @@ def create_app(config: dict) -> FastAPI:
         return [dict(o) for o in db.get_orders(tenant_id=tenant_id)]
 
     @app.post("/api/orders/{oid}/status")
-    async def update_order_status(oid: int, status: str, user=Depends(get_current_user)):
-        db.update_order_status(oid, status)
+    async def update_order_status(oid: int, s: str, user=Depends(get_current_user)):
+        db.update_order_status(oid, s)
         return {"ok": True}
 
     # ── 表单管理 ──────────────────────────────────────────────
