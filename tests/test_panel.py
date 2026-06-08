@@ -59,6 +59,16 @@ def test_panel_markup_reflects_topics_enabled(db):
     assert any("Topics 模式：✅ 已启用" in t for t in texts)
 
 
+def test_panel_surfaces_autoreply_and_customize_shortcuts(db):
+    """面板应直达自动回复等常用自定义功能（人性化升级）。"""
+    mod = make_module(db)
+    cbs = _callbacks(mod._panel_markup())
+    assert "cz:ar" in cbs       # 💬 自动回复
+    assert "cz:welcome" in cbs  # ✏️ 启动语
+    assert "cz:bc" in cbs       # 📣 群发广播
+    assert "pc:stats" in cbs    # 📊 数据统计
+
+
 # ── 按钮切换防刷屏 / 英文拦截 ─────────────────────────────────
 
 @pytest.mark.asyncio

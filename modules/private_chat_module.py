@@ -58,10 +58,9 @@ class PrivateChatModule(BaseModule):
         self.brand    = (msgs.get("brand") or "").strip()
         # 拥有者首次进入时的「下一步」上手清单
         self.admin_onboarding = (
-            "\n\n🚀 *快速上手：*\n"
-            "点击下方 *⚙️ 控制面板* 即可用按钮管理统计、过滤器与各项功能，"
-            "无需记忆指令。\n"
-            "💡 进阶：把我加入开启「话题」的论坛群并运行 /setgroup 可启用多人协作。")
+            "\n\n🚀 *第一次使用？*\n"
+            "点下方 *⚙️ 控制面板*，用按钮即可设置自动回复、启动语、安全过滤等，"
+            "全程无需记忆指令。")
 
         # 指令
         app.add_handler(CommandHandler("start", self.cmd_start))
@@ -76,7 +75,7 @@ class PrivateChatModule(BaseModule):
         app.add_handler(CallbackQueryHandler(self.on_panel, pattern=r"^pc:"))
 
         # 私聊消息（用户 ↔ DM 模式拥有者）—— 放在较低优先级 group，
-        # 让自动回复/过滤模块（group=-1）有机会先拦截。
+        # 让自动回复/过滤模块（group=0）有机会先拦截。
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND, self.on_private), group=5)
         # 群内话题消息（Topics 模式拥有者回复用户）
@@ -216,12 +215,19 @@ class PrivateChatModule(BaseModule):
     # ── 控制面板（拥有者，按钮式管理）────────────────────────
 
     def _panel_markup(self) -> InlineKeyboardMarkup:
-        """拥有者控制面板：用按钮代替常用指令。"""
+        """拥有者控制面板：一个入口聚合最常用的管理动作，按钮即点即用。"""
         antiflood = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
         latin     = self.db.get_bool_setting(self.tenant_id, SK_ALPHABET_LATIN, False)
         topics    = self._manage_group() is not None
         return InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 用户统计", callback_data="pc:stats")],
+            # 常用功能（直达交互式自定义，无需记忆指令）
+            [InlineKeyboardButton("💬 自动回复", callback_data="cz:ar"),
+             InlineKeyboardButton("📢 强制订阅", callback_data="cz:fsub")],
+            [InlineKeyboardButton("✏️ 启动语", callback_data="cz:welcome"),
+             InlineKeyboardButton("🔘 启动按钮", callback_data="cz:wbtns")],
+            [InlineKeyboardButton("📊 数据统计", callback_data="pc:stats"),
+             InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
+            # 安全开关（点一下即切换）
             [InlineKeyboardButton(
                 f"🛡 防刷屏：{'✅ 开' if antiflood else '⛔ 关'}",
                 callback_data="pc:toggle:antiflood")],
@@ -231,14 +237,15 @@ class PrivateChatModule(BaseModule):
             [InlineKeyboardButton(
                 f"💬 Topics 模式：{'✅ 已启用' if topics else '未启用'}",
                 callback_data="pc:topics")],
-            [InlineKeyboardButton("🎛 高级设置", callback_data="cz:home")],
             [InlineKeyboardButton("📖 指令速查", callback_data="pc:help")],
         ])
 
     def _panel_text(self) -> str:
         return (
             "⚙️ *控制面板*\n\n"
-            "点击下方按钮即可管理机器人，开关类设置点一下即可切换。")
+            "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
+            "• 自定义自动回复、启动语、群发等常用功能\n"
+            "• 一键开关安全过滤与 Topics 协作模式")
 
     async def cmd_panel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -588,6 +595,6 @@ class PrivateChatModule(BaseModule):
     @staticmethod
     async def _ack(msg) -> None:
         try:
-            await msg.set_reaction("��")
+            await msg.set_reaction("👍")
         except (TelegramError, AttributeError):
             pass
