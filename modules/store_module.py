@@ -4,17 +4,21 @@
 下单后通知拥有者。所有数据按 tenant_id 隔离。
 """
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import logging
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
-    CommandHandler,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
 )
 
 from core.base_module import BaseModule
 from core.database import Database
+
+logger = logging.getLogger("shuangxiang.store")
 
 
 class StoreModule(BaseModule):
@@ -210,4 +214,4 @@ class StoreModule(BaseModule):
                       f"合计：￥{order['total']:g}\n\n{lines}"),
                 parse_mode="Markdown")
         except TelegramError as e:
-            print(f"[商店] 通知拥有者失败: {e}")
+            logger.warning("通知拥有者失败: %s", e)

@@ -9,19 +9,22 @@
 """
 
 import asyncio
+import logging
 
 from telegram import Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
-    ContextTypes,
 )
 
 from core.base_module import BaseModule
 from core.database import Database
+
+logger = logging.getLogger("shuangxiang.private_chat")
 
 
 class PrivateChatModule(BaseModule):
@@ -249,9 +252,8 @@ class PrivateChatModule(BaseModule):
             else:
                 await self._forward_to_dm(ctx, user, msg)
         except TelegramError as e:
-            print(f"[私聊] 转发失败: {e}")
+            logger.warning("转发失败: %s", e)
             return
-
         if self.received:
             await msg.reply_text(self.received)
 
@@ -285,7 +287,7 @@ class PrivateChatModule(BaseModule):
             else:
                 await self._forward_album_to_dm(ctx, user, messages)
         except TelegramError as e:
-            print(f"[私聊] 相册转发失败: {e}")
+            logger.warning("相册转发失败: %s", e)
             return
         if self.received:
             await messages[-1].reply_text(self.received)
@@ -336,8 +338,34 @@ class PrivateChatModule(BaseModule):
                     text=f"🆕 新会话\n\n{self._user_label(user)}", parse_mode="Markdown")
             return thread_id
 
+    @staticmethod
+    def _reply_snippet(msg) -> str | None:
+        """从用户消息中提取「被回复消息」的简短摘要（话题模式提示用）。"""
+        reply = getattr(msg, "reply_to_message", None)
+        if reply is None:
+            return None
+        text = (reply.text or reply.caption or "").strip()
+        if not text:
+            # 无文本（如纯媒体）时给出占位说明
+            return "（某条消息）"
+        text = " ".join(text.split())
+        return text if len(text) <= 80 else text[:79] + "…"
+
+    async def _maybe_topic_reply_hint(self, ctx, group, thread_id, msg) -> None:
+        """话题模式下，若用户发送的是「回复消息」，向管理员展示其回复上下文。"""
+        snippet = self._reply_snippet(msg)
+        if snippet is None:
+            return
+        try:
+            await ctx.bot.send_message(
+                chat_id=group, message_thread_id=thread_id,
+                text=f"↩️ 用户回复了：{snippet}")
+        except TelegramError as e:
+            logger.warning("发送回复提示失败: %s", e)
+
     async def _forward_to_topic(self, ctx, group, user, msg) -> None:
         thread_id = await self._ensure_topic(ctx, group, user)
+        await self._maybe_topic_reply_hint(ctx, group, thread_id, msg)
         await ctx.bot.copy_message(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=msg.chat_id, message_id=msg.message_id)
@@ -345,6 +373,7 @@ class PrivateChatModule(BaseModule):
     async def _forward_album_to_topic(self, ctx, group, user, messages) -> None:
         thread_id = await self._ensure_topic(ctx, group, user)
         first = messages[0]
+        await self._maybe_topic_reply_hint(ctx, group, thread_id, first)
         await ctx.bot.copy_messages(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=first.chat_id,

@@ -6,13 +6,17 @@
 """
 
 import asyncio
+import logging
 
 from telegram import Bot, BotCommand, BotCommandScopeChat
 from telegram.error import TelegramError
 from telegram.ext import Application
 
+from core.app_factory import build_application
 from core.database import Database
 from core.loader import ModuleLoader
+
+logger = logging.getLogger("shuangxiang.tenant")
 
 
 # 租户机器人「/」命令菜单：普通用户与拥有者（管理员）分别设置
@@ -32,6 +36,9 @@ TENANT_ADMIN_COMMANDS = TENANT_USER_COMMANDS + [
     BotCommand("setgroup",   "在论坛群启用 Topics 模式"),
     BotCommand("unsetgroup", "关闭 Topics 模式"),
     BotCommand("ar_add",     "添加自动回复"),
+    BotCommand("filter_add", "添加关键词过滤"),
+    BotCommand("antiflood",  "防刷屏过滤器开关 on｜off"),
+    BotCommand("alphabet_latin", "屏蔽拉丁字母(英文) on｜off"),
     BotCommand("menu_add",   "添加菜单项"),
     BotCommand("form_new",   "新建表单"),
     BotCommand("shop_addcat", "添加商品分类"),
@@ -74,17 +81,17 @@ class TenantManager:
         if tid in self.bots:
             return True
         cfg = self._tenant_config(tenant)
-        app = Application.builder().token(tenant["token"]).build()
+        app = build_application(tenant["token"])
         ModuleLoader(cfg).load_all(app)
         try:
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
         except TelegramError as e:
-            print(f"[租户#{tid}] 启动失败: {e}")
+            logger.error("[租户#%s] 启动失败: %s", tid, e)
             return False
         self.bots[tid] = app
-        print(f"[租户#{tid}] ✅ 机器人已启动 (@{tenant['bot_username']})")
+        logger.info("[租户#%s] 机器人已启动 (@%s)", tid, tenant["bot_username"])
         await self._set_tenant_commands(app.bot, tenant["owner_user_id"])
         return True
 
@@ -97,7 +104,7 @@ class TenantManager:
                 TENANT_ADMIN_COMMANDS,
                 scope=BotCommandScopeChat(chat_id=owner_user_id))
         except Exception as e:
-            print(f"⚠️ 设置租户命令菜单失败: {e}")
+            logger.warning("设置租户命令菜单失败: %s", e)
 
     async def stop_tenant(self, tid: int) -> None:
         app = self.bots.pop(tid, None)
@@ -109,15 +116,22 @@ class TenantManager:
             await app.stop()
             await app.shutdown()
         except Exception as e:
-            print(f"[租户#{tid}] 停止时出错: {e}")
+            logger.warning("[租户#%s] 停止时出错: %s", tid, e)
 
     async def load_all(self) -> None:
         tenants = self.db.get_active_tenants()
-        print(f"🚀 正在启动 {len(tenants)} 个已有租户机器人...")
-        for t in tenants:
-            await self.start_tenant(t)
-            await asyncio.sleep(0.2)
+        logger.info("正在启动 %d 个已有租户机器人...", len(tenants))
+        # 受控并发批量启动：相比逐个 sleep(0.2) 串行启动，租户多时显著更快，
+        # 同时用信号量限制并发，避免一次性建立过多连接触发 Telegram 限制。
+        sem = asyncio.Semaphore(10)
+
+        async def _start(t):
+            async with sem:
+                await self.start_tenant(t)
+
+        await asyncio.gather(*(_start(t) for t in tenants), return_exceptions=True)
 
     async def stop_all(self) -> None:
-        for tid in list(self.bots.keys()):
-            await self.stop_tenant(tid)
+        await asyncio.gather(
+            *(self.stop_tenant(tid) for tid in list(self.bots.keys())),
+            return_exceptions=True)

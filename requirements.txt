@@ -1,2 +1,2 @@
-python-telegram-bot==21.0.1
+python-telegram-bot[rate-limiter]==21.0.1
 PyYAML==6.0.1

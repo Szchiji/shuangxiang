@@ -8,20 +8,23 @@
 """
 
 import json
+import logging
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
-    CommandHandler,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
-    ContextTypes,
-    ApplicationHandlerStop,
 )
 
 from core.base_module import BaseModule
 from core.database import Database
+
+logger = logging.getLogger("shuangxiang.form")
 
 
 class FormModule(BaseModule):
@@ -159,7 +162,7 @@ class FormModule(BaseModule):
                       f"用户：{u.full_name} (`{u.id}`)\n\n{summary}"),
                 parse_mode="Markdown")
         except Exception as e:
-            print(f"[表单] 通知拥有者失败: {e}")
+            logger.warning("通知拥有者失败: %s", e)
         raise ApplicationHandlerStop
 
     async def cancel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

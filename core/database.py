@@ -1,5 +1,8 @@
+import logging
 import sqlite3
 import threading
+
+logger = logging.getLogger("shuangxiang.db")
 
 
 class Database:
@@ -26,13 +29,30 @@ class Database:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
                 cls._instance._db_path = db_path
+                cls._instance._init_pragmas()
                 cls._instance._init_db()
         return cls._instance
 
     def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self._db_path)
+        # timeout 配合 busy_timeout，缓解多租户高并发下的 "database is locked"
+        conn = sqlite3.connect(self._db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
+
+    def _init_pragmas(self) -> None:
+        """开启 WAL 等持久化 PRAGMA（WAL 为数据库级设置，仅需设置一次）。"""
+        try:
+            conn = sqlite3.connect(self._db_path, timeout=30.0)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.commit()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            logger.warning("设置 WAL PRAGMA 失败: %s", e)
 
     def _init_db(self) -> None:
         with self._conn() as c:
@@ -170,8 +190,36 @@ class Database:
                     quantity   INTEGER NOT NULL,
                     price      REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS tenant_kv (
+                    tenant_id INTEGER NOT NULL,
+                    key       TEXT NOT NULL,
+                    value     TEXT,
+                    PRIMARY KEY (tenant_id, key)
+                );
             """)
-        print("[DB] ✅ 数据库初始化完成")
+        logger.info("数据库初始化完成 (db=%s)", self._db_path)
+
+    # ── 通用租户键值设置（用于过滤器开关等）─────────────────
+
+    def set_setting(self, tenant_id, key, value):
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO tenant_kv(tenant_id,key,value) VALUES(?,?,?)
+                   ON CONFLICT(tenant_id,key) DO UPDATE SET value=excluded.value""",
+                (tenant_id, key, str(value)))
+
+    def get_setting(self, tenant_id, key, default=None):
+        with self._conn() as c:
+            r = c.execute(
+                "SELECT value FROM tenant_kv WHERE tenant_id=? AND key=?",
+                (tenant_id, key)).fetchone()
+            return r["value"] if r else default
+
+    def get_bool_setting(self, tenant_id, key, default: bool) -> bool:
+        v = self.get_setting(tenant_id, key, None)
+        if v is None:
+            return default
+        return v in ("1", "true", "True", "on", "yes")
 
     # ── 平台用户 / 消息日志 ─────────────────────────────────
 
@@ -236,7 +284,7 @@ class Database:
             for tbl in ("tenants", "tenant_settings", "tenant_users", "message_map",
                         "topic_map", "auto_replies", "filters", "menu_items",
                         "forms", "form_responses", "categories", "products",
-                        "cart_items", "orders"):
+                        "cart_items", "orders", "tenant_kv"):
                 col = "id" if tbl == "tenants" else "tenant_id"
                 c.execute(f"DELETE FROM {tbl} WHERE {col}=?", (tid,))
 

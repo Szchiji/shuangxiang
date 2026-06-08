@@ -60,6 +60,8 @@
 | `/ar_list`、`/ar_del <id>` | 列出 / 删除自动回复 |
 | `/filter_add <关键词>` | 添加过滤词（命中则拦截） |
 | `/filter_list`、`/filter_del <id>` | 列出 / 删除过滤词 |
+| `/antiflood on｜off` | 防刷屏过滤器开关（默认开启） |
+| `/alphabet_latin on｜off` | 屏蔽含拉丁字母（英文）的消息（默认关闭） |
 
 **菜单**
 
@@ -114,6 +116,34 @@ python main.py
 | `BOT_TOKEN` | 平台主机器人 Token |
 | `ADMIN_ID` | 平台拥有者用户 ID |
 | `DB_PATH` | SQLite 数据库路径（默认 `bot.db`） |
+| `LOG_LEVEL` | 日志级别（`DEBUG`/`INFO`/`WARNING`/`ERROR`，默认 `INFO`） |
+
+## 稳定性与性能
+
+平台对每个机器人（平台主机器人与所有租户机器人）统一应用以下策略，由
+`core/app_factory.py` 集中构建：
+
+- **并发处理**：启用 `concurrent_updates`，单机器人内多用户消息并行处理。
+- **内置限流**：若安装了 `python-telegram-bot[rate-limiter]`（已写入 `requirements.txt`），
+  自动启用 `AIORateLimiter` 处理 429 / flood control 重试，降低触发 Telegram 限制的风险；
+  未安装时自动跳过、不影响运行。
+- **全局错误处理**：统一捕获并记录各机器人未捕获的异常，避免单条更新崩溃。
+- **SQLite 加固**：开启 WAL、`busy_timeout` 与外键约束，缓解多租户并发下的 `database is locked`。
+- **结构化日志**：使用 `logging`（含 Bot Token 自动脱敏），便于平台侧排查。
+- **批量启动**：`TenantManager.load_all` 以信号量受控并发启动已有租户机器人。
+
+> 💡 **高级表情（Premium Emoji）**：双向中转使用 `copy_message`/`copy_messages`，
+> 会原样保留自定义表情、相册与清单等富内容；前提是机器人拥有者账号已开通 Telegram Premium。
+
+## 开发与测试
+
+```bash
+pip install -r requirements.txt ruff pytest pytest-asyncio
+ruff check .      # 代码风格检查
+pytest -q         # 运行单元测试（中转 / 过滤器 / 数据库 / 工厂）
+```
+
+CI 工作流见 `.github/workflows/ci.yml`，会在 push / PR 时自动运行 ruff 与 pytest。
 
 ## 部署（Railway / Docker）
 

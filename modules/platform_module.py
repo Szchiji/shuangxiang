@@ -16,17 +16,17 @@ import re
 from urllib.parse import quote
 
 from telegram import (
-    Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    Update,
 )
 from telegram.ext import (
     Application,
-    CommandHandler,
     CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
-    ContextTypes,
 )
 
 from core.base_module import BaseModule

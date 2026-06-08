@@ -6,12 +6,12 @@
 点击有子项的菜单 → 展开子菜单；点击无子项的菜单 → 显示其内容。
 """
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
-    CommandHandler,
     CallbackQueryHandler,
+    CommandHandler,
     ContextTypes,
 )
 
