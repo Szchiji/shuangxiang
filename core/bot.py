@@ -1,6 +1,10 @@
 import asyncio
-from telegram.ext import Application
+import logging
+
+from core.app_factory import build_application
 from core.loader import ModuleLoader
+
+logger = logging.getLogger("shuangxiang.bot")
 
 
 class ModularBot:
@@ -8,14 +12,14 @@ class ModularBot:
     def __init__(self, config: dict):
         self.config = config
         self.token  = config["bot"]["token"]
-        self.app    = Application.builder().token(self.token).build()
+        self.app    = build_application(self.token)
         self.loader = ModuleLoader(self.config)
         self._setup()
 
     def _setup(self) -> None:
-        print("🤖 正在加载模块...")
+        logger.info("正在加载模块...")
         self.loader.load_all(self.app)
-        print(f"✅ 已加载 {len(self.loader.list_modules())} 个模块")
+        logger.info("已加载 %d 个模块", len(self.loader.list_modules()))
 
     def run(self) -> None:
         self.app.run_polling()
@@ -25,5 +29,5 @@ class ModularBot:
             await self.app.initialize()
             await self.app.start()
             await self.app.updater.start_polling()
-            print("🤖 Telegram Bot 已启动")
+            logger.info("Telegram Bot 已启动")
             await asyncio.Event().wait()

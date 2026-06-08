@@ -1,5 +1,9 @@
+import logging
 from abc import ABC, abstractmethod
+
 from telegram.ext import Application
+
+logger = logging.getLogger("shuangxiang.module")
 
 
 class BaseModule(ABC):
@@ -12,7 +16,7 @@ class BaseModule(ABC):
         pass
 
     def on_load(self) -> None:
-        print(f"[✅ 模块加载] {self.name}")
+        logger.info("[模块加载] %s", self.name)
 
     def on_unload(self) -> None:
-        print(f"[❌ 模块卸载] {self.name}")
+        logger.info("[模块卸载] %s", self.name)

@@ -1,0 +1,97 @@
+"""防刷屏与字母表（拉丁）过滤器测试。"""
+
+import pytest
+from telegram.ext import ApplicationHandlerStop
+
+from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD, AutoReplyModule
+from tests.conftest import FakeBot, FakeMessage, make_ctx
+
+
+def make_module(db, admin_id=99):
+    mod = AutoReplyModule.__new__(AutoReplyModule)
+    mod.db = db
+    mod.tenant_id = 1
+    mod.admin_id = admin_id
+    mod._flood = {}
+    return mod
+
+
+def make_update(user_id, msg):
+    import types
+    return types.SimpleNamespace(
+        message=msg,
+        effective_user=types.SimpleNamespace(id=user_id))
+
+
+def test_antiflood_blocks_after_threshold(db):
+    mod = make_module(db)
+    t = 100.0
+    # 阈值为 5 条/5 秒；第 6 条应被判定为刷屏
+    results = [mod._is_flooding(1, now=t + i * 0.1) for i in range(6)]
+    assert results[:5] == [False] * 5
+    assert results[5] is True
+
+
+def test_antiflood_window_resets(db):
+    mod = make_module(db)
+    for i in range(5):
+        mod._is_flooding(1, now=100.0 + i * 0.1)
+    # 远超窗口后，旧时间戳被清除，不再刷屏
+    assert mod._is_flooding(1, now=200.0) is False
+
+
+@pytest.mark.asyncio
+async def test_on_message_antiflood_stop(db):
+    mod = make_module(db)
+    ctx = make_ctx(FakeBot())
+    # 默认开启；连续发送触发拦截
+    msg = FakeMessage(1, text="hi")
+    upd = make_update(7, msg)
+    with pytest.raises(ApplicationHandlerStop):
+        for _ in range(6):
+            await mod.on_message(upd, ctx)
+
+
+@pytest.mark.asyncio
+async def test_on_message_antiflood_can_be_disabled(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_ANTIFLOOD, "0")
+    ctx = make_ctx(FakeBot())
+    # 关闭后即使大量消息也不应抛出刷屏拦截
+    for i in range(20):
+        await mod.on_message(make_update(7, FakeMessage(i, text="你好")), ctx)
+
+
+@pytest.mark.asyncio
+async def test_alphabet_latin_blocks_when_enabled(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_ANTIFLOOD, "0")
+    db.set_setting(1, SK_ALPHABET_LATIN, "1")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="hello world")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    assert msg.replies, "应提示用户被拦截"
+
+
+@pytest.mark.asyncio
+async def test_alphabet_latin_allows_non_latin(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_ANTIFLOOD, "0")
+    db.set_setting(1, SK_ALPHABET_LATIN, "1")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="你好，世界")
+    # 不含拉丁字母 → 不拦截
+    await mod.on_message(make_update(7, msg), ctx)
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_alphabet_latin_off_by_default(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_ANTIFLOOD, "0")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="hello")
+    # 默认关闭 → 英文消息放行
+    await mod.on_message(make_update(7, msg), ctx)
+    assert not msg.replies

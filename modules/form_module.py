@@ -1,128 +1,170 @@
+"""引导式表单 / 信息收集（每个租户机器人各运行一份）。
+
+拥有者定义表单与若干步骤（问题）；用户用 /forms 选择表单后，
+机器人逐步提问、收集回答，完成后保存并通知拥有者。
+
+进行中的填写状态存于 ctx.user_data["form_state"]，
+填写期间的消息由 group=-2 的处理器优先捕获，不再转发给管理员。
+"""
+
 import json
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import logging
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
 from core.base_module import BaseModule
 from core.database import Database
 
-_STATE_KEY = "form_state"
+logger = logging.getLogger("shuangxiang.form")
 
 
 class FormModule(BaseModule):
-    """多步骤表单收集模块"""
 
     def setup(self, app: Application) -> None:
         self.db        = Database()
-        self.tenant_id = self.config.get("tenant_id")
-        app.add_handler(CommandHandler("forms",   self.cmd_list_forms))
-        app.add_handler(CommandHandler("form",    self.cmd_start_form))
-        app.add_handler(CommandHandler("cancel",  self.cmd_cancel))
-        app.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND, self.handle_answer))
+        self.tenant_id = int(self.config.get("tenant_id", 0))
+        self.admin_id  = int(self.config["bot"]["admin_id"])
 
-    async def cmd_list_forms(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        app.add_handler(CommandHandler("forms", self.cmd_forms))
+        app.add_handler(CommandHandler("form_new", self.form_new))
+        app.add_handler(CommandHandler("form_step", self.form_step))
+        app.add_handler(CommandHandler("form_list", self.form_list))
+        app.add_handler(CommandHandler("form_del", self.form_del))
+        app.add_handler(CommandHandler("cancel", self.cancel))
+        app.add_handler(CallbackQueryHandler(self.start_form, pattern=r"^form:"))
+        # 填写中的回答优先捕获
+        app.add_handler(MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            self.on_answer), group=-2)
+
+    def _admin(self, update: Update) -> bool:
+        return update.effective_user.id == self.admin_id
+
+    # ── 拥有者定义 ──────────────────────────────────────────
+
+    async def form_new(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
+        title = update.message.text.partition(" ")[2].strip()
+        if not title:
+            await update.message.reply_text("用法：/form_new <表单标题>")
+            return
+        fid = self.db.add_form(self.tenant_id, title)
+        await update.message.reply_text(
+            f"✅ 已创建表单 #{fid}：{title}\n用 /form_step {fid} | 问题 添加步骤。")
+
+    async def form_step(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
+        raw = update.message.text.partition(" ")[2]
+        if "|" not in raw:
+            await update.message.reply_text("用法：/form_step <表单编号> | <问题>")
+            return
+        fid_s, prompt = (p.strip() for p in raw.split("|", 1))
+        if not fid_s.isdigit() or not prompt:
+            await update.message.reply_text("⚠️ 表单编号或问题无效。")
+            return
+        form = self.db.get_form(self.tenant_id, int(fid_s))
+        if not form:
+            await update.message.reply_text(f"⚠️ 表单 #{fid_s} 不存在。")
+            return
+        n = self.db.add_form_step(int(fid_s), prompt)
+        await update.message.reply_text(f"✅ 已为表单 #{fid_s} 添加第 {n} 步。")
+
+    async def form_list(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
         forms = self.db.get_forms(self.tenant_id)
         if not forms:
-            await update.message.reply_text("📋 暂无可用表单")
+            await update.message.reply_text("暂无表单。用 /form_new 创建。")
             return
-        lines = ["📋 *可用表单*\n"]
+        out = []
         for f in forms:
-            lines.append(f"`/form {f['slug']}` — {f['title']}")
-            if f["description"]:
-                lines.append(f"  _{f['description']}_")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            out.append(f"📋 #{f['id']} {f['title']}")
+            for s in self.db.get_form_steps(f["id"]):
+                out.append(f"　{s['step_number']}. {s['prompt']}")
+        await update.message.reply_text("\n".join(out))
 
-    async def cmd_start_form(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if not ctx.args:
-            await update.message.reply_text("用法：`/form <表单slug>`", parse_mode="Markdown")
+    async def form_del(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
             return
-        slug = ctx.args[0]
-        form = self.db.get_form_by_slug(slug, self.tenant_id)
-        if not form:
-            await update.message.reply_text(f"❌ 找不到表单 `{slug}`", parse_mode="Markdown")
+        if not ctx.args or not ctx.args[0].isdigit():
+            await update.message.reply_text("用法：/form_del <表单编号>")
             return
-        steps = self.db.get_form_steps(form["id"])
+        self.db.delete_form(self.tenant_id, int(ctx.args[0]))
+        await update.message.reply_text("✅ 已删除。")
+
+    # ── 用户填写 ────────────────────────────────────────────
+
+    async def cmd_forms(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type != "private" or self._admin(update):
+            return
+        forms = self.db.get_forms(self.tenant_id)
+        if not forms:
+            await update.message.reply_text("暂无可填写的表单。")
+            return
+        rows = [[InlineKeyboardButton(f["title"], callback_data=f"form:{f['id']}")]
+                for f in forms]
+        await update.message.reply_text(
+            "请选择要填写的表单：", reply_markup=InlineKeyboardMarkup(rows))
+
+    async def start_form(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        q = update.callback_query
+        await q.answer()
+        fid   = int(q.data.split(":", 1)[1])
+        steps = self.db.get_form_steps(fid)
         if not steps:
-            await update.message.reply_text("❌ 该表单没有任何步骤")
+            await q.edit_message_text("该表单暂无问题。")
             return
-        ctx.user_data[_STATE_KEY] = {
-            "form_id":  form["id"],
-            "form_name": form["title"],
-            "steps":    [dict(s) for s in steps],
-            "current":  0,
-            "answers":  {},
-        }
-        await update.message.reply_text(
-            f"📋 *{form['title']}*\n"
-            f"{form['description'] or ''}\n\n"
-            f"发送 /cancel 可随时取消。",
-            parse_mode="Markdown")
-        await self._ask_step(update, ctx)
+        ctx.user_data["form_state"] = {"form_id": fid, "i": 0, "answers": []}
+        await q.edit_message_text(
+            f"开始填写。共 {len(steps)} 步，随时可发送 /cancel 取消。\n\n"
+            f"1. {steps[0]['prompt']}")
 
-    async def _ask_step(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        state = ctx.user_data.get(_STATE_KEY)
+    async def on_answer(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        state = ctx.user_data.get("form_state")
         if not state:
-            return
-        idx   = state["current"]
-        steps = state["steps"]
-        if idx >= len(steps):
-            await self._finish(update, ctx)
-            return
-        step    = steps[idx]
-        total   = len(steps)
-        choices = ""
-        if step["choices"]:
-            try:
-                opts    = json.loads(step["choices"])
-                choices = "\n\n选项：" + "、".join(opts)
-            except Exception:
-                pass
-        req = "（必填）" if step["is_required"] else "（选填，发送 - 跳过）"
-        await update.message.reply_text(
-            f"📝 [{idx+1}/{total}] *{step['prompt']}* {req}{choices}",
-            parse_mode="Markdown")
+            return  # 未在填写中 → 交给后续处理器（转发等）
+        steps = self.db.get_form_steps(state["form_id"])
+        state["answers"].append(update.message.text)
+        state["i"] += 1
 
-    async def handle_answer(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        state = ctx.user_data.get(_STATE_KEY)
-        if not state:
-            return
-        text  = update.message.text
-        idx   = state["current"]
-        step  = state["steps"][idx]
-        if text == "-" and not step["is_required"]:
-            text = None
-        state["answers"][step["field_name"]] = text
-        state["current"] += 1
-        if state["current"] >= len(state["steps"]):
-            await self._finish(update, ctx)
-        else:
-            await self._ask_step(update, ctx)
+        if state["i"] < len(steps):
+            nxt = steps[state["i"]]
+            await update.message.reply_text(f"{state['i'] + 1}. {nxt['prompt']}")
+            raise ApplicationHandlerStop
 
-    async def _finish(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        state = ctx.user_data.pop(_STATE_KEY, {})
-        if not state:
-            return
-        uid       = update.effective_user.id
-        responses = json.dumps(state["answers"], ensure_ascii=False)
-        self.db.save_form_response(state["form_id"], uid, self.tenant_id, responses)
-        lines = [f"✅ *{state['form_name']} — 提交成功！*\n\n您的回答："]
-        for k, v in state["answers"].items():
-            lines.append(f"• {k}：{v or '（跳过）'}")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-        # 通知管理员
-        admin_id = self.config["bot"]["admin_id"]
+        # 完成
+        form    = self.db.get_form(self.tenant_id, state["form_id"])
+        answers = state["answers"]
+        pairs   = [{"q": steps[i]["prompt"], "a": answers[i]} for i in range(len(steps))]
+        self.db.save_form_response(
+            state["form_id"], self.tenant_id, update.effective_user.id, json.dumps(
+                pairs, ensure_ascii=False))
+        ctx.user_data.pop("form_state", None)
+        await update.message.reply_text("✅ 感谢填写，已提交！")
+
+        u       = update.effective_user
+        summary = "\n".join(f"• {p['q']}：{p['a']}" for p in pairs)
         try:
-            u     = update.effective_user
-            uname = f"@{u.username}" if u.username else u.full_name
             await ctx.bot.send_message(
-                chat_id=admin_id,
-                text=f"📋 *新表单提交*\n\n表单：{state['form_name']}\n用户：{uname} (`{uid}`)\n\n"
-                     + "\n".join(f"• {k}：{v}" for k, v in state["answers"].items()),
+                chat_id=self.admin_id,
+                text=(f"🗂 *新表单提交*\n表单：{form['title'] if form else state['form_id']}\n"
+                      f"用户：{u.full_name} (`{u.id}`)\n\n{summary}"),
                 parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("通知拥有者失败: %s", e)
+        raise ApplicationHandlerStop
 
-    async def cmd_cancel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if ctx.user_data.pop(_STATE_KEY, None):
-            await update.message.reply_text("❌ 表单已取消")
-        else:
-            await update.message.reply_text("ℹ️ 没有进行中的表单")
+    async def cancel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if ctx.user_data.pop("form_state", None):
+            await update.message.reply_text("已取消填写。")

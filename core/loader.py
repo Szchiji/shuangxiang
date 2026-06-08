@@ -1,6 +1,11 @@
 import importlib
-from core.base_module import BaseModule
+import logging
+
 from telegram.ext import Application
+
+from core.base_module import BaseModule
+
+logger = logging.getLogger("shuangxiang.loader")
 
 
 class ModuleLoader:
@@ -18,7 +23,7 @@ class ModuleLoader:
             instance.on_load()
             self.loaded_modules[module_path] = instance
         except Exception as e:
-            print(f"[❌ 加载失败] {module_path}: {e}")
+            logger.exception("[加载失败] %s: %s", module_path, e)
 
     def load_all(self, app: Application) -> None:
         for module_path in self.config.get("modules", []):

@@ -1,43 +1,26 @@
 bot:
-  token:    "YOUR_PLATFORM_BOT_TOKEN"   # 从 @BotFather 获取
-  admin_id: 123456789                   # 你的 Telegram 用户 ID
-  name:     "我的ModularBot平台"
-  version:  "2.0.0"
-  website:  "https://example.com"
+  token:    "YOUR_PLATFORM_BOT_TOKEN"   # 平台主机器人 Token，从 @BotFather 获取
+  admin_id: 123456789                   # 平台拥有者的 Telegram 用户 ID
+  name:     "双向私聊机器人工厂"
+  version:  "4.0.0"
 
-web:
-  username:   "admin"
-  password:   "yourpassword"            # 建议修改！
-  secret_key: "change-this-secret-key" # 务必修改！
-
-# 平台主Bot加载的模块
+# 平台主机器人加载的模块（机器人工厂）
 modules:
   - modules.platform_module
-  - modules.admin_module
-  - modules.admin_manager_module
-  - modules.forward_module
-  - modules.auto_reply_module
-  - modules.scheduler_module
-  - modules.group_module
-  - modules.menu_module
 
-# 每个租户Bot自动加载的模块
+# 每个用户创建的机器人自动加载的功能模块
 tenant_modules:
-  - modules.store_module
-  - modules.form_module
-  - modules.forward_module
-  - modules.auto_reply_module
-  - modules.admin_module
-  - modules.menu_module
+  - modules.private_chat_module   # 双向私聊（DM / Topics 模式）
+  - modules.auto_reply_module     # 自动回复 + 关键词过滤
+  - modules.menu_module           # 菜单 / 子菜单
+  - modules.form_module           # 引导式表单
+  - modules.store_module          # 数字商店
 
-auto_reply:
-  "价格":  "💰 请查看定价：https://example.com/price"
-  "帮助":  "📖 发送 /help 查看帮助"
-  "你好":  "👋 你好！有什么可以帮到你？"
-
-group:
-  welcome_message: "👋 欢迎 {name} 加入！请遵守群规 🙏"
-  max_warns: 3
-  banned_keywords:
-    - "广告"
-    - "赌博"
+# 租户机器人可自定义的提示文案（默认值）
+messages:
+  welcome:       "👋 你好！直接发送消息即可联系管理员，我们会尽快回复你。"
+  admin_welcome: "👋 管理员你好！用户的消息会转发到这里，直接「回复」某条消息即可回复对应用户。"
+  received:      ""
+  banned:        "⛔ 你已被封禁，无法发送消息。"
+  # 可选品牌署名页脚：留空表示关闭（默认）。设置后会追加到用户欢迎语末尾，便于品牌传播。
+  brand:         ""

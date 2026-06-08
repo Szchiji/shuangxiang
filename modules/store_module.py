@@ -1,169 +1,217 @@
-import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+"""数字商店（每个租户机器人各运行一份）。
+
+拥有者用指令维护分类与商品；用户用 /shop 浏览、加入购物车、/cart 结算下单，
+下单后通知拥有者。所有数据按 tenant_id 隔离。
+"""
+
+import logging
+
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
+
 from core.base_module import BaseModule
 from core.database import Database
 
+logger = logging.getLogger("shuangxiang.store")
+
 
 class StoreModule(BaseModule):
-    """数字商店模块：分类浏览 / 购物车 / 结账"""
 
     def setup(self, app: Application) -> None:
         self.db        = Database()
-        self.tenant_id = self.config.get("tenant_id")
-        app.add_handler(CommandHandler("shop",   self.cmd_shop))
-        app.add_handler(CommandHandler("cart",   self.cmd_cart))
-        app.add_handler(CommandHandler("orders", self.cmd_orders))
-        app.add_handler(CallbackQueryHandler(self.on_callback, pattern=r"^shop:"))
+        self.tenant_id = int(self.config.get("tenant_id", 0))
+        self.admin_id  = int(self.config["bot"]["admin_id"])
 
-    # ── 主入口 ────────────────────────────────────────────────
+        # 用户
+        app.add_handler(CommandHandler("shop", self.cmd_shop))
+        app.add_handler(CommandHandler("cart", self.cmd_cart))
+        app.add_handler(CallbackQueryHandler(self.on_click, pattern=r"^shop:"))
+        # 拥有者
+        app.add_handler(CommandHandler("shop_addcat", self.add_cat))
+        app.add_handler(CommandHandler("shop_delcat", self.del_cat))
+        app.add_handler(CommandHandler("shop_addproduct", self.add_product))
+        app.add_handler(CommandHandler("shop_delproduct", self.del_product))
+        app.add_handler(CommandHandler("shop_list", self.shop_list))
 
-    async def cmd_shop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    def _admin(self, update: Update) -> bool:
+        return update.effective_user.id == self.admin_id
+
+    # ── 拥有者维护 ──────────────────────────────────────────
+
+    async def add_cat(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
+        name = update.message.text.partition(" ")[2].strip()
+        if not name:
+            await update.message.reply_text("用法：/shop_addcat <分类名>")
+            return
+        cid = self.db.add_category(self.tenant_id, name)
+        await update.message.reply_text(f"✅ 已添加分类 #{cid}：{name}")
+
+    async def del_cat(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
+        if not ctx.args or not ctx.args[0].isdigit():
+            await update.message.reply_text("用法：/shop_delcat <分类编号>")
+            return
+        self.db.delete_category(self.tenant_id, int(ctx.args[0]))
+        await update.message.reply_text("✅ 已删除分类及其商品。")
+
+    async def add_product(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
+        raw   = update.message.text.partition(" ")[2]
+        parts = [p.strip() for p in raw.split("|")]
+        if len(parts) < 3 or not parts[0].isdigit():
+            await update.message.reply_text(
+                "用法：/shop_addproduct <分类编号> | <名称> | <价格> | <描述(可选)>")
+            return
+        cid, name, price_s = int(parts[0]), parts[1], parts[2]
+        desc = parts[3] if len(parts) > 3 else ""
+        try:
+            price = float(price_s)
+        except ValueError:
+            await update.message.reply_text("⚠️ 价格必须是数字。")
+            return
+        if not self.db.get_category(self.tenant_id, cid):
+            await update.message.reply_text(f"⚠️ 分类 #{cid} 不存在。")
+            return
+        pid = self.db.add_product(self.tenant_id, cid, name, desc, price)
+        await update.message.reply_text(f"✅ 已添加商品 #{pid}：{name} ￥{price:g}")
+
+    async def del_product(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
+        if not ctx.args or not ctx.args[0].isdigit():
+            await update.message.reply_text("用法：/shop_delproduct <商品编号>")
+            return
+        self.db.delete_product(self.tenant_id, int(ctx.args[0]))
+        await update.message.reply_text("✅ 已删除。")
+
+    async def shop_list(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if not self._admin(update):
+            return
         cats = self.db.get_categories(self.tenant_id)
         if not cats:
-            await update.message.reply_text("🏪 商店暂无商品，敬请期待！")
+            await update.message.reply_text("暂无分类。用 /shop_addcat 添加。")
             return
-        kb = [[InlineKeyboardButton(f"{c['emoji']} {c['name']}",
-               callback_data=f"shop:cat:{c['id']}:1")] for c in cats]
-        await update.message.reply_text(
-            "🏪 *欢迎来到商店*\n\n请选择分类：",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown")
+        out = []
+        for cat in cats:
+            out.append(f"{cat['emoji']} #{cat['id']} {cat['name']}")
+            for p in self.db.get_products(self.tenant_id, cat["id"]):
+                out.append(f"　#{p['id']} {p['name']} ￥{p['price']:g}")
+        await update.message.reply_text("\n".join(out))
 
-    # ── 购物车 ────────────────────────────────────────────────
+    # ── 用户浏览 / 购物 ─────────────────────────────────────
 
-    async def cmd_cart(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        uid   = update.effective_user.id
-        items = self.db.get_cart_items(uid, self.tenant_id)
-        await update.message.reply_text(
-            *self._cart_text_kb(items), parse_mode="Markdown")
-
-    def _cart_text_kb(self, items):
-        if not items:
-            return "🛒 购物车为空", None
-        total = sum(i["price"] * i["quantity"] for i in items)
-        lines = ["🛒 *您的购物车*\n"]
-        for i in items:
-            lines.append(f"• {i['name']} x{i['quantity']} — ¥{i['price'] * i['quantity']:.2f}")
-        lines.append(f"\n💰 合计：¥{total:.2f}")
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ 结账", callback_data="shop:checkout"),
-             InlineKeyboardButton("🗑 清空", callback_data="shop:clearcart")],
-        ])
-        return "\n".join(lines), kb
-
-    # ── 订单 ─────────────────────────────────────────────────
-
-    async def cmd_orders(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        uid    = update.effective_user.id
-        orders = self.db.get_orders(user_id=uid, tenant_id=self.tenant_id, limit=10)
-        if not orders:
-            await update.message.reply_text("📦 您还没有订单")
+    async def cmd_shop(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type != "private":
             return
-        lines = ["📦 *您的订单（最近 10 条）*\n"]
-        for o in orders:
-            status_map = {"pending": "⏳", "paid": "✅", "cancelled": "❌", "shipped": "🚚"}
-            icon = status_map.get(o["status"], "❓")
-            lines.append(f"`#{o['id']}` {icon} ¥{o['total']:.2f} — {o['created_at'][:10]}")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        await update.message.reply_text(*self._cats_view())
 
-    # ── Callback 分发 ─────────────────────────────────────────
+    def _cats_view(self):
+        cats = self.db.get_categories(self.tenant_id)
+        if not cats:
+            return ("🛒 商店暂未上架商品。", None)
+        rows = [[InlineKeyboardButton(f"{c['emoji']} {c['name']}",
+                                      callback_data=f"shop:cat:{c['id']}")] for c in cats]
+        return ("🛒 *商店* — 请选择分类：", InlineKeyboardMarkup(rows))
 
-    async def on_callback(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        q    = update.callback_query
-        data = q.data
+    async def on_click(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        q = update.callback_query
         await q.answer()
-        parts = data.split(":")
+        parts  = q.data.split(":")
         action = parts[1]
 
-        if action == "cat":
-            await self._show_products(q, int(parts[2]), int(parts[3]))
-        elif action == "product":
-            await self._show_product(q, int(parts[2]))
-        elif action == "addcart":
-            await self._add_to_cart(q, int(parts[2]))
+        if action == "cats":
+            text, markup = self._cats_view()
+            await q.edit_message_text(text, reply_markup=markup, parse_mode="Markdown")
+
+        elif action == "cat":
+            cid      = int(parts[2])
+            products = self.db.get_products(self.tenant_id, cid)
+            if not products:
+                await q.edit_message_text(
+                    "该分类暂无商品。",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("⬅️ 返回", callback_data="shop:cats")]]))
+                return
+            rows = [[InlineKeyboardButton(f"{p['name']} ￥{p['price']:g}",
+                                          callback_data=f"shop:prod:{p['id']}")]
+                    for p in products]
+            rows.append([InlineKeyboardButton("⬅️ 返回", callback_data="shop:cats")])
+            await q.edit_message_text("请选择商品：", reply_markup=InlineKeyboardMarkup(rows))
+
+        elif action == "prod":
+            pid = int(parts[2])
+            p   = self.db.get_product(self.tenant_id, pid)
+            if not p:
+                await q.edit_message_text("商品不存在。")
+                return
+            rows = [
+                [InlineKeyboardButton("➕ 加入购物车", callback_data=f"shop:add:{pid}")],
+                [InlineKeyboardButton("⬅️ 返回", callback_data=f"shop:cat:{p['category_id']}")],
+            ]
+            await q.edit_message_text(
+                f"*{p['name']}*\n价格：￥{p['price']:g}\n\n{p['description'] or ''}",
+                reply_markup=InlineKeyboardMarkup(rows), parse_mode="Markdown")
+
+        elif action == "add":
+            pid = int(parts[2])
+            if self.db.get_product(self.tenant_id, pid):
+                self.db.add_to_cart(self.tenant_id, q.from_user.id, pid)
+                await q.answer("已加入购物车 ✅", show_alert=False)
+
+        elif action == "clear":
+            self.db.clear_cart(self.tenant_id, q.from_user.id)
+            await q.edit_message_text("🗑 购物车已清空。")
+
         elif action == "checkout":
-            await self._checkout(q)
-        elif action == "clearcart":
-            self.db.clear_cart(q.from_user.id, self.tenant_id)
-            await q.edit_message_text("🗑 购物车已清空")
-        elif action == "back_cats":
-            await self.cmd_shop.__wrapped__(self, update, ctx) if hasattr(self.cmd_shop, '__wrapped__') else await self._back_to_cats(q)
+            await self._checkout(q, ctx)
 
-    async def _show_products(self, q, cat_id, page):
-        cat   = self.db.get_category(cat_id)
-        rows, total = self.db.get_products(cat_id, self.tenant_id, page)
-        if not rows:
-            await q.edit_message_text("📭 该分类暂无商品")
+    async def cmd_cart(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.effective_chat.type != "private":
             return
-        per_page = 5
-        pages    = (total + per_page - 1) // per_page
-        kb_rows  = [[InlineKeyboardButton(
-            f"{p['name']} — ¥{p['price']:.2f}",
-            callback_data=f"shop:product:{p['id']}")] for p in rows]
-        nav = []
-        if page > 1:
-            nav.append(InlineKeyboardButton("◀️", callback_data=f"shop:cat:{cat_id}:{page-1}"))
-        if page < pages:
-            nav.append(InlineKeyboardButton("▶️", callback_data=f"shop:cat:{cat_id}:{page+1}"))
-        if nav:
-            kb_rows.append(nav)
-        kb_rows.append([InlineKeyboardButton("⬅️ 返回分类", callback_data="shop:back_cats")])
-        await q.edit_message_text(
-            f"{cat['emoji']} *{cat['name']}*\n共 {total} 件商品（第 {page}/{pages} 页）",
-            reply_markup=InlineKeyboardMarkup(kb_rows),
-            parse_mode="Markdown")
+        text, markup = self._cart_view(update.effective_user.id)
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="Markdown")
 
-    async def _show_product(self, q, pid):
-        p = self.db.get_product(pid)
-        if not p:
-            await q.edit_message_text("❌ 商品不存在")
-            return
-        stock_txt = "有货" if p["stock"] == -1 else (f"库存 {p['stock']}" if p["stock"] > 0 else "售罄")
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🛒 加入购物车", callback_data=f"shop:addcart:{pid}"),
-            InlineKeyboardButton("⬅️ 返回",     callback_data=f"shop:cat:{p['category_id']}:1"),
-        ]])
-        await q.edit_message_text(
-            f"📦 *{p['name']}*\n\n{p['description'] or ''}\n\n"
-            f"💰 价格：¥{p['price']:.2f}\n📊 {stock_txt}",
-            reply_markup=kb, parse_mode="Markdown")
-
-    async def _add_to_cart(self, q, pid):
-        uid = q.from_user.id
-        p   = self.db.get_product(pid)
-        if not p:
-            await q.answer("❌ 商品不存在", show_alert=True)
-            return
-        if p["stock"] == 0:
-            await q.answer("❌ 商品已售罄", show_alert=True)
-            return
-        self.db.add_to_cart(uid, pid, self.tenant_id)
-        await q.answer(f"✅ {p['name']} 已加入购物车")
-
-    async def _checkout(self, q):
-        uid   = q.from_user.id
-        items = self.db.get_cart_items(uid, self.tenant_id)
+    def _cart_view(self, user_id: int):
+        items = self.db.get_cart(self.tenant_id, user_id)
         if not items:
-            await q.answer("购物车为空", show_alert=True)
-            return
-        order_items = [{"product_id": i["product_id"],
-                        "quantity":   i["quantity"],
-                        "price":      i["price"]} for i in items]
-        oid = self.db.create_order(uid, self.tenant_id, order_items)
-        self.db.clear_cart(uid, self.tenant_id)
+            return ("🛒 购物车是空的。用 /shop 选购吧。", None)
+        lines = [f"• {i['name']} ×{i['quantity']} = ￥{i['price'] * i['quantity']:g}"
+                 for i in items]
         total = sum(i["price"] * i["quantity"] for i in items)
-        await q.edit_message_text(
-            f"✅ *订单已提交！*\n\n"
-            f"🆔 订单号：`#{oid}`\n💰 总计：¥{total:.2f}\n\n"
-            f"感谢您的购买！管理员会尽快处理。",
-            parse_mode="Markdown")
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ 结算下单", callback_data="shop:checkout")],
+            [InlineKeyboardButton("🗑 清空", callback_data="shop:clear")],
+        ])
+        return ("🛒 *购物车*\n\n" + "\n".join(lines) + f"\n\n合计：￥{total:g}", markup)
 
-    async def _back_to_cats(self, q):
-        cats = self.db.get_categories(self.tenant_id)
-        kb   = [[InlineKeyboardButton(f"{c['emoji']} {c['name']}",
-                 callback_data=f"shop:cat:{c['id']}:1")] for c in cats]
+    async def _checkout(self, q, ctx) -> None:
+        user_id = q.from_user.id
+        items   = self.db.get_cart(self.tenant_id, user_id)
+        if not items:
+            await q.edit_message_text("🛒 购物车是空的。")
+            return
+        oid   = self.db.create_order(self.tenant_id, user_id, items)
+        order = self.db.get_order(self.tenant_id, oid)
+        self.db.clear_cart(self.tenant_id, user_id)
         await q.edit_message_text(
-            "🏪 *欢迎来到商店*\n\n请选择分类：",
-            reply_markup=InlineKeyboardMarkup(kb),
-            parse_mode="Markdown")
+            f"✅ 下单成功！订单号 #{oid}，合计 ￥{order['total']:g}。\n管理员会尽快与您联系。")
+        try:
+            lines = "\n".join(
+                f"• {i['name']} ×{i['quantity']}" for i in items)
+            await ctx.bot.send_message(
+                chat_id=self.admin_id,
+                text=(f"🧾 *新订单* #{oid}\n用户：{q.from_user.full_name} (`{user_id}`)\n"
+                      f"合计：￥{order['total']:g}\n\n{lines}"),
+                parse_mode="Markdown")
+        except TelegramError as e:
+            logger.warning("通知拥有者失败: %s", e)
