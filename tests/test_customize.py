@@ -457,7 +457,116 @@ async def test_guard_ignores_admin(db):
     assert not msg.replies
 
 
-# ── 广播 ─────────────────────────────────────────────────────
+def make_cmd_update(user_id, message, chat_type="private"):
+    return types.SimpleNamespace(
+        message=message,
+        effective_message=message,
+        effective_user=types.SimpleNamespace(
+            id=user_id, username="u", full_name="User"),
+        effective_chat=types.SimpleNamespace(type=chat_type, id=user_id),
+    )
+
+
+@pytest.mark.asyncio
+async def test_guard_cmd_blocks_unsubscribed_start(db):
+    cz = make_cz(db)
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    ctx = make_ctx(FakeBot(member_status="left"))
+    msg = FakeMessage(text="/start")
+    from telegram.ext import ApplicationHandlerStop
+    with pytest.raises(ApplicationHandlerStop):
+        await cz.on_guard_cmd(make_cmd_update(7, msg), ctx)
+    assert msg.replies  # 收到加入提示，未进入正常欢迎流程
+
+
+@pytest.mark.asyncio
+async def test_guard_cmd_allows_subscribed_start(db):
+    cz = make_cz(db)
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    ctx = make_ctx(FakeBot(member_status="member"))
+    msg = FakeMessage(text="/start")
+    await cz.on_guard_cmd(make_cmd_update(7, msg), ctx)  # 不抛出
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_guard_cmd_ignores_admin(db):
+    cz = make_cz(db)
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    ctx = make_ctx(FakeBot(member_status="left"))
+    msg = FakeMessage(text="/start")
+    await cz.on_guard_cmd(make_cmd_update(99, msg), ctx)  # 管理员不受限
+    assert not msg.replies
+
+
+class FakeCbMessage(FakeMessage):
+    pass
+
+
+def make_cb_update(user_id, data, message):
+    query = types.SimpleNamespace(
+        data=data, from_user=types.SimpleNamespace(id=user_id),
+        message=message, answers=[])
+
+    async def answer(*a, **k):
+        query.answers.append((a, k))
+
+    query.answer = answer
+    return types.SimpleNamespace(
+        callback_query=query,
+        effective_user=types.SimpleNamespace(
+            id=user_id, username="u", full_name="User"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_guard_cb_blocks_unsubscribed_button(db):
+    cz = make_cz(db)
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    ctx = make_ctx(FakeBot(member_status="left"))
+    msg = FakeCbMessage()
+    upd = make_cb_update(7, "pc:home", msg)
+    from telegram.ext import ApplicationHandlerStop
+    with pytest.raises(ApplicationHandlerStop):
+        await cz.on_guard_cb(upd, ctx)
+    assert upd.callback_query.answers  # 弹窗提示
+    assert msg.replies  # 给出加入入口
+
+
+@pytest.mark.asyncio
+async def test_guard_cb_allows_checksub_button(db):
+    cz = make_cz(db)
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    ctx = make_ctx(FakeBot(member_status="left"))
+    msg = FakeCbMessage()
+    upd = make_cb_update(7, "cz:checksub", msg)
+    await cz.on_guard_cb(upd, ctx)  # 「我已订阅」复核不被拦截
+    assert not upd.callback_query.answers
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_guard_cb_allows_subscribed_button(db):
+    cz = make_cz(db)
+    db.set_setting(1, SK_FORCE_SUB_ON, "1")
+    db.set_setting(1, SK_FORCE_SUB,
+                   json.dumps([{"title": "f", "chat": "@c", "url": "https://t.me/c"}]))
+    ctx = make_ctx(FakeBot(member_status="member"))
+    msg = FakeCbMessage()
+    upd = make_cb_update(7, "pc:home", msg)
+    await cz.on_guard_cb(upd, ctx)  # 已订阅用户正常放行
+    assert not upd.callback_query.answers
+    assert not msg.replies
 
 @pytest.mark.asyncio
 async def test_broadcast_sends_to_active_users(db):

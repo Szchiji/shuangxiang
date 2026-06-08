@@ -3,7 +3,8 @@
 通过「按钮 + 引导式输入」让拥有者无需记忆指令即可：
   • 自定义启动语（/start 欢迎消息）并附带内联按钮（链接按钮）。
   • 新增带内联按钮的自动回复。
-  • 配置「强制订阅频道」：未加入指定频道的用户消息会被拦截，并提示加入。
+  • 配置「强制订阅频道」：未加入指定频道的用户的消息、入口命令(/start /help)
+    与控制面板按钮都会被拦截，并提示加入。
   • 群发广播：把一条消息一次性发送给全部用户。
 
 所有编辑流程都以会话状态 ``ctx.user_data["cz"]`` 驱动，由 group=-3 的处理器
@@ -148,8 +149,13 @@ class CustomizeModule(BaseModule):
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND, self.on_wizard), group=-3)
         # 强制订阅拦截：先于双向转发(5)。放在 group=-1。
+        # 同时拦截普通消息、入口命令(/start /help)与控制面板按钮，
+        # 确保未加入指定频道的用户无法以任何方式使用机器人。
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & ~filters.COMMAND, self.on_guard), group=-1)
+        app.add_handler(CommandHandler(
+            ["start", "help"], self.on_guard_cmd), group=-1)
+        app.add_handler(CallbackQueryHandler(self.on_guard_cb), group=-1)
 
     def _admin(self, uid: int) -> bool:
         return uid == self.admin_id
@@ -688,20 +694,54 @@ class CustomizeModule(BaseModule):
 
     async def on_guard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg, user = update.message, update.effective_user
-        if msg is None or user is None or self._admin(user.id):
+        if msg is None:
             return
+        missing = await self._blocked(ctx, user)
+        if missing:
+            await self._send_join_prompt(msg, missing)
+            raise ApplicationHandlerStop
+
+    async def on_guard_cmd(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """拦截未订阅用户的入口命令（/start、/help）。"""
+        msg, user = update.effective_message, update.effective_user
+        if msg is None:
+            return
+        missing = await self._blocked(ctx, user)
+        if missing:
+            await self._send_join_prompt(msg, missing)
+            raise ApplicationHandlerStop
+
+    async def on_guard_cb(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """拦截未订阅用户点击的控制面板按钮（「我已订阅」复核除外）。"""
+        q = update.callback_query
+        if q is None or q.data == "cz:checksub":
+            return
+        missing = await self._blocked(ctx, update.effective_user)
+        if missing:
+            await q.answer("🔒 请先加入指定频道后再使用。", show_alert=True)
+            if q.message is not None:
+                try:
+                    await self._send_join_prompt(q.message, missing)
+                except TelegramError:
+                    pass
+            raise ApplicationHandlerStop
+
+    async def _blocked(self, ctx, user):
+        """返回该用户尚未加入的频道列表；无需拦截时返回 None。"""
+        if user is None or self._admin(user.id):
+            return None
         if not self.db.get_bool_setting(self.tenant_id, SK_FORCE_SUB_ON, False):
-            return
+            return None
         channels = self._load_fsub()
         if not channels:
-            return
+            return None
         missing = await self._missing_subscriptions(ctx, user.id, channels)
-        if not missing:
-            return
-        await msg.reply_text(
+        return missing or None
+
+    async def _send_join_prompt(self, target, missing) -> None:
+        await target.reply_text(
             "🔒 请先加入以下频道后再继续：",
             reply_markup=self._join_markup(missing))
-        raise ApplicationHandlerStop
 
     async def _missing_subscriptions(self, ctx, user_id: int, channels):
         missing = []
