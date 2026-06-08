@@ -1,16 +1,24 @@
 bot:
-  token:    "YOUR_BOT_TOKEN"   # 从 @BotFather 获取
-  admin_id: 123456789          # 管理员（你）的 Telegram 用户 ID
-  name:     "双向私聊机器人"
-  version:  "3.0.0"
+  token:    "YOUR_PLATFORM_BOT_TOKEN"   # 平台主机器人 Token，从 @BotFather 获取
+  admin_id: 123456789                   # 平台拥有者的 Telegram 用户 ID
+  name:     "双向私聊机器人工厂"
+  version:  "4.0.0"
 
-# 双向私聊机器人加载的模块
+# 平台主机器人加载的模块（机器人工厂）
 modules:
-  - modules.private_chat_module
+  - modules.platform_module
 
-# 可自定义的提示文案
+# 每个用户创建的机器人自动加载的功能模块
+tenant_modules:
+  - modules.private_chat_module   # 双向私聊（DM / Topics 模式）
+  - modules.auto_reply_module     # 自动回复 + 关键词过滤
+  - modules.menu_module           # 菜单 / 子菜单
+  - modules.form_module           # 引导式表单
+  - modules.store_module          # 数字商店
+
+# 租户机器人可自定义的提示文案（默认值）
 messages:
   welcome:       "👋 你好！直接发送消息即可联系管理员，我们会尽快回复你。"
   admin_welcome: "👋 管理员你好！用户的消息会转发到这里，直接「回复」某条消息即可回复对应用户。"
-  received:      ""   # 用户发送后给用户的回执，留空则不发送
+  received:      ""
   banned:        "⛔ 你已被封禁，无法发送消息。"
