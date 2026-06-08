@@ -26,6 +26,7 @@ from core.base_module import BaseModule
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
 from modules.customize_module import SK_WELCOME_BTNS, SK_WELCOME_TEXT, load_button_rows
+from modules.platform_module import platform_footer_username
 
 logger = logging.getLogger("shuangxiang.private_chat")
 
@@ -90,6 +91,11 @@ class PrivateChatModule(BaseModule):
     def _manage_group(self):
         return self.db.get_manage_group(self.tenant_id)
 
+    def _platform_footer(self) -> str:
+        """租户启动信息底部展示平台机器人用户名（由超级管理员配置，未配置则为空）。"""
+        uname = platform_footer_username(self.db)
+        return f"\n\n🏭 由 @{uname} 创建" if uname else ""
+
     def _user_label(self, user) -> str:
         uname = f"@{user.username}" if user.username else "无用户名"
         return f"👤 {user.full_name} ({uname})\n🆔 ID: `{user.id}`"
@@ -125,6 +131,7 @@ class PrivateChatModule(BaseModule):
             welcome = self.db.get_setting(
                 self.tenant_id, SK_WELCOME_TEXT, "") or self.welcome
             text = welcome + (f"\n\n{self.brand}" if self.brand else "")
+            text += self._platform_footer()
             await update.message.reply_text(
                 text, reply_markup=self._user_home_markup())
 
@@ -224,9 +231,8 @@ class PrivateChatModule(BaseModule):
             [InlineKeyboardButton("💬 自动回复", callback_data="cz:ar"),
              InlineKeyboardButton("📢 强制订阅", callback_data="cz:fsub")],
             [InlineKeyboardButton("✏️ 启动语", callback_data="cz:welcome"),
-             InlineKeyboardButton("🔘 启动按钮", callback_data="cz:wbtns")],
-            [InlineKeyboardButton("📊 数据统计", callback_data="pc:stats"),
-             InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
+             InlineKeyboardButton("📊 数据统计", callback_data="pc:stats")],
+            [InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
             # 安全开关（点一下即切换）
             [InlineKeyboardButton(
                 f"🛡 防刷屏：{'✅ 开' if antiflood else '⛔ 关'}",

@@ -1,0 +1,222 @@
+"""平台机器人启动信息自定义 + 租户启动信息底部平台署名测试。"""
+
+import json
+import types
+
+import pytest
+
+from modules.platform_module import (
+    PLATFORM_TID,
+    SK_PLATFORM_BOT_USERNAME,
+    SK_PLATFORM_BOT_USERNAME_AUTO,
+    SK_PLATFORM_START_BTNS,
+    SK_PLATFORM_START_TEXT,
+    PlatformModule,
+    platform_footer_username,
+)
+from modules.private_chat_module import PrivateChatModule
+
+# ── 假对象 ───────────────────────────────────────────────────
+
+class FakeQuery:
+    def __init__(self, user_id, data):
+        self.from_user = types.SimpleNamespace(id=user_id)
+        self.data = data
+        self.answers = []
+        self.edits = []
+
+    async def answer(self, *a, **k):
+        self.answers.append((a, k))
+
+    async def edit_message_text(self, text, **k):
+        self.edits.append((text, k))
+
+
+class FakeMessage:
+    def __init__(self, text=None):
+        self.text = text
+        self.replies = []
+
+    async def reply_text(self, text, **k):
+        self.replies.append((text, k))
+
+
+def make_pf(db, super_admin=99):
+    mod = PlatformModule.__new__(PlatformModule)
+    mod.db = db
+    mod.super_admin = super_admin
+    return mod
+
+
+def make_cbk_update(query):
+    return types.SimpleNamespace(callback_query=query)
+
+
+def make_text_update(user_id, message):
+    return types.SimpleNamespace(
+        message=message,
+        effective_user=types.SimpleNamespace(id=user_id),
+        effective_message=message,
+    )
+
+
+def _callbacks(markup):
+    return [b.callback_data for row in markup.inline_keyboard for b in row]
+
+
+# ── 启动面板：管理入口仅对超级管理员可见 ─────────────────────
+
+def test_home_markup_admin_only_settings_button(db):
+    pf = make_pf(db)
+    assert "pf:admin" in _callbacks(pf._home_markup(99))      # 超级管理员
+    assert "pf:admin" not in _callbacks(pf._home_markup(1234))  # 普通用户
+
+
+def test_home_markup_includes_custom_buttons(db):
+    pf = make_pf(db)
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_START_BTNS,
+                   json.dumps([[{"text": "频道", "url": "https://t.me/x"}]]))
+    markup = pf._home_markup(1234)
+    urls = [b.url for row in markup.inline_keyboard for b in row if b.url]
+    assert "https://t.me/x" in urls
+
+
+# ── 启动信息文本：自定义优先，否则默认 ──────────────────────
+
+def test_start_text_custom_overrides_default(db):
+    pf = make_pf(db)
+    assert "工厂" in pf._start_text()  # 默认
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "自定义启动信息")
+    assert pf._start_text() == "自定义启动信息"
+
+
+# ── 仅超级管理员可进入平台设置 ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_open_admin(db):
+    pf = make_pf(db)
+    q = FakeQuery(1234, "pf:admin")
+    await pf.on_callback(make_cbk_update(q), types.SimpleNamespace(
+        chat_data={}, user_data={}))
+    assert q.answers and q.answers[0][1].get("show_alert") is True
+    assert not q.edits
+
+
+@pytest.mark.asyncio
+async def test_admin_can_open_admin_panel(db):
+    pf = make_pf(db)
+    q = FakeQuery(99, "pf:admin")
+    await pf.on_callback(make_cbk_update(q), types.SimpleNamespace(
+        chat_data={}, user_data={}))
+    assert q.edits
+    cbs = _callbacks(q.edits[0][1]["reply_markup"])
+    assert "pf:admin:text" in cbs and "pf:admin:uname" in cbs
+
+
+# ── 管理员输入：保存启动信息 / 按钮 / 平台用户名 ─────────────
+
+@pytest.mark.asyncio
+async def test_admin_input_saves_start_text(db):
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(chat_data={}, user_data={"pf_admin_flow": "text"})
+    msg = FakeMessage(text="新的启动信息")
+    await pf.on_text(make_text_update(99, msg), ctx)
+    assert db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT) == "新的启动信息"
+    assert "pf_admin_flow" not in ctx.user_data
+
+
+@pytest.mark.asyncio
+async def test_admin_input_saves_buttons(db):
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(chat_data={}, user_data={"pf_admin_flow": "btns"})
+    msg = FakeMessage(text="频道 - https://t.me/x")
+    await pf.on_text(make_text_update(99, msg), ctx)
+    rows = json.loads(db.get_setting(PLATFORM_TID, SK_PLATFORM_START_BTNS))
+    assert rows[0][0]["url"] == "https://t.me/x"
+
+
+@pytest.mark.asyncio
+async def test_admin_input_saves_username_strips_at(db):
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(chat_data={}, user_data={"pf_admin_flow": "uname"})
+    msg = FakeMessage(text="@MyPlatformBot")
+    await pf.on_text(make_text_update(99, msg), ctx)
+    assert db.get_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME) == "MyPlatformBot"
+
+
+@pytest.mark.asyncio
+async def test_admin_input_clear_username(db):
+    pf = make_pf(db)
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "Old")
+    ctx = types.SimpleNamespace(chat_data={}, user_data={"pf_admin_flow": "uname"})
+    await pf.on_text(make_text_update(99, FakeMessage(text="清空")), ctx)
+    assert db.get_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME) == ""
+
+
+@pytest.mark.asyncio
+async def test_non_admin_text_not_treated_as_admin_flow(db):
+    """普通用户即便残留 flow 也不应触发管理员保存。"""
+    pf = make_pf(db)
+    ctx = types.SimpleNamespace(
+        chat_data={}, user_data={"pf_admin_flow": "text"})
+    await pf.on_text(make_text_update(1234, FakeMessage(text="x")), ctx)
+    assert db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT) is None
+
+
+# ── 平台署名：自定义优先，回退自动探测 ──────────────────────
+
+def test_platform_footer_username_prefers_custom(db):
+    assert platform_footer_username(db) == ""
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME_AUTO, "AutoBot")
+    assert platform_footer_username(db) == "AutoBot"
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "@CustomBot")
+    assert platform_footer_username(db) == "CustomBot"
+
+
+# ── 租户启动信息底部展示平台用户名 ──────────────────────────
+
+def _make_pc(db, admin_id=99):
+    mod = PrivateChatModule.__new__(PrivateChatModule)
+    mod.db = db
+    mod.tenant_id = 1
+    mod.admin_id = admin_id
+    mod.welcome = "默认欢迎"
+    mod.brand = ""
+    mod._manage_group = lambda: None
+    return mod
+
+
+class _Msg:
+    def __init__(self):
+        self.replies = []
+
+    async def reply_text(self, text, **k):
+        self.replies.append((text, k))
+
+
+def _user_update(uid=7):
+    return types.SimpleNamespace(
+        effective_chat=types.SimpleNamespace(type="private"),
+        effective_user=types.SimpleNamespace(
+            id=uid, username="u", full_name="User"),
+        message=_Msg(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_tenant_start_shows_platform_username(db):
+    pc = _make_pc(db)
+    db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "FactoryBot")
+    upd = _user_update()
+    await pc.cmd_start(upd, None)
+    text, _ = upd.message.replies[0]
+    assert "@FactoryBot" in text
+
+
+@pytest.mark.asyncio
+async def test_tenant_start_no_footer_when_unset(db):
+    pc = _make_pc(db)
+    upd = _user_update()
+    await pc.cmd_start(upd, None)
+    text, _ = upd.message.replies[0]
+    assert "由 @" not in text
