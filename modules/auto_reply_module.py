@@ -6,8 +6,12 @@
   • 防刷屏过滤器：限制单用户短时间内的消息频率（默认开启，可关闭）。
   • 字母表过滤器：可屏蔽包含特定文字（如拉丁字母 / 英文）的消息（默认关闭）。
 
-该模块的消息处理器注册在 group=-1，先于双向中转(group=5)执行，
-命中拦截时通过 ApplicationHandlerStop 阻止后续转发。
+该模块的消息处理器注册在 group=0：在强制订阅拦截(group=-1)之后、
+双向中转(group=5)之前执行；命中拦截时通过 ApplicationHandlerStop 阻止后续转发。
+
+⚠️ 每个 group 最多只会执行一个处理器（python-telegram-bot 的语义），
+因此本模块必须使用与 customize 模块的强制订阅拦截器(group=-1)*不同*的 group，
+否则二者会互相抢占、导致自动回复 / 过滤 / 防刷屏从未运行。
 """
 
 import json
@@ -61,9 +65,10 @@ class AutoReplyModule(BaseModule):
         app.add_handler(CommandHandler("antiflood", self.cmd_antiflood))
         app.add_handler(CommandHandler("alphabet_latin", self.cmd_alphabet_latin))
 
-        # 先于转发执行
+        # 在强制订阅拦截(group=-1)之后、双向转发(group=5)之前执行。
+        # 必须与 customize 的 on_guard(group=-1) 处于*不同* group，否则会被其抢占。
         app.add_handler(MessageHandler(
-            filters.ChatType.PRIVATE & ~filters.COMMAND, self.on_message), group=-1)
+            filters.ChatType.PRIVATE & ~filters.COMMAND, self.on_message), group=0)
 
     def _admin(self, update: Update) -> bool:
         return update.effective_user.id == self.admin_id
