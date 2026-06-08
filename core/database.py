@@ -31,6 +31,7 @@ class Database:
                 cls._instance._db_path = db_path
                 cls._instance._init_pragmas()
                 cls._instance._init_db()
+                cls._instance._migrate()
         return cls._instance
 
     def _conn(self) -> sqlite3.Connection:
@@ -198,6 +199,41 @@ class Database:
                 );
             """)
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
+
+    def _migrate(self) -> None:
+        """对早期版本创建的数据库补充后续新增的列。
+
+        ``CREATE TABLE IF NOT EXISTS`` 不会向已存在的表追加新列，因此旧库会缺少
+        诸如 ``tenants.bot_id`` 等后来新增的字段。这里通过 PRAGMA table_info
+        检测缺失列并用 ALTER TABLE ADD COLUMN 补齐（幂等，可重复执行）。
+        """
+        expected_columns = {
+            "tenants": [
+                ("bot_id", "INTEGER"),
+                ("bot_username", "TEXT"),
+                ("bot_name", "TEXT"),
+                ("is_active", "INTEGER DEFAULT 1"),
+                ("created_at", "TEXT"),
+            ],
+            "tenant_settings": [
+                ("manage_group", "INTEGER"),
+                ("welcome", "TEXT"),
+            ],
+        }
+        with self._conn() as c:
+            for table, columns in expected_columns.items():
+                existing = {
+                    row["name"]
+                    for row in c.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+                if not existing:
+                    # 表不存在（理论上 _init_db 已创建），跳过。
+                    continue
+                for name, definition in columns:
+                    if name not in existing:
+                        c.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+                        logger.info("数据库迁移：为 %s 增加列 %s", table, name)
 
     # ── 通用租户键值设置（用于过滤器开关等）─────────────────
 
