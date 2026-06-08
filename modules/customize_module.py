@@ -72,7 +72,7 @@ async def reply_with_optional_media(message, text, media_type, media_id,
 # ── 按钮序列化 / 解析（供其它模块复用）──────────────────────
 
 def parse_buttons(text: str) -> list[list[dict]]:
-    """把多行文本解析为按钮行。每行一行按钮，格式：``文字 - 链接``。
+    """把多行文本解析为按钮行。每行一个或多个按钮，格式：``文字 - 链接``。
 
     分隔符支持 ``-``、``|``、``：``、``:``。仅接受 http(s):// 或 tg:// 链接。
     在同一行用 ``&&`` 分隔可在一行中放置多个按钮，例如
@@ -319,7 +319,7 @@ class CustomizeModule(BaseModule):
         ctx.user_data["cz"] = {"flow": "wbtns"}
         await q.answer()
         await q.edit_message_text(
-            "🔘 *设置启动按钮*\n\n每行一行按钮，格式：\n`按钮文字 - 链接`\n\n"
+            "🔘 *设置启动按钮*\n\n每行一个或多个按钮，格式：\n`按钮文字 - 链接`\n\n"
             "例如：\n`官方频道 - https://t.me/yourchannel`\n`联系客服 - https://t.me/yourname`\n\n"
             "💡 用 `&&` 可在一行放多个按钮：\n`频道 - https://t.me/a && 客服 - https://t.me/b`\n\n"
             "发送 /cancel 取消。",
@@ -611,7 +611,7 @@ class CustomizeModule(BaseModule):
             buf["media_id"] = media_id
             state["step"] = "buttons"
             await msg.reply_text(
-                "（第 4/4 步）请发送随回复附带的*内联按钮*，每行一行：\n"
+                "（第 4/4 步）请发送随回复附带的*内联按钮*，每行一个或多个：\n"
                 "`文字 - 链接`（同一行用 `&&` 可放多个按钮）\n\n若不需要按钮，发送「跳过」。",
                 parse_mode="Markdown")
         elif step == "buttons":
