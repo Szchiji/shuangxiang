@@ -89,6 +89,19 @@ def test_parse_buttons_valid_and_invalid():
     assert flat[0]["url"] == "https://t.me/a"
 
 
+def test_parse_buttons_multiple_per_row():
+    rows = parse_buttons(
+        "频道 - https://t.me/a && 客服 - https://t.me/b\n"
+        "单独 - https://t.me/c")
+    assert [[b["text"] for b in row] for row in rows] == [["频道", "客服"], ["单独"]]
+    assert rows[0][1]["url"] == "https://t.me/b"
+
+
+def test_parse_buttons_skips_invalid_cells_in_row():
+    rows = parse_buttons("好 - https://t.me/a && 坏 - ftp://x && 也好 - https://t.me/b")
+    assert [[b["text"] for b in row] for row in rows] == [["好", "也好"]]
+
+
 def test_rows_to_keyboard_skips_incomplete():
     kb = rows_to_keyboard([[{"text": "a", "url": "https://t.me/a"}],
                            [{"text": "", "url": "https://t.me/b"}]])

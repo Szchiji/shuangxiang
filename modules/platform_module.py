@@ -258,8 +258,9 @@ class PlatformModule(BaseModule):
             ctx.user_data["pf_admin_flow"] = "btns"
             await q.answer()
             await q.edit_message_text(
-                "🔘 *设置启动信息按钮*\n\n每行一个按钮，格式：\n`按钮文字 - 链接`\n\n"
+                "🔘 *设置启动信息按钮*\n\n每行一行按钮，格式：\n`按钮文字 - 链接`\n\n"
                 "例如：\n`官方频道 - https://t.me/yourchannel`\n\n"
+                "💡 用 `&&` 可在一行放多个按钮：\n`频道 - https://t.me/a && 客服 - https://t.me/b`\n\n"
                 "发送「清空」可移除全部自定义按钮，发送 /cancel 取消。",
                 parse_mode="Markdown")
         elif action == "admin:uname":
