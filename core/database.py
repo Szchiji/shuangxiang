@@ -226,9 +226,17 @@ class Database:
 
     def delete_tenant(self, tid):
         with self._conn() as c:
+            # 先删除通过外键间接关联到本租户的子表数据
+            c.execute(
+                "DELETE FROM form_steps WHERE form_id IN "
+                "(SELECT id FROM forms WHERE tenant_id=?)", (tid,))
+            c.execute(
+                "DELETE FROM order_items WHERE order_id IN "
+                "(SELECT id FROM orders WHERE tenant_id=?)", (tid,))
             for tbl in ("tenants", "tenant_settings", "tenant_users", "message_map",
                         "topic_map", "auto_replies", "filters", "menu_items",
-                        "forms", "categories", "products", "cart_items", "orders"):
+                        "forms", "form_responses", "categories", "products",
+                        "cart_items", "orders"):
                 col = "id" if tbl == "tenants" else "tenant_id"
                 c.execute(f"DELETE FROM {tbl} WHERE {col}=?", (tid,))
 
