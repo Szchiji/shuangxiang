@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import html
 import json
 import logging
 import re
@@ -739,12 +740,12 @@ class CustomizeModule(BaseModule):
                 unverified.append(ch.get("title") or ch.get("chat"))
         note = ""
         if unverified:
-            note = ("\n\n⚠️ 以下频道暂时无法校验，强制订阅对它们*不会生效*：\n"
-                    + "\n".join(f"• {t}" for t in unverified)
-                    + "\n\n请把本机器人设为这些频道的*管理员*后再试。")
+            note = ("\n\n⚠️ 以下频道暂时无法校验，强制订阅对它们<b>不会生效</b>：\n"
+                    + "\n".join(f"• {html.escape(t)}" for t in unverified)
+                    + "\n\n请把本机器人设为这些频道的<b>管理员</b>后再试。")
         await msg.reply_text(
             f"✅ 已添加 {added} 个频道，强制订阅已开启。{note}",
-            parse_mode="Markdown", reply_markup=self._back_markup())
+            parse_mode="HTML", reply_markup=self._back_markup())
 
     async def _wizard_bc(self, msg, ctx) -> None:
         ctx.user_data["cz"] = {

@@ -12,6 +12,7 @@
   • 创建成功后的新手引导与「分享我的机器人」按钮。
 """
 
+import html
 import json
 import re
 from urllib.parse import quote
@@ -31,7 +32,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telegram.helpers import escape_markdown
 
 from core.base_module import BaseModule
 from core.database import Database
@@ -238,7 +238,7 @@ class PlatformModule(BaseModule):
             await q.answer()
             text, markup = self._mybots_view(q.from_user.id)
             await q.edit_message_text(
-                text, parse_mode="Markdown", reply_markup=markup)
+                text, parse_mode="HTML", reply_markup=markup)
         elif action.startswith("delask:"):
             await self._on_delete_ask(q, action)
         elif action.startswith("delyes:"):
@@ -271,11 +271,11 @@ class PlatformModule(BaseModule):
         btns = "、".join(b.text for row in btn_rows for b in row) or "（无）"
         custom = self.db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "")
         uname = platform_footer_username(self.db)
-        uname_line = f"@{escape_markdown(uname, version=1)}" if uname else "（未设置）"
+        uname_line = f"@{html.escape(uname)}" if uname else "（未设置）"
         return (
-            "⚙️ *平台设置*\n\n"
+            "⚙️ <b>平台设置</b>\n\n"
             f"启动信息：{'已自定义' if custom else '默认'}\n"
-            f"启动按钮：{escape_markdown(btns, version=1)}\n"
+            f"启动按钮：{html.escape(btns)}\n"
             f"平台用户名：{uname_line}")
 
     async def _on_admin(self, q, ctx, action: str) -> None:
@@ -286,7 +286,7 @@ class PlatformModule(BaseModule):
             ctx.user_data.pop("pf_admin_flow", None)
             await q.answer()
             await q.edit_message_text(
-                self._admin_text(), parse_mode="Markdown",
+                self._admin_text(), parse_mode="HTML",
                 reply_markup=self._admin_markup())
         elif action == "admin:text":
             ctx.user_data["pf_admin_flow"] = "text"
@@ -294,9 +294,9 @@ class PlatformModule(BaseModule):
             cur = self.db.get_setting(
                 PLATFORM_TID, SK_PLATFORM_START_TEXT, "") or "（未设置，使用默认）"
             await q.edit_message_text(
-                "✏️ *自定义启动信息*\n\n请发送新的启动信息文本。\n\n"
-                f"当前：\n{escape_markdown(cur, version=1)}\n\n发送 /cancel 取消。",
-                parse_mode="Markdown")
+                "✏️ <b>自定义启动信息</b>\n\n请发送新的启动信息文本。\n\n"
+                f"当前：\n{html.escape(cur)}\n\n发送 /cancel 取消。",
+                parse_mode="HTML")
         elif action == "admin:btns":
             ctx.user_data["pf_admin_flow"] = "btns"
             await q.answer()
@@ -356,7 +356,7 @@ class PlatformModule(BaseModule):
                 parse_mode="Markdown", reply_markup=_await_token_keyboard())
         elif action == "mybots":
             mtext, markup = self._mybots_view(uid)
-            await msg.reply_text(mtext, parse_mode="Markdown", reply_markup=markup)
+            await msg.reply_text(mtext, parse_mode="HTML", reply_markup=markup)
         elif action == "create":
             await msg.reply_text(
                 HELP_CREATE_TEXT, parse_mode="Markdown",
@@ -366,7 +366,7 @@ class PlatformModule(BaseModule):
                 FAQ_TEXT, parse_mode="Markdown", reply_markup=_back_keyboard())
         elif action == "admin":
             await msg.reply_text(
-                self._admin_text(), parse_mode="Markdown",
+                self._admin_text(), parse_mode="HTML",
                 reply_markup=self._admin_markup())
         else:  # home
             await msg.reply_text(
@@ -473,17 +473,18 @@ class PlatformModule(BaseModule):
         if ok:
             uname = me.username or ""
             bot_link = f"https://t.me/{uname}"
-            uname_md = escape_markdown(uname)
+            uname_html = html.escape(uname)
             await update.message.reply_text(
-                f"✅ *创建成功！* 你的机器人：[@{uname_md}]({bot_link})\n\n"
-                "🚀 *接下来三步上手：*\n"
-                f"1️⃣ 点击上方链接打开 [@{uname_md}]({bot_link})，发送 `/start` 测试收发\n"
-                "2️⃣ 发送 `/settings` 打开设置面板：自定义启动语、按钮、"
+                f'✅ <b>创建成功！</b> 你的机器人：<a href="{bot_link}">@{uname_html}</a>\n\n'
+                "🚀 <b>接下来三步上手：</b>\n"
+                f'1️⃣ 点击上方链接打开 <a href="{bot_link}">@{uname_html}</a>，'
+                "发送 <code>/start</code> 测试收发\n"
+                "2️⃣ 发送 <code>/settings</code> 打开设置面板：自定义启动语、按钮、"
                 "自动回复与强制订阅\n"
-                "3️⃣ 发送 `/broadcast` 可一键群发给全部用户\n\n"
-                "💡 进阶：把我加入论坛群后发送 `/setgroup` 可启用 Topics 多人协作。\n"
+                "3️⃣ 发送 <code>/broadcast</code> 可一键群发给全部用户\n\n"
+                "💡 进阶：把我加入论坛群后发送 <code>/setgroup</code> 可启用 Topics 多人协作。\n"
                 "把机器人分享给朋友，让更多人来联系你 👇",
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 disable_web_page_preview=True,
                 reply_markup=_share_keyboard(uname))
         else:
@@ -506,8 +507,8 @@ class PlatformModule(BaseModule):
                 ]),
             )
         lines = [
-            f"#{r['id']} @{escape_markdown(r['bot_username'] or '', version=1)}"
-            f"（{escape_markdown(r['bot_name'] or '', version=1)}）"
+            f"#{r['id']} @{html.escape(r['bot_username'] or '')}"
+            f"（{html.escape(r['bot_name'] or '')}）"
             for r in active
         ]
         buttons = []
@@ -523,8 +524,8 @@ class PlatformModule(BaseModule):
         buttons.append(
             [InlineKeyboardButton("➕ 再创建一个", callback_data="pf:newbot")])
         return (
-            "🤖 *我的机器人：*\n" + "\n".join(lines)
-            + "\n\n点击 🗑 删除按钮可移除对应机器人（也可使用 /delbot <编号>）。",
+            "🤖 <b>我的机器人：</b>\n" + "\n".join(lines)
+            + "\n\n点击 🗑 删除按钮可移除对应机器人（也可使用 /delbot &lt;编号&gt;）。",
             InlineKeyboardMarkup(buttons),
         )
 
@@ -568,12 +569,12 @@ class PlatformModule(BaseModule):
         text, markup = self._mybots_view(q.from_user.id)
         await q.edit_message_text(
             f"✅ 已删除机器人 #{tid}。\n\n" + text,
-            parse_mode="Markdown", reply_markup=markup)
+            parse_mode="HTML", reply_markup=markup)
 
     async def cmd_mybots(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         text, markup = self._mybots_view(update.effective_user.id)
         await update.message.reply_text(
-            text, parse_mode="Markdown", reply_markup=markup)
+            text, parse_mode="HTML", reply_markup=markup)
 
     async def cmd_delbot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not ctx.args or not ctx.args[0].isdigit():
