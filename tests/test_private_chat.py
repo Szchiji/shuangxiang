@@ -26,6 +26,7 @@ def make_module(db, manage_group=None, admin_id=99):
 
 
 USER = types.SimpleNamespace(id=42, full_name="Alice", username="a")
+USER2 = types.SimpleNamespace(id=43, full_name="Bob", username="b")
 
 
 @pytest.mark.asyncio
@@ -126,9 +127,6 @@ async def test_incoming_user_acks_and_autodeletes(db):
     # 提示在延时（测试中为 0）后被自动删除
     await asyncio.sleep(0.05)
     assert ctx.bot.of("delete_message"), "应安排删除已送达提示"
-
-
-USER2 = types.SimpleNamespace(id=43, full_name="Bob", username="b")
 
 
 @pytest.mark.asyncio
