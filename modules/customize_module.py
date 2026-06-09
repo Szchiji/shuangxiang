@@ -486,10 +486,13 @@ class CustomizeModule(BaseModule):
         ctx.user_data["cz"] = {"flow": "fsub"}
         await q.answer()
         await q.edit_message_text(
-            "➕ *添加强制订阅频道*\n\n请按以下格式发送（每行一个频道）：\n"
-            "`名称 | @频道用户名 | 加入链接`\n\n"
+            "➕ *添加强制订阅频道*\n\n支持以下格式（每行一个频道）：\n"
+            "• `名称 | @频道用户名 | 加入链接`\n"
+            "• `名称 | @频道用户名`（自动生成链接）\n"
+            "• 仅频道标识：`@频道用户名` 或 `-100` 开头的数字 ID\n\n"
             "公开频道示例：\n`官方频道 | @mychannel | https://t.me/mychannel`\n\n"
-            "私有频道可用 `-100` 开头的数字 ID 代替 @用户名，并填写邀请链接。\n\n"
+            "私有频道可直接发送 `-100` 开头的数字 ID，"
+            "本机器人为该频道管理员时会*自动探测*标题与邀请链接。\n\n"
             "发送 /cancel 取消。",
             parse_mode="Markdown")
 
@@ -670,16 +673,56 @@ class CustomizeModule(BaseModule):
                 f"✅ {verb}自动回复 #{rid}：「{buf['keyword']}」{mt_note}{extras}",
                 reply_markup=self._back_markup())
 
+    async def _resolve_chat_info(self, ctx, chat):
+        """通过 ``get_chat`` 自动探测频道标题与加入链接。
+
+        对「数字 ID 频道」尤其有用：无法从纯数字推导出 t.me 链接，但只要本机器人
+        是该频道管理员，``get_chat`` 即可返回标题、公开用户名或主邀请链接。
+        探测失败（如机器人不是该频道管理员）时返回 ``(None, None)``。
+        """
+        target = _normalize_chat(chat)
+        if target is None:
+            return None, None
+        try:
+            info = await ctx.bot.get_chat(target)
+        except TelegramError as e:
+            logger.warning("强制订阅自动探测频道失败 chat=%s: %s", chat, e)
+            return None, None
+        title = getattr(info, "title", None)
+        username = getattr(info, "username", None)
+        if username:
+            url = "https://t.me/" + username
+        else:
+            url = getattr(info, "invite_link", None) or ""
+        return title, url
+
     async def _wizard_fsub(self, msg, ctx) -> None:
         channels = self._load_fsub()
         added = 0
         for line in (msg.text or "").splitlines():
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) < 2:
+            line = line.strip()
+            if not line:
                 continue
-            title, chat = parts[0], parts[1]
-            url = parts[2] if len(parts) > 2 else _default_join_url(chat)
-            if not chat or not url:
+            parts = [p.strip() for p in line.split("|")]
+            # 灵活解析：
+            #   1 段 → 频道（数字 ID 或 @用户名），标题与链接自动探测
+            #   2 段 → 名称 | 频道，链接自动探测
+            #   3 段 → 名称 | 频道 | 链接
+            if len(parts) == 1:
+                title, chat, url = "", parts[0], ""
+            else:
+                title, chat = parts[0], parts[1]
+                url = parts[2] if len(parts) > 2 else ""
+            if not chat:
+                continue
+            if not url:
+                url = _default_join_url(chat)
+            # 标题或链接缺失时（尤其是数字 ID 频道）通过 get_chat 自动探测。
+            if not title or not url:
+                d_title, d_url = await self._resolve_chat_info(ctx, chat)
+                title = title or d_title or chat
+                url = url or d_url
+            if not url:
                 continue
             channels.append({"title": title, "chat": chat, "url": url})
             added += 1
