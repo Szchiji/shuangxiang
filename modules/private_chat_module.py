@@ -477,6 +477,8 @@ class PrivateChatModule(BaseModule):
 
     async def _forward_to_dm(self, ctx, user, msg) -> None:
         await self._maybe_dm_header(ctx, user, msg.message_id)
+        await self._maybe_forward_hint(
+            ctx, self.admin_id, msg, user=user, user_msg_id=msg.message_id)
         copied = await ctx.bot.copy_message(
             chat_id=self.admin_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
         self.db.save_message_map(self.tenant_id, copied.message_id, user.id, msg.message_id)
@@ -484,6 +486,8 @@ class PrivateChatModule(BaseModule):
     async def _forward_album_to_dm(self, ctx, user, messages) -> None:
         first = messages[0]
         await self._maybe_dm_header(ctx, user, first.message_id)
+        await self._maybe_forward_hint(
+            ctx, self.admin_id, first, user=user, user_msg_id=first.message_id)
         copied = await ctx.bot.copy_messages(
             chat_id=self.admin_id, from_chat_id=first.chat_id,
             message_ids=[m.message_id for m in messages])
@@ -528,6 +532,53 @@ class PrivateChatModule(BaseModule):
             return thread_id
 
     @staticmethod
+    def _forward_origin_label(msg) -> str | None:
+        """从转发消息中提取「原始来源」名称（已 HTML 转义）。
+
+        覆盖 forward_origin 的四种来源：普通用户、隐藏隐私用户、代表某群发言、
+        以及频道帖子。无法识别来源时返回 None。
+        """
+        origin = getattr(msg, "forward_origin", None)
+        if origin is None:
+            return None
+        name = None
+        sender_user = getattr(origin, "sender_user", None)
+        if sender_user is not None:
+            name = sender_user.full_name or (
+                f"@{sender_user.username}" if sender_user.username else None)
+        if name is None:
+            name = getattr(origin, "sender_user_name", None)
+        if name is None:
+            chat = getattr(origin, "sender_chat", None) or getattr(origin, "chat", None)
+            if chat is not None:
+                name = getattr(chat, "title", None) or (
+                    f"@{chat.username}" if getattr(chat, "username", None) else None)
+        if not name:
+            return None
+        return html.escape(name)
+
+    async def _maybe_forward_hint(self, ctx, chat_id, msg, *,
+                                  thread_id=None, user=None, user_msg_id=None) -> None:
+        """若用户发来的是转发消息，向管理员标注「转发自谁」。
+
+        copy_message 会丢弃原始转发署名，导致管理员看不出消息系转发而来，
+        故在转发正文前补发一条来源提示。
+        """
+        label = self._forward_origin_label(msg)
+        if label is None:
+            return
+        kwargs = {"chat_id": chat_id, "text": f"🔀 转发自：{label}", "parse_mode": "HTML"}
+        if thread_id is not None:
+            kwargs["message_thread_id"] = thread_id
+        try:
+            sent = await ctx.bot.send_message(**kwargs)
+        except TelegramError as e:
+            logger.warning("发送转发提示失败: %s", e)
+            return
+        if user is not None and user_msg_id is not None:
+            self.db.save_message_map(self.tenant_id, sent.message_id, user.id, user_msg_id)
+
+    @staticmethod
     def _reply_snippet(msg) -> str | None:
         """从用户消息中提取「被回复消息」的简短摘要（话题模式提示用）。"""
         reply = getattr(msg, "reply_to_message", None)
@@ -555,6 +606,7 @@ class PrivateChatModule(BaseModule):
     async def _forward_to_topic(self, ctx, group, user, msg) -> None:
         thread_id = await self._ensure_topic(ctx, group, user)
         await self._maybe_topic_reply_hint(ctx, group, thread_id, msg)
+        await self._maybe_forward_hint(ctx, group, msg, thread_id=thread_id)
         await ctx.bot.copy_message(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=msg.chat_id, message_id=msg.message_id)
@@ -563,6 +615,7 @@ class PrivateChatModule(BaseModule):
         thread_id = await self._ensure_topic(ctx, group, user)
         first = messages[0]
         await self._maybe_topic_reply_hint(ctx, group, thread_id, first)
+        await self._maybe_forward_hint(ctx, group, first, thread_id=thread_id)
         await ctx.bot.copy_messages(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=first.chat_id,

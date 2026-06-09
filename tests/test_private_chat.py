@@ -147,3 +147,50 @@ async def test_dm_header_only_on_sender_change(db):
     assert "Bob" in headers[1]["text"]
     # 三条用户消息均已转发（copy_message 各一次）
     assert len(ctx.bot.of("copy_message")) == 3
+
+
+@pytest.mark.asyncio
+async def test_forward_hint_dm(db):
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    origin = types.SimpleNamespace(
+        sender_user=types.SimpleNamespace(full_name="罗湖KK", username="kk"))
+    msg = FakeMessage(80, text="哥，我回来上班了", forward_origin=origin)
+    await mod._forward_to_dm(ctx, USER, msg)
+    hints = [c for c in ctx.bot.of("send_message")
+             if "转发自" in c.get("text", "")]
+    assert len(hints) == 1
+    assert "罗湖KK" in hints[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_no_forward_hint_when_not_forward(db):
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    await mod._forward_to_dm(ctx, USER, FakeMessage(81, text="普通消息"))
+    hints = [c for c in ctx.bot.of("send_message")
+             if "转发自" in c.get("text", "")]
+    assert hints == []
+
+
+@pytest.mark.asyncio
+async def test_forward_hint_topic(db):
+    mod = make_module(db, manage_group=-100)
+    ctx = make_ctx(FakeBot())
+    origin = types.SimpleNamespace(chat=types.SimpleNamespace(title="某频道", username=None))
+    msg = FakeMessage(82, text="频道帖子", forward_origin=origin)
+    await mod._forward_to_topic(ctx, -100, USER, msg)
+    hints = [c for c in ctx.bot.of("send_message")
+             if "转发自" in c.get("text", "")]
+    assert len(hints) == 1
+    assert hints[0]["message_thread_id"] is not None
+    assert "某频道" in hints[0]["text"]
+
+
+def test_forward_origin_label_hidden_user(db):
+    mod = make_module(db)
+    origin = types.SimpleNamespace(sender_user_name="隐藏用户")
+    label = mod._forward_origin_label(FakeMessage(1, forward_origin=origin))
+    assert label == "隐藏用户"
+    # 非转发消息返回 None
+    assert mod._forward_origin_label(FakeMessage(2)) is None
