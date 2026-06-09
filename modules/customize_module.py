@@ -30,6 +30,7 @@ from telegram.ext import (
     filters,
 )
 
+from core import ui
 from core.base_module import BaseModule
 from core.database import Database
 
@@ -184,8 +185,9 @@ class CustomizeModule(BaseModule):
 
     @staticmethod
     def _settings_text() -> str:
-        return ("🎛 *高级设置*\n\n"
-                "点击下方按钮即可自定义机器人，全程按提示操作，无需记忆指令。")
+        return ui.section(
+            "高级设置", emoji="🎛",
+            body="点击下方按钮即可自定义机器人，全程按提示操作，无需记忆指令。")
 
     async def cmd_settings(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update.effective_user.id):

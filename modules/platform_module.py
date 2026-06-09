@@ -33,6 +33,7 @@ from telegram.ext import (
     filters,
 )
 
+from core import ui
 from core.base_module import BaseModule
 from core.database import Database
 from modules.customize_module import load_button_rows, parse_buttons
@@ -58,14 +59,15 @@ def platform_footer_username(db: Database) -> str:
     return name.lstrip("@").strip()
 
 START_TEXT = (
-    "🤖 *双向私聊机器人 · 工厂*\n\n"
+    ui.section(
+        "双向私聊机器人 · 工厂", emoji="🤖") + "\n\n"
     "用你自己的机器人 Token，几秒钟创建一个属于你的双向私聊机器人，"
     "支持 Topics 管理、自动回复与过滤、菜单、表单、数字商店等。\n\n"
     "点击下方按钮开始，或直接发送 `/newbot <你的Token>`。"
 )
 
 HELP_CREATE_TEXT = (
-    "📖 *如何创建你的机器人*\n\n"
+    ui.section("如何创建你的机器人", emoji="📖") + "\n\n"
     "1️⃣ 打开 @BotFather，发送 /newbot 创建机器人，复制它给你的 *Token*\n"
     "（形如 `123456:ABC-DEF1234ghIkl...`）\n"
     "2️⃣ 回到这里发送：`/newbot <你的Token>`\n"
@@ -74,7 +76,7 @@ HELP_CREATE_TEXT = (
 )
 
 FAQ_TEXT = (
-    "❓ *常见问题*\n\n"
+    ui.section("常见问题", emoji="❓") + "\n\n"
     "• *Token 在哪拿？* 找 @BotFather 创建机器人后会发给你。\n"
     "• *提示 Token 已被使用？* 同一个 Token 只能创建一个机器人，"
     "请到 @BotFather 用 /token 重置或换一个机器人。\n"
@@ -273,7 +275,7 @@ class PlatformModule(BaseModule):
         uname = platform_footer_username(self.db)
         uname_line = f"@{html.escape(uname)}" if uname else "（未设置）"
         return (
-            "⚙️ <b>平台设置</b>\n\n"
+            ui.section("平台设置", emoji="⚙️", html=True) + "\n\n"
             f"启动信息：{'已自定义' if custom else '默认'}\n"
             f"启动按钮：{html.escape(btns)}\n"
             f"平台用户名：{uname_line}")
@@ -534,7 +536,8 @@ class PlatformModule(BaseModule):
         buttons.append(
             [InlineKeyboardButton("➕ 再创建一个", callback_data="pf:newbot")])
         return (
-            "🤖 <b>我的机器人：</b>\n" + "\n".join(lines)
+            ui.header("我的机器人", emoji="🤖", html=True) + "\n"
+            + "\n".join(lines)
             + "\n\n点击 🗑 删除按钮即可移除对应机器人。",
             InlineKeyboardMarkup(buttons),
         )
