@@ -95,9 +95,9 @@ class AutoReplyModule(BaseModule):
         if not keyword or not reply:
             await update.message.reply_text("⚠️ 关键词和回复都不能为空。")
             return
-        rid = self.db.add_auto_reply(self.tenant_id, keyword, reply, "contains", stop)
+        self.db.add_auto_reply(self.tenant_id, keyword, reply, "contains", stop)
         await update.message.reply_text(
-            f"✅ 已添加自动回复 #{rid}：「{keyword}」{'（拦截）' if stop else ''}")
+            f"✅ 已添加自动回复：「{keyword}」{'（拦截）' if stop else ''}")
 
     async def ar_list(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update):
@@ -106,17 +106,25 @@ class AutoReplyModule(BaseModule):
         if not rows:
             await update.message.reply_text("暂无自动回复。用 /ar_add 添加。")
             return
-        lines = [f"#{r['id']} 「{r['keyword']}」{self._type_tag(r)}→ {r['reply']}"
-                 f"{' [拦截]' if r['stop'] else ''}" for r in rows]
-        await update.message.reply_text("📝 自动回复：\n" + "\n".join(lines))
+        lines = [f"{i}. 「{r['keyword']}」{self._type_tag(r)}→ {r['reply']}"
+                 f"{' [拦截]' if r['stop'] else ''}"
+                 for i, r in enumerate(rows, 1)]
+        await update.message.reply_text(
+            "📝 自动回复：\n" + "\n".join(lines)
+            + "\n\n删除：/ar_del 序号")
 
     async def ar_del(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update):
             return
         if not ctx.args or not ctx.args[0].isdigit():
-            await update.message.reply_text("用法：/ar_del <编号>")
+            await update.message.reply_text("用法：/ar_del <序号>")
             return
-        self.db.delete_auto_reply(self.tenant_id, int(ctx.args[0]))
+        rows = self.db.get_auto_replies(self.tenant_id)
+        idx = int(ctx.args[0])
+        if not 1 <= idx <= len(rows):
+            await update.message.reply_text("⚠️ 序号不存在，请用 /ar_list 查看。")
+            return
+        self.db.delete_auto_reply(self.tenant_id, rows[idx - 1]["id"])
         await update.message.reply_text("✅ 已删除。")
 
     async def filter_add(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -126,8 +134,8 @@ class AutoReplyModule(BaseModule):
         if not word:
             await update.message.reply_text("用法：/filter_add <违禁词>")
             return
-        fid = self.db.add_filter(self.tenant_id, word)
-        await update.message.reply_text(f"✅ 已添加过滤词 #{fid}：{word}")
+        self.db.add_filter(self.tenant_id, word)
+        await update.message.reply_text(f"✅ 已添加过滤词：{word}")
 
     async def filter_list(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update):
@@ -137,15 +145,22 @@ class AutoReplyModule(BaseModule):
             await update.message.reply_text("暂无过滤词。用 /filter_add 添加。")
             return
         await update.message.reply_text(
-            "🚫 过滤词：\n" + "\n".join(f"#{r['id']} {r['keyword']}" for r in rows))
+            "🚫 过滤词：\n"
+            + "\n".join(f"{i}. {r['keyword']}" for i, r in enumerate(rows, 1))
+            + "\n\n删除：/filter_del 序号")
 
     async def filter_del(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update):
             return
         if not ctx.args or not ctx.args[0].isdigit():
-            await update.message.reply_text("用法：/filter_del <编号>")
+            await update.message.reply_text("用法：/filter_del <序号>")
             return
-        self.db.delete_filter(self.tenant_id, int(ctx.args[0]))
+        rows = self.db.get_filters(self.tenant_id)
+        idx = int(ctx.args[0])
+        if not 1 <= idx <= len(rows):
+            await update.message.reply_text("⚠️ 序号不存在，请用 /filter_list 查看。")
+            return
+        self.db.delete_filter(self.tenant_id, rows[idx - 1]["id"])
         await update.message.reply_text("✅ 已删除。")
 
     # ── 防刷屏 / 字母表 开关 ────────────────────────────────

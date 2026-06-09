@@ -12,6 +12,7 @@
   • 创建成功后的新手引导与「分享我的机器人」按钮。
 """
 
+import html
 import json
 import re
 from urllib.parse import quote
@@ -31,8 +32,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from telegram.helpers import escape_markdown
 
+from core import ui
 from core.base_module import BaseModule
 from core.database import Database
 from modules.customize_module import load_button_rows, parse_buttons
@@ -58,14 +59,15 @@ def platform_footer_username(db: Database) -> str:
     return name.lstrip("@").strip()
 
 START_TEXT = (
-    "🤖 *双向私聊机器人 · 工厂*\n\n"
+    ui.section(
+        "双向私聊机器人 · 工厂", emoji="🤖") + "\n\n"
     "用你自己的机器人 Token，几秒钟创建一个属于你的双向私聊机器人，"
     "支持 Topics 管理、自动回复与过滤、菜单、表单、数字商店等。\n\n"
     "点击下方按钮开始，或直接发送 `/newbot <你的Token>`。"
 )
 
 HELP_CREATE_TEXT = (
-    "📖 *如何创建你的机器人*\n\n"
+    ui.section("如何创建你的机器人", emoji="📖") + "\n\n"
     "1️⃣ 打开 @BotFather，发送 /newbot 创建机器人，复制它给你的 *Token*\n"
     "（形如 `123456:ABC-DEF1234ghIkl...`）\n"
     "2️⃣ 回到这里发送：`/newbot <你的Token>`\n"
@@ -74,13 +76,13 @@ HELP_CREATE_TEXT = (
 )
 
 FAQ_TEXT = (
-    "❓ *常见问题*\n\n"
+    ui.section("常见问题", emoji="❓") + "\n\n"
     "• *Token 在哪拿？* 找 @BotFather 创建机器人后会发给你。\n"
     "• *提示 Token 已被使用？* 同一个 Token 只能创建一个机器人，"
     "请到 @BotFather 用 /token 重置或换一个机器人。\n"
     "• *启动失败？* 多为 Token 失效或网络波动，稍后重试或更换 Token。\n"
     "• *如何多管理员协作？* 在你的机器人里使用 /setgroup 启用 Topics 模式。\n"
-    "• *如何删除机器人？* 发送 /mybots 查看编号，再 /delbot <编号>。"
+    "• *如何删除机器人？* 发送 /mybots，点击对应机器人的 🗑 删除按钮即可。"
 )
 
 
@@ -238,7 +240,7 @@ class PlatformModule(BaseModule):
             await q.answer()
             text, markup = self._mybots_view(q.from_user.id)
             await q.edit_message_text(
-                text, parse_mode="Markdown", reply_markup=markup)
+                text, parse_mode="HTML", reply_markup=markup)
         elif action.startswith("delask:"):
             await self._on_delete_ask(q, action)
         elif action.startswith("delyes:"):
@@ -271,11 +273,11 @@ class PlatformModule(BaseModule):
         btns = "、".join(b.text for row in btn_rows for b in row) or "（无）"
         custom = self.db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "")
         uname = platform_footer_username(self.db)
-        uname_line = f"@{escape_markdown(uname, version=1)}" if uname else "（未设置）"
+        uname_line = f"@{html.escape(uname)}" if uname else "（未设置）"
         return (
-            "⚙️ *平台设置*\n\n"
+            ui.section("平台设置", emoji="⚙️", html=True) + "\n\n"
             f"启动信息：{'已自定义' if custom else '默认'}\n"
-            f"启动按钮：{escape_markdown(btns, version=1)}\n"
+            f"启动按钮：{html.escape(btns)}\n"
             f"平台用户名：{uname_line}")
 
     async def _on_admin(self, q, ctx, action: str) -> None:
@@ -286,7 +288,7 @@ class PlatformModule(BaseModule):
             ctx.user_data.pop("pf_admin_flow", None)
             await q.answer()
             await q.edit_message_text(
-                self._admin_text(), parse_mode="Markdown",
+                self._admin_text(), parse_mode="HTML",
                 reply_markup=self._admin_markup())
         elif action == "admin:text":
             ctx.user_data["pf_admin_flow"] = "text"
@@ -294,9 +296,9 @@ class PlatformModule(BaseModule):
             cur = self.db.get_setting(
                 PLATFORM_TID, SK_PLATFORM_START_TEXT, "") or "（未设置，使用默认）"
             await q.edit_message_text(
-                "✏️ *自定义启动信息*\n\n请发送新的启动信息文本。\n\n"
-                f"当前：\n{escape_markdown(cur, version=1)}\n\n发送 /cancel 取消。",
-                parse_mode="Markdown")
+                "✏️ <b>自定义启动信息</b>\n\n请发送新的启动信息文本。\n\n"
+                f"当前：\n{html.escape(cur)}\n\n发送 /cancel 取消。",
+                parse_mode="HTML")
         elif action == "admin:btns":
             ctx.user_data["pf_admin_flow"] = "btns"
             await q.answer()
@@ -356,7 +358,7 @@ class PlatformModule(BaseModule):
                 parse_mode="Markdown", reply_markup=_await_token_keyboard())
         elif action == "mybots":
             mtext, markup = self._mybots_view(uid)
-            await msg.reply_text(mtext, parse_mode="Markdown", reply_markup=markup)
+            await msg.reply_text(mtext, parse_mode="HTML", reply_markup=markup)
         elif action == "create":
             await msg.reply_text(
                 HELP_CREATE_TEXT, parse_mode="Markdown",
@@ -366,7 +368,7 @@ class PlatformModule(BaseModule):
                 FAQ_TEXT, parse_mode="Markdown", reply_markup=_back_keyboard())
         elif action == "admin":
             await msg.reply_text(
-                self._admin_text(), parse_mode="Markdown",
+                self._admin_text(), parse_mode="HTML",
                 reply_markup=self._admin_markup())
         else:  # home
             await msg.reply_text(
@@ -473,17 +475,18 @@ class PlatformModule(BaseModule):
         if ok:
             uname = me.username or ""
             bot_link = f"https://t.me/{uname}"
-            uname_md = escape_markdown(uname)
+            uname_html = html.escape(uname)
             await update.message.reply_text(
-                f"✅ *创建成功！* 你的机器人：[@{uname_md}]({bot_link})\n\n"
-                "🚀 *接下来三步上手：*\n"
-                f"1️⃣ 点击上方链接打开 [@{uname_md}]({bot_link})，发送 `/start` 测试收发\n"
-                "2️⃣ 发送 `/settings` 打开设置面板：自定义启动语、按钮、"
+                f'✅ <b>创建成功！</b> 你的机器人：<a href="{bot_link}">@{uname_html}</a>\n\n'
+                "🚀 <b>接下来三步上手：</b>\n"
+                f'1️⃣ 点击上方链接打开 <a href="{bot_link}">@{uname_html}</a>，'
+                "发送 <code>/start</code> 测试收发\n"
+                "2️⃣ 发送 <code>/settings</code> 打开设置面板：自定义启动语、按钮、"
                 "自动回复与强制订阅\n"
-                "3️⃣ 发送 `/broadcast` 可一键群发给全部用户\n\n"
-                "💡 进阶：把我加入论坛群后发送 `/setgroup` 可启用 Topics 多人协作。\n"
+                "3️⃣ 发送 <code>/broadcast</code> 可一键群发给全部用户\n\n"
+                "💡 进阶：把我加入论坛群后发送 <code>/setgroup</code> 可启用 Topics 多人协作。\n"
                 "把机器人分享给朋友，让更多人来联系你 👇",
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 disable_web_page_preview=True,
                 reply_markup=_share_keyboard(uname))
         else:
@@ -493,6 +496,16 @@ class PlatformModule(BaseModule):
                 reply_markup=InlineKeyboardMarkup([[_botfather_button()]]))
 
     # ── 我的机器人 ──────────────────────────────────────────
+
+    @staticmethod
+    def _tenant_label(tenant) -> str:
+        """机器人的友好名称：优先 @用户名，其次显示名，最后兜底文案。"""
+        if tenant is None:
+            return "该机器人"
+        username = tenant["bot_username"] or ""
+        if username:
+            return f"@{username}"
+        return tenant["bot_name"] or "该机器人"
 
     def _mybots_view(self, user_id: int):
         rows = self.db.get_user_tenants(user_id)
@@ -506,9 +519,9 @@ class PlatformModule(BaseModule):
                 ]),
             )
         lines = [
-            f"#{r['id']} @{escape_markdown(r['bot_username'] or '', version=1)}"
-            f"（{escape_markdown(r['bot_name'] or '', version=1)}）"
-            for r in active
+            f"{i}. @{html.escape(r['bot_username'] or '')}"
+            f"（{html.escape(r['bot_name'] or '')}）"
+            for i, r in enumerate(active, 1)
         ]
         buttons = []
         for r in active:
@@ -518,19 +531,21 @@ class PlatformModule(BaseModule):
                     f"📣 分享 @{r['bot_username']}",
                     url=f"https://t.me/{r['bot_username']}"))
             row.append(InlineKeyboardButton(
-                f"🗑 删除 #{r['id']}", callback_data=f"pf:delask:{r['id']}"))
+                f"🗑 删除 {self._tenant_label(r)}", callback_data=f"pf:delask:{r['id']}"))
             buttons.append(row)
         buttons.append(
             [InlineKeyboardButton("➕ 再创建一个", callback_data="pf:newbot")])
         return (
-            "🤖 *我的机器人：*\n" + "\n".join(lines)
-            + "\n\n点击 🗑 删除按钮可移除对应机器人（也可使用 /delbot <编号>）。",
+            ui.header("我的机器人", emoji="🤖", html=True) + "\n"
+            + "\n".join(lines)
+            + "\n\n点击 🗑 删除按钮即可移除对应机器人。",
             InlineKeyboardMarkup(buttons),
         )
 
-    def _delete_confirm_view(self, tid: int):
+    def _delete_confirm_view(self, tid: int, label: str | None = None):
+        label = label or self._tenant_label(self.db.get_tenant(tid))
         return (
-            f"⚠️ 确认删除机器人 #{tid}？此操作不可恢复，"
+            f"⚠️ 确认删除机器人 {label}？此操作不可恢复，"
             "机器人将立即下线且其数据会被清除。",
             InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ 确认删除",
@@ -553,7 +568,7 @@ class PlatformModule(BaseModule):
             await q.answer("未找到该机器人，或它不属于你。", show_alert=True)
             return
         await q.answer()
-        text, markup = self._delete_confirm_view(tid)
+        text, markup = self._delete_confirm_view(tid, self._tenant_label(tenant))
         await q.edit_message_text(text, reply_markup=markup)
 
     async def _on_delete_confirm(self, q, ctx: ContextTypes.DEFAULT_TYPE,
@@ -564,25 +579,27 @@ class PlatformModule(BaseModule):
             await q.answer("未找到该机器人，或它不属于你。", show_alert=True)
             return
         await q.answer("已删除")
+        label = self._tenant_label(tenant)
         await self._delete_tenant(ctx, tid)
         text, markup = self._mybots_view(q.from_user.id)
         await q.edit_message_text(
-            f"✅ 已删除机器人 #{tid}。\n\n" + text,
-            parse_mode="Markdown", reply_markup=markup)
+            f"✅ 已删除机器人 {html.escape(label)}。\n\n" + text,
+            parse_mode="HTML", reply_markup=markup)
 
     async def cmd_mybots(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         text, markup = self._mybots_view(update.effective_user.id)
         await update.message.reply_text(
-            text, parse_mode="Markdown", reply_markup=markup)
+            text, parse_mode="HTML", reply_markup=markup)
 
     async def cmd_delbot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not ctx.args or not ctx.args[0].isdigit():
-            await update.message.reply_text("用法：/delbot <编号>（编号见 /mybots）")
+            await update.message.reply_text("请在 /mybots 里点击 🗑 删除按钮来移除机器人。")
             return
         tid    = int(ctx.args[0])
         tenant = self.db.get_tenant(tid)
         if not tenant or tenant["owner_user_id"] != update.effective_user.id:
             await update.message.reply_text("⚠️ 未找到该机器人，或它不属于你。")
             return
+        label = self._tenant_label(tenant)
         await self._delete_tenant(ctx, tid)
-        await update.message.reply_text(f"✅ 已删除机器人 #{tid}。")
+        await update.message.reply_text(f"✅ 已删除机器人 {label}。")

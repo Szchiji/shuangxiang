@@ -23,6 +23,7 @@ from telegram.ext import (
     filters,
 )
 
+from core import ui
 from core.base_module import BaseModule
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
@@ -213,6 +214,7 @@ class PrivateChatModule(BaseModule):
             return
         status = "⛔ 已封禁" if u["is_banned"] else "✅ 正常"
         await update.message.reply_text(
+            ui.header("用户资料", emoji="👤", html=True) + "\n"
             f"👤 {html.escape(u['full_name'] or '')}\n"
             f"🔗 @{html.escape(u['username'] or '无')}\n"
             f"🆔 <code>{u['user_id']}</code>\n"
@@ -231,16 +233,18 @@ class PrivateChatModule(BaseModule):
     def _stats_text(self) -> str:
         s = self.db.get_tenant_user_count(self.tenant_id)
         if s["total"] == 0:
-            return (
-                "📊 *统计*\n\n还没有用户来联系你。\n"
+            return ui.section(
+                "数据统计", emoji="📊",
+                body="还没有用户来联系你。\n"
                 "把你的机器人分享出去，并设置自动回复来留住第一批用户吧！")
-        return (
-            "📊 *统计*\n\n"
-            f"总用户：{s['total']}\n"
-            f"正常：{s['active']}\n"
-            f"封禁：{s['banned']}\n"
-            f"近 7 天活跃：{s['active_7d']}\n"
-            f"近 7 天新增：{s['new_7d']}")
+        return ui.section(
+            "数据统计", emoji="📊",
+            body=(
+                f"总用户：{s['total']}\n"
+                f"正常：{s['active']}\n"
+                f"封禁：{s['banned']}\n"
+                f"近 7 天活跃：{s['active_7d']}\n"
+                f"近 7 天新增：{s['new_7d']}"))
 
     # ── 控制面板（拥有者，按钮式管理）────────────────────────
 
@@ -271,25 +275,27 @@ class PrivateChatModule(BaseModule):
         ])
 
     def _panel_text(self) -> str:
-        return (
-            "⚙️ *控制面板*\n\n"
-            "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
-            "• 自定义自动回复、启动语、群发等常用功能\n"
-            "• 一键开关安全过滤与 Topics 协作模式")
+        return ui.section(
+            "控制面板", emoji="⚙️",
+            body=(
+                "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
+                "• 自定义自动回复、启动语、群发等常用功能\n"
+                "• 一键开关安全过滤与 Topics 协作模式"))
 
     def _bans_view(self):
         """封禁管理视图：列出已封禁用户，并提供一键解封按钮。"""
         users = self.db.get_banned_tenant_users(self.tenant_id)
         if not users:
-            text = (
-                "⛔ *封禁管理*\n\n"
-                "当前没有被封禁的用户。\n"
-                "「回复」某位用户的消息（或在其话题内）发送 /ban 即可封禁。")
+            text = ui.section(
+                "封禁管理", emoji="⛔",
+                body=(
+                    "当前没有被封禁的用户。\n"
+                    "「回复」某位用户的消息（或在其话题内）发送 /ban 即可封禁。"))
             kb = [[InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]
             return text, InlineKeyboardMarkup(kb)
-        text = (
-            "⛔ *封禁管理*\n\n"
-            "以下为已封禁用户，点按钮即可解封：")
+        text = ui.section(
+            "封禁管理", emoji="⛔",
+            body="以下为已封禁用户，点按钮即可解封：")
         kb = []
         for u in users:
             label = u["full_name"] or (f"@{u['username']}" if u["username"] else "")
@@ -330,19 +336,21 @@ class PrivateChatModule(BaseModule):
                 self._stats_text(), parse_mode="Markdown", reply_markup=back)
         elif action == "topics":
             await q.answer()
-            text = (
-                "💬 *Topics 模式*\n\n"
-                "把我加入一个开启「话题」的论坛群，在群里发送 /setgroup 即可启用；"
-                "之后每位用户的对话会进入独立话题，方便多人协作。\n"
-                "发送 /unsetgroup 可恢复为私聊(DM)模式。")
+            text = ui.section(
+                "Topics 模式", emoji="💬",
+                body=(
+                    "把我加入一个开启「话题」的论坛群，在群里发送 /setgroup 即可启用；"
+                    "之后每位用户的对话会进入独立话题，方便多人协作。\n"
+                    "发送 /unsetgroup 可恢复为私聊(DM)模式。"))
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
         elif action == "help":
             await q.answer()
-            text = (
-                "📖 *指令速查*\n\n"
-                "*自动回复*：/ar_add 关键词 | 回复　/ar_list　/ar_del\n"
-                "*关键词过滤*：/filter_add 词　/filter_list　/filter_del\n"
-                "*用户*：回复消息后 /ban /unban /info")
+            text = ui.section(
+                "指令速查", emoji="📖",
+                body=(
+                    "*自动回复*：/ar_add 关键词 | 回复　/ar_list　/ar_del\n"
+                    "*关键词过滤*：/filter_add 词　/filter_list　/filter_del\n"
+                    "*用户*：回复消息后 /ban /unban /info"))
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
         elif action == "bans":
             await q.answer()

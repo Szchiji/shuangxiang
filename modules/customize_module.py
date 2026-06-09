@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import html
 import json
 import logging
 import re
@@ -29,6 +30,7 @@ from telegram.ext import (
     filters,
 )
 
+from core import ui
 from core.base_module import BaseModule
 from core.database import Database
 
@@ -183,8 +185,9 @@ class CustomizeModule(BaseModule):
 
     @staticmethod
     def _settings_text() -> str:
-        return ("🎛 *高级设置*\n\n"
-                "点击下方按钮即可自定义机器人，全程按提示操作，无需记忆指令。")
+        return ui.section(
+            "高级设置", emoji="🎛",
+            body="点击下方按钮即可自定义机器人，全程按提示操作，无需记忆指令。")
 
     async def cmd_settings(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update.effective_user.id):
@@ -349,18 +352,18 @@ class CustomizeModule(BaseModule):
         await q.answer()
         rows = self.db.get_auto_replies(self.tenant_id)
         lines, kb = [], []
-        for r in rows:
+        for i, r in enumerate(rows, 1):
             tag = " [拦截]" if r["stop"] else ""
             mt = (r["match_type"] if "match_type" in r.keys() else "") or "contains"
             mt_tag = " [正则]" if mt == "regex" else ""
             has_btn = " 🔘" if (r["buttons"] or "") else ""
             has_media = " 🖼" if self._ar_media(r)[1] else ""
-            lines.append(f"#{r['id']} 「{r['keyword']}」{mt_tag}{tag}{has_btn}{has_media}")
+            lines.append(f"{i}. 「{r['keyword']}」{mt_tag}{tag}{has_btn}{has_media}")
             kb.append([
                 InlineKeyboardButton(
-                    f"✏️ 编辑 #{r['id']}", callback_data=f"cz:ar:edit:{r['id']}"),
+                    f"✏️ 编辑 {i}", callback_data=f"cz:ar:edit:{r['id']}"),
                 InlineKeyboardButton(
-                    f"🗑 删除 #{r['id']}", callback_data=f"cz:ar:del:{r['id']}")])
+                    f"🗑 删除 {i}", callback_data=f"cz:ar:del:{r['id']}")])
         kb.append([InlineKeyboardButton("➕ 新增自动回复", callback_data="cz:ar:add")])
         kb.append([InlineKeyboardButton("⬅️ 返回设置", callback_data="cz:home"),
                    InlineKeyboardButton("🏠 控制面板", callback_data="pc:home")])
@@ -395,7 +398,7 @@ class CustomizeModule(BaseModule):
             "flow": "ar", "step": "keyword", "buf": {"edit_id": rid}}
         await q.answer()
         await q.edit_message_text(
-            f"✏️ *编辑自动回复 #{rid}*（第 1/4 步）\n\n"
+            f"✏️ *编辑自动回复*「{row['keyword']}」（第 1/4 步）\n\n"
             f"当前关键词：「{row['keyword']}」\n\n请发送*新的关键词*。\n\n发送 /cancel 取消。",
             parse_mode="Markdown")
 
@@ -659,10 +662,9 @@ class CustomizeModule(BaseModule):
                     self.tenant_id, edit_id, buf["keyword"], buf["reply"],
                     buf.get("match_type", "contains"), 0, buttons_json,
                     buf.get("media_type", ""), buf.get("media_id", ""))
-                rid = edit_id
                 verb = "已更新"
             else:
-                rid = self.db.add_auto_reply(*args)
+                self.db.add_auto_reply(*args)
                 verb = "已添加"
             ctx.user_data.pop("cz", None)
             mt_note = "（正则）" if buf.get("match_type") == "regex" else ""
@@ -670,7 +672,7 @@ class CustomizeModule(BaseModule):
                 "（含按钮）" if buttons_json else "",
                 "（含媒体）" if buf.get("media_id") else ""])
             await msg.reply_text(
-                f"✅ {verb}自动回复 #{rid}：「{buf['keyword']}」{mt_note}{extras}",
+                f"✅ {verb}自动回复：「{buf['keyword']}」{mt_note}{extras}",
                 reply_markup=self._back_markup())
 
     async def _resolve_chat_info(self, ctx, chat):
@@ -739,12 +741,12 @@ class CustomizeModule(BaseModule):
                 unverified.append(ch.get("title") or ch.get("chat"))
         note = ""
         if unverified:
-            note = ("\n\n⚠️ 以下频道暂时无法校验，强制订阅对它们*不会生效*：\n"
-                    + "\n".join(f"• {t}" for t in unverified)
-                    + "\n\n请把本机器人设为这些频道的*管理员*后再试。")
+            note = ("\n\n⚠️ 以下频道暂时无法校验，强制订阅对它们<b>不会生效</b>：\n"
+                    + "\n".join(f"• {html.escape(t)}" for t in unverified)
+                    + "\n\n请把本机器人设为这些频道的<b>管理员</b>后再试。")
         await msg.reply_text(
             f"✅ 已添加 {added} 个频道，强制订阅已开启。{note}",
-            parse_mode="Markdown", reply_markup=self._back_markup())
+            parse_mode="HTML", reply_markup=self._back_markup())
 
     async def _wizard_bc(self, msg, ctx) -> None:
         ctx.user_data["cz"] = {

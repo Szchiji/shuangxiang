@@ -119,16 +119,16 @@ async def test_admin_can_open_admin_panel(db):
 
 
 def test_admin_text_escapes_username_underscores(db):
-    """平台用户名含下划线时，平台设置面板文本须转义，避免 Markdown 解析失败。
+    """平台用户名含下划线时，平台设置面板用 HTML 渲染，下划线原样显示、无反斜杠。
 
-    复现「超级管理员点击平台设置按钮无反应」：自动探测到的平台机器人用户名
-    （常以 _bot 结尾）含奇数个下划线，未转义会导致 edit_message_text 报错。
+    旧实现用 escape_markdown + 旧版 Markdown，反斜杠会被原样显示成 `\\_`；
+    改用 HTML 后用户名直接显示，且 HTML 不需要转义下划线。
     """
     pf = make_pf(db)
     db.set_setting(PLATFORM_TID, SK_PLATFORM_BOT_USERNAME, "my_factory_bot")
     text = pf._admin_text()
-    assert "@my\\_factory\\_bot" in text
-    assert "my_factory_bot" not in text
+    assert "@my_factory_bot" in text
+    assert "\\" not in text
 
 
 # ── 管理员输入：保存启动信息 / 按钮 / 平台用户名 ─────────────
@@ -243,20 +243,64 @@ async def test_menu_button_clears_pending_admin_flow(db):
 # ── 我的机器人：转义 + 删除按钮 ──────────────────────────────
 
 def test_mybots_view_escapes_username_and_has_delete_button(db):
-    """机器人用户名常以 _bot 结尾，未转义会导致「我的机器人」点击无反应。"""
+    """机器人用户名常以 _bot 结尾；改用 HTML 后下划线原样显示、无反斜杠。"""
     pf = make_pf(db)
     tid = db.add_tenant("123:tok", owner_user_id=1234,
                         bot_username="my_feedback_bot", bot_name="反馈_机器人")
     text, markup = pf._mybots_view(1234)
-    assert "@my\\_feedback\\_bot" in text
-    assert "反馈\\_机器人" in text
+    assert "@my_feedback_bot" in text
+    assert "反馈_机器人" in text
+    assert "\\" not in text
     assert f"pf:delask:{tid}" in _callbacks(markup)
+
+
+def test_mybots_view_escapes_html_special_chars(db):
+    """机器人名称含 HTML 特殊字符时须转义，避免 HTML 解析失败。"""
+    pf = make_pf(db)
+    db.add_tenant("123:tok", owner_user_id=1234,
+                  bot_username="b_bot", bot_name="<b>反馈</b>")
+    text, _ = pf._mybots_view(1234)
+    assert "&lt;b&gt;反馈&lt;/b&gt;" in text
+    assert "<b>反馈</b>" not in text
 
 
 def test_mybots_view_empty_offers_create(db):
     pf = make_pf(db)
     text, markup = pf._mybots_view(1234)
     assert "pf:newbot" in _callbacks(markup)
+
+
+@pytest.mark.asyncio
+async def test_create_bot_success_message_renders_username_without_backslash(db):
+    """创建成功消息须用 HTML 渲染用户名，下划线原样显示而非 `\\_`（复现问题截图）。"""
+    pf = make_pf(db)
+    me = types.SimpleNamespace(
+        id=4242, username="szzztgys_bot", full_name="狼猎")
+
+    class FakeTM:
+        async def validate_token(self, token):
+            return me
+
+        async def start_tenant(self, tenant):
+            return True
+
+    msg = FakeMessage()
+    update = types.SimpleNamespace(
+        message=msg,
+        effective_user=types.SimpleNamespace(id=1234, username="u", full_name="U"))
+    ctx = types.SimpleNamespace(
+        application=types.SimpleNamespace(
+            bot_data={"tenant_manager": FakeTM()}))
+
+    await pf._create_bot(update, ctx, "123456:ABCdefGHIjklMNOpqrSTUvwxYZ0123456789")
+
+    matches = [(text, k) for text, k in msg.replies if "创建成功" in text]
+    assert matches, f"未发送创建成功消息：{msg.replies}"
+    text, k = matches[0]
+    assert k.get("parse_mode") == "HTML"
+    # 用户名以 HTML 链接呈现，下划线原样显示，绝不出现转义反斜杠。
+    assert '<a href="https://t.me/szzztgys_bot">@szzztgys_bot</a>' in text
+    assert "\\" not in text
 
 
 @pytest.mark.asyncio
