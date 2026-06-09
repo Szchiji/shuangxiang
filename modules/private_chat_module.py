@@ -53,6 +53,9 @@ class PrivateChatModule(BaseModule):
         self._album_delay  = 1.0
         # 每用户话题创建锁，避免并发首条消息为同一用户重复建话题。
         self._topic_locks  = {}
+        # DM 模式下最近一次转发到管理员的用户 id：连续来自同一用户的消息
+        # 不再重复发送「新消息 · 来自谁」头部，仅在切换发送者时提示一次。
+        self._last_dm_user = None
         msgs           = self.config.get("messages", {})
         self.welcome   = msgs.get(
             "welcome",
@@ -473,29 +476,35 @@ class PrivateChatModule(BaseModule):
         await self._notify_sent(ctx, messages[-1])
 
     async def _forward_to_dm(self, ctx, user, msg) -> None:
-        header = await ctx.bot.send_message(
-            chat_id=self.admin_id,
-            text=f"📩 <b>新消息</b>\n\n{self._user_label(user)}\n\n<i>回复本消息即可回复该用户</i>",
-            parse_mode="HTML",
-        )
-        self.db.save_message_map(self.tenant_id, header.message_id, user.id, msg.message_id)
+        await self._maybe_dm_header(ctx, user, msg.message_id)
         copied = await ctx.bot.copy_message(
             chat_id=self.admin_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
         self.db.save_message_map(self.tenant_id, copied.message_id, user.id, msg.message_id)
 
     async def _forward_album_to_dm(self, ctx, user, messages) -> None:
         first = messages[0]
-        header = await ctx.bot.send_message(
-            chat_id=self.admin_id,
-            text=f"📩 <b>新消息</b>\n\n{self._user_label(user)}\n\n<i>回复本消息即可回复该用户</i>",
-            parse_mode="HTML",
-        )
-        self.db.save_message_map(self.tenant_id, header.message_id, user.id, first.message_id)
+        await self._maybe_dm_header(ctx, user, first.message_id)
         copied = await ctx.bot.copy_messages(
             chat_id=self.admin_id, from_chat_id=first.chat_id,
             message_ids=[m.message_id for m in messages])
         for mid in copied:
             self.db.save_message_map(self.tenant_id, mid.message_id, user.id, first.message_id)
+
+    async def _maybe_dm_header(self, ctx, user, user_msg_id) -> None:
+        """DM 模式下，仅在发送者与上一条转发不同时发送「新消息 · 来自谁」头部。
+
+        连续来自同一用户的消息不再重复提醒，减少刷屏。切换发送者时才提示一次，
+        让管理员清楚当前转发来自谁。
+        """
+        if self._last_dm_user == user.id:
+            return
+        header = await ctx.bot.send_message(
+            chat_id=self.admin_id,
+            text=f"📩 <b>新消息</b>\n\n{self._user_label(user)}\n\n<i>回复本消息即可回复该用户</i>",
+            parse_mode="HTML",
+        )
+        self.db.save_message_map(self.tenant_id, header.message_id, user.id, user_msg_id)
+        self._last_dm_user = user.id
 
     def _topic_lock(self, user_id: int) -> asyncio.Lock:
         lock = self._topic_locks.get(user_id)
