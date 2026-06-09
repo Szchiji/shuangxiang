@@ -21,13 +21,22 @@ from modules.private_chat_module import PrivateChatModule
 
 class FakeBot:
     def __init__(self, member_status=None, fail=False, bot_status=None,
-                 bot_id=4242):
+                 bot_id=4242, chat_info=None):
         self.member_status = member_status
         self.bot_status = bot_status
         self.fail = fail
         self.id = bot_id
         self.copies = []
         self.sent = []
+        self.chat_info = chat_info
+        self.get_chat_calls = []
+
+    async def get_chat(self, chat):
+        self.get_chat_calls.append(chat)
+        if self.chat_info is None:
+            from telegram.error import TelegramError
+            raise TelegramError("chat not found")
+        return types.SimpleNamespace(**self.chat_info)
 
     async def get_chat_member(self, chat, user_id):
         if self.fail:
@@ -427,6 +436,53 @@ async def test_wizard_fsub_warns_when_bot_not_admin(db):
     await cz._wizard_fsub(msg, ctx)
     assert any("无法校验" in text for text, _ in msg.replies)
     assert any("@chan" in text or "官方" in text for text, _ in msg.replies)
+
+
+@pytest.mark.asyncio
+async def test_wizard_fsub_autodetects_numeric_id(db):
+    cz = make_cz(db)
+    # 机器人是频道管理员，get_chat 返回标题与公开用户名 → 自动生成链接。
+    bot = FakeBot(bot_status="administrator",
+                  chat_info={"title": "私有频道", "username": "mychan",
+                             "invite_link": None})
+    ctx = make_ctx(bot)
+    ctx.user_data["cz"] = {"flow": "fsub"}
+    msg = FakeMessage(text="-1001234567890")
+    await cz._wizard_fsub(msg, ctx)
+    channels = json.loads(db.get_setting(1, SK_FORCE_SUB))
+    assert channels[0]["chat"] == "-1001234567890"
+    assert channels[0]["title"] == "私有频道"
+    assert "https://t.me/mychan" == channels[0]["url"]
+    assert -1001234567890 in bot.get_chat_calls
+
+
+@pytest.mark.asyncio
+async def test_wizard_fsub_autodetects_invite_link(db):
+    cz = make_cz(db)
+    # 无公开用户名的私有频道 → 退回使用主邀请链接。
+    bot = FakeBot(bot_status="administrator",
+                  chat_info={"title": "内部群", "username": None,
+                             "invite_link": "https://t.me/+abcDEF"})
+    ctx = make_ctx(bot)
+    ctx.user_data["cz"] = {"flow": "fsub"}
+    msg = FakeMessage(text="-1009876543210")
+    await cz._wizard_fsub(msg, ctx)
+    channels = json.loads(db.get_setting(1, SK_FORCE_SUB))
+    assert channels[0]["title"] == "内部群"
+    assert channels[0]["url"] == "https://t.me/+abcDEF"
+
+
+@pytest.mark.asyncio
+async def test_wizard_fsub_numeric_id_skips_when_undetectable(db):
+    cz = make_cz(db)
+    # get_chat 失败（如机器人不是该频道管理员）且无法推导链接 → 跳过该行。
+    bot = FakeBot(bot_status="left", chat_info=None)
+    ctx = make_ctx(bot)
+    ctx.user_data["cz"] = {"flow": "fsub"}
+    msg = FakeMessage(text="-1001234567890")
+    await cz._wizard_fsub(msg, ctx)
+    assert db.get_setting(1, SK_FORCE_SUB, "") == ""
+    assert any("未识别" in text for text, _ in msg.replies)
 
 
 # ── 强制订阅拦截 ─────────────────────────────────────────────
