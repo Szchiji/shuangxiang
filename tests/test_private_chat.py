@@ -20,6 +20,7 @@ def make_module(db, manage_group=None, admin_id=99):
     mod._albums = {}
     mod._album_delay = 0.05
     mod._topic_locks = {}
+    mod._last_dm_user = None
     mod._manage_group = lambda: manage_group
     return mod
 
@@ -125,3 +126,26 @@ async def test_incoming_user_acks_and_autodeletes(db):
     # 提示在延时（测试中为 0）后被自动删除
     await asyncio.sleep(0.05)
     assert ctx.bot.of("delete_message"), "应安排删除已送达提示"
+
+
+USER2 = types.SimpleNamespace(id=43, full_name="Bob", username="b")
+
+
+@pytest.mark.asyncio
+async def test_dm_header_only_on_sender_change(db):
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    # 同一用户连续两条消息：仅首条带「新消息」头部
+    await mod._forward_to_dm(ctx, USER, FakeMessage(70, text="一"))
+    await mod._forward_to_dm(ctx, USER, FakeMessage(71, text="二"))
+    headers = [c for c in ctx.bot.of("send_message")
+               if "新消息" in c.get("text", "")]
+    assert len(headers) == 1
+    # 切换到另一位用户：再次提示一次头部
+    await mod._forward_to_dm(ctx, USER2, FakeMessage(72, text="三"))
+    headers = [c for c in ctx.bot.of("send_message")
+               if "新消息" in c.get("text", "")]
+    assert len(headers) == 2
+    assert "Bob" in headers[1]["text"]
+    # 三条用户消息均已转发（copy_message 各一次）
+    assert len(ctx.bot.of("copy_message")) == 3
