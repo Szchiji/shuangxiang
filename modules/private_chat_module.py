@@ -547,7 +547,7 @@ class PrivateChatModule(BaseModule):
             name = sender_user.full_name or (
                 f"@{sender_user.username}" if sender_user.username else None)
         if name is None:
-            name = getattr(origin, "sender_user_name", None) or None
+            name = getattr(origin, "sender_user_name", None)
         if name is None:
             chat = getattr(origin, "sender_chat", None) or getattr(origin, "chat", None)
             if chat is not None:
