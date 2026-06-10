@@ -479,7 +479,9 @@ class PrivateChatModule(BaseModule):
         await self._maybe_dm_header(ctx, user, msg.message_id)
         await self._maybe_forward_hint(
             ctx, self.admin_id, msg, user=user, user_msg_id=msg.message_id)
-        copied = await ctx.bot.copy_message(
+        # 用 forward_message（而非 copy_message）保留 Telegram 原生「转发自」头部，
+        # 让管理员一眼看出每条消息是谁发来的。
+        copied = await ctx.bot.forward_message(
             chat_id=self.admin_id, from_chat_id=msg.chat_id, message_id=msg.message_id)
         self.db.save_message_map(self.tenant_id, copied.message_id, user.id, msg.message_id)
 
@@ -488,7 +490,7 @@ class PrivateChatModule(BaseModule):
         await self._maybe_dm_header(ctx, user, first.message_id)
         await self._maybe_forward_hint(
             ctx, self.admin_id, first, user=user, user_msg_id=first.message_id)
-        copied = await ctx.bot.copy_messages(
+        copied = await ctx.bot.forward_messages(
             chat_id=self.admin_id, from_chat_id=first.chat_id,
             message_ids=[m.message_id for m in messages])
         for mid in copied:
@@ -607,7 +609,7 @@ class PrivateChatModule(BaseModule):
         thread_id = await self._ensure_topic(ctx, group, user)
         await self._maybe_topic_reply_hint(ctx, group, thread_id, msg)
         await self._maybe_forward_hint(ctx, group, msg, thread_id=thread_id)
-        await ctx.bot.copy_message(
+        await ctx.bot.forward_message(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=msg.chat_id, message_id=msg.message_id)
 
@@ -616,7 +618,7 @@ class PrivateChatModule(BaseModule):
         first = messages[0]
         await self._maybe_topic_reply_hint(ctx, group, thread_id, first)
         await self._maybe_forward_hint(ctx, group, first, thread_id=thread_id)
-        await ctx.bot.copy_messages(
+        await ctx.bot.forward_messages(
             chat_id=group, message_thread_id=thread_id,
             from_chat_id=first.chat_id,
             message_ids=[m.message_id for m in messages])

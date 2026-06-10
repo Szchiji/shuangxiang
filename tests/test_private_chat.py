@@ -36,7 +36,7 @@ async def test_user_album_to_dm_single_album(db):
     for i in range(3):
         mod._buffer_album(ctx, USER, FakeMessage(10 + i, media_group_id="G1"))
     await asyncio.sleep(0.2)
-    cm = ctx.bot.of("copy_messages")
+    cm = ctx.bot.of("forward_messages")
     assert len(cm) == 1
     assert cm[0]["message_ids"] == [10, 11, 12]
     # 一条 DM 头部
@@ -145,8 +145,8 @@ async def test_dm_header_only_on_sender_change(db):
                if "新消息" in c.get("text", "")]
     assert len(headers) == 2
     assert "Bob" in headers[1]["text"]
-    # 三条用户消息均已转发（copy_message 各一次）
-    assert len(ctx.bot.of("copy_message")) == 3
+    # 三条用户消息均已转发（forward_message 各一次，保留原生转发头）
+    assert len(ctx.bot.of("forward_message")) == 3
 
 
 @pytest.mark.asyncio

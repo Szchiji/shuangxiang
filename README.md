@@ -121,8 +121,11 @@ python main.py
 - **结构化日志**：使用 `logging`（含 Bot Token 自动脱敏），便于平台侧排查。
 - **批量启动**：`TenantManager.load_all` 以信号量受控并发启动已有租户机器人。
 
-> 💡 **高级表情（Premium Emoji）**：双向中转使用 `copy_message`/`copy_messages`，
-> 会原样保留自定义表情、相册与清单等富内容；前提是机器人拥有者账号已开通 Telegram Premium。
+> 💡 **消息中转方式**：用户 → 管理员方向使用 `forward_message`/`forward_messages`，
+> 保留 Telegram 原生「转发自」头部，管理员可一眼看出每条消息是谁发来的；管理员 → 用户
+> 方向使用 `copy_message`/`copy_messages`，回复对用户显示为机器人直接发送、不带转发痕迹。
+> 两种方式都会原样保留自定义表情、相册与清单等富内容（高级表情需机器人拥有者账号已开通
+> Telegram Premium）。
 
 ## 开发与测试
 
