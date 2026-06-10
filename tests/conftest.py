@@ -39,12 +39,21 @@ class FakeBot:
         self._mid += 1
         return FakeMsgId(self._mid)
 
+    async def forward_message(self, **k):
+        self.calls.append(("forward_message", k))
+        self._mid += 1
+        return FakeMsgId(self._mid)
+
     async def delete_message(self, **k):
         self.calls.append(("delete_message", k))
         return True
 
     async def copy_messages(self, **k):
         self.calls.append(("copy_messages", k))
+        return [FakeMsgId(self._mid + i) for i, _ in enumerate(k["message_ids"])]
+
+    async def forward_messages(self, **k):
+        self.calls.append(("forward_messages", k))
         return [FakeMsgId(self._mid + i) for i, _ in enumerate(k["message_ids"])]
 
     async def create_forum_topic(self, **k):
