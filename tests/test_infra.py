@@ -1,9 +1,5 @@
 """日志脱敏与应用工厂测试。"""
 
-import os
-
-import pytest
-
 from core.app_factory import build_application
 from core.logging_config import redact_token
 
