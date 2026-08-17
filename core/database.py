@@ -1,3 +1,4 @@
+import json
 import logging
 import sqlite3
 import threading
@@ -254,6 +255,18 @@ class Database:
             return default
         return v in ("1", "true", "True", "on", "yes")
 
+    def set_json_setting(self, tenant_id, key, value):
+        self.set_setting(tenant_id, key, json.dumps(value, ensure_ascii=False))
+
+    def get_json_setting(self, tenant_id, key, default):
+        raw = self.get_setting(tenant_id, key, None)
+        if not raw:
+            return default
+        try:
+            return json.loads(raw)
+        except Exception:
+            return default
+
     # ── 平台用户 ───────────────────────────────────────────
 
     def upsert_user(self, uid, username, full_name):
@@ -484,4 +497,3 @@ class Database:
     def delete_filter(self, tenant_id, fid):
         with self._conn() as c:
             c.execute("DELETE FROM filters WHERE tenant_id=? AND id=?", (tenant_id, fid))
-

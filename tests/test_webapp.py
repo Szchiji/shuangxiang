@@ -140,6 +140,80 @@ async def test_post_settings_ok(aiohttp_client, app, db, tenant_id, init_data_he
 
 
 @pytest.mark.asyncio
+async def test_post_settings_supports_welcome_buttons(aiohttp_client, app, db, tenant_id,
+                                                      init_data_header):
+    client = await aiohttp_client(app)
+    buttons_text = "频道 - https://t.me/a && 客服 - https://t.me/b"
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_btns_text": buttons_text},
+    )
+    assert resp.status == 200
+    stored = json.loads(db.get_setting(tenant_id, "welcome_buttons"))
+    assert [btn["text"] for btn in stored[0]] == ["频道", "客服"]
+
+    resp = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["welcome_btns_text"] == buttons_text
+
+
+@pytest.mark.asyncio
+async def test_post_settings_rejects_invalid_welcome_buttons(aiohttp_client, app, tenant_id,
+                                                             init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_btns_text": "坏按钮 - ftp://bad"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_post_settings_rejects_invalid_welcome_text(aiohttp_client, app, tenant_id,
+                                                          init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_text": ["bad"]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_post_settings_validates_legacy_welcome_buttons_payload(aiohttp_client, app, db,
+                                                                      tenant_id,
+                                                                      init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_buttons": [[{"text": "频道", "url": "https://t.me/a"}]]},
+    )
+    assert resp.status == 200
+    assert db.get_setting(tenant_id, "welcome_buttons")
+
+
+@pytest.mark.asyncio
+async def test_post_settings_accepts_empty_legacy_welcome_buttons_payload(aiohttp_client, app, db,
+                                                                          tenant_id,
+                                                                          init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_buttons": "[]"},
+    )
+    assert resp.status == 200
+    assert db.get_setting(tenant_id, "welcome_buttons") == ""
+
+
+@pytest.mark.asyncio
 async def test_get_stats_ok(aiohttp_client, app, db, tenant_id, init_data_header):
     client = await aiohttp_client(app)
     resp = await client.get(
@@ -149,6 +223,154 @@ async def test_get_stats_ok(aiohttp_client, app, db, tenant_id, init_data_header
     assert resp.status == 200
     data = await resp.json()
     assert "total" in data
+
+
+@pytest.mark.asyncio
+async def test_page_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "announcement": "系统升级通知",
+            "theme_color": "#2563eb",
+            "modules": {"stats": False},
+            "banners": [{"title": "活动", "url": "https://example.com", "enabled": True}],
+            "quick_navs": [{"title": "帮助", "url": "https://example.com/help", "enabled": True}],
+        },
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+
+    resp = await client.get(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["announcement"] == "系统升级通知"
+    assert data["theme_color"] == "#2563eb"
+    assert data["modules"]["stats"] is False
+    assert data["banners"][0]["title"] == "活动"
+
+
+@pytest.mark.asyncio
+async def test_page_config_invalid_theme(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"theme_color": "blue"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_page_config_invalid_empty_url(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"banners": [{"title": "活动", "url": ""}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_page_config_invalid_non_string_text(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"announcement": ["bad"]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_form_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    payload = {
+        "intro": "请填写报名信息",
+        "fields": [
+            {"key": "name", "label": "姓名", "type": "text", "required": True},
+            {"key": "when", "label": "预约时间", "type": "datetime", "required": True},
+            {"key": "type", "label": "服务类型", "type": "select",
+             "required": False, "options": ["A", "B"]},
+        ],
+    }
+    resp = await client.post(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+        json=payload,
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    resp = await client.get(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["intro"] == "请填写报名信息"
+    assert len(data["fields"]) == 3
+    assert data["fields"][2]["options"] == ["A", "B"]
+
+
+@pytest.mark.asyncio
+async def test_form_config_invalid_key(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"fields": [{"key": "1bad", "label": "x", "type": "text"}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_form_config_invalid_default_length(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"fields": [{"key": "name", "label": "姓名", "type": "text", "default": "x" * 201}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_content_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    payload = {
+        "help_text": "帮助中心内容",
+        "activity_title": "九月活动",
+        "activity_content": "活动详情",
+        "faq": [{"question": "怎么联系管理员？", "answer": "直接发消息"}],
+    }
+    resp = await client.post(
+        f"/api/{tenant_id}/contents",
+        headers={"X-Init-Data": init_data_header},
+        json=payload,
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    resp = await client.get(
+        f"/api/{tenant_id}/contents",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["activity_title"] == "九月活动"
+    assert data["faq"][0]["question"] == "怎么联系管理员？"
+
+
+@pytest.mark.asyncio
+async def test_content_config_invalid_faq(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/contents",
+        headers={"X-Init-Data": init_data_header},
+        json={"faq": [{"question": "", "answer": "x"}]},
+    )
+    assert resp.status == 400
 
 
 @pytest.mark.asyncio
@@ -169,12 +391,17 @@ async def test_auto_replies_crud(aiohttp_client, app, db, tenant_id, init_data_h
     resp = await client.post(
         f"/api/{tenant_id}/auto_replies",
         headers={"X-Init-Data": init_data_header},
-        json={"keyword": "hi", "reply": "hello"},
+        json={
+            "keyword": "hi",
+            "reply": "hello",
+            "buttons_text": "官网 - https://example.com",
+        },
     )
     assert resp.status == 200
     data = await resp.json()
     rid = data["id"]
     assert rid
+    assert json.loads(db.get_auto_replies(tenant_id)[0]["buttons"])[0][0]["url"] == "https://example.com"
 
     # List
     resp = await client.get(
@@ -183,7 +410,8 @@ async def test_auto_replies_crud(aiohttp_client, app, db, tenant_id, init_data_h
     )
     assert resp.status == 200
     items = await resp.json()
-    assert any(r["id"] == rid for r in items)
+    row = next(r for r in items if r["id"] == rid)
+    assert row["buttons_text"] == "官网 - https://example.com"
 
     # Delete
     resp = await client.delete(
@@ -192,6 +420,18 @@ async def test_auto_replies_crud(aiohttp_client, app, db, tenant_id, init_data_h
     )
     assert resp.status == 200
     assert (await resp.json())["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_auto_replies_reject_invalid_buttons(aiohttp_client, app, tenant_id,
+                                                   init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/auto_replies",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "hi", "reply": "hello", "buttons_text": "坏 - ftp://bad"},
+    )
+    assert resp.status == 400
 
 
 @pytest.mark.asyncio

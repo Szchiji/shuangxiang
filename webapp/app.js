@@ -37,6 +37,15 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+function parseJsonInput(value, fallback) {
+  if (!value.trim()) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch (_) {
+    return null;
+  }
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 
 function initTabs() {
@@ -49,6 +58,9 @@ function initTabs() {
       if (btn.dataset.tab === 'stats')      loadStats();
       if (btn.dataset.tab === 'banned')     loadBanned();
       if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
+      if (btn.dataset.tab === 'page')       loadPageConfig();
+      if (btn.dataset.tab === 'form')       loadFormConfig();
+      if (btn.dataset.tab === 'content')    loadContentConfig();
     });
   });
 }
@@ -59,6 +71,7 @@ async function loadSettings() {
   const data = await api('GET', '/settings');
   if (data.error) { showError('无法加载设置：' + data.error); return; }
   document.getElementById('welcome-text').value = data.welcome_text || '';
+  document.getElementById('welcome-buttons').value = data.welcome_btns_text || '';
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
   document.getElementById('force-sub-on').checked   = !!data.force_sub_on;
@@ -75,6 +88,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
   msgEl.textContent = '保存中...';
   const res = await api('POST', '/settings', {
     welcome_text:   document.getElementById('welcome-text').value,
+    welcome_btns_text: document.getElementById('welcome-buttons').value,
     antiflood:      document.getElementById('antiflood').checked,
     alphabet_latin: document.getElementById('alphabet-latin').checked,
     force_sub_on:   document.getElementById('force-sub-on').checked,
@@ -83,6 +97,132 @@ document.getElementById('save-settings').addEventListener('click', async () => {
     msgEl.className = 'msg ok';
     msgEl.textContent = '✅ 保存成功';
     tg?.HapticFeedback?.notificationOccurred('success');
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 保存失败：' + (res.error || '未知错误');
+  }
+});
+
+// ── Page Decoration ────────────────────────────────────────────────────────────
+
+async function loadPageConfig() {
+  const data = await api('GET', '/page_config');
+  if (data.error) return;
+  document.getElementById('page-announcement').value = data.announcement || '';
+  document.getElementById('page-theme-color').value = data.theme_color || '';
+  const modules = data.modules || {};
+  document.getElementById('mod-welcome').checked = modules.welcome !== false;
+  document.getElementById('mod-auto-reply').checked = modules.auto_reply !== false;
+  document.getElementById('mod-banned').checked = modules.banned !== false;
+  document.getElementById('mod-stats').checked = modules.stats !== false;
+  document.getElementById('mod-content').checked = modules.content !== false;
+  document.getElementById('page-banners').value =
+    JSON.stringify(data.banners || [], null, 2);
+  document.getElementById('page-quick-navs').value =
+    JSON.stringify(data.quick_navs || [], null, 2);
+}
+
+document.getElementById('save-page-config').addEventListener('click', async () => {
+  const msgEl = document.getElementById('page-msg');
+  const banners = parseJsonInput(document.getElementById('page-banners').value, []);
+  const quickNavs = parseJsonInput(document.getElementById('page-quick-navs').value, []);
+  if (banners === null || quickNavs === null) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ JSON 格式错误，请检查后重试';
+    return;
+  }
+  const themeColor = document.getElementById('page-theme-color').value.trim();
+  if (themeColor && !/^#[0-9A-Fa-f]{6}$/.test(themeColor)) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 主题色需为 #RRGGBB 格式';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中...';
+  const res = await api('POST', '/page_config', {
+    announcement: document.getElementById('page-announcement').value,
+    theme_color: themeColor,
+    modules: {
+      welcome: document.getElementById('mod-welcome').checked,
+      auto_reply: document.getElementById('mod-auto-reply').checked,
+      banned: document.getElementById('mod-banned').checked,
+      stats: document.getElementById('mod-stats').checked,
+      content: document.getElementById('mod-content').checked,
+    },
+    banners,
+    quick_navs: quickNavs,
+  });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 保存成功';
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 保存失败：' + (res.error || '未知错误');
+  }
+});
+
+// ── Form Config ────────────────────────────────────────────────────────────────
+
+async function loadFormConfig() {
+  const data = await api('GET', '/form_config');
+  if (data.error) return;
+  document.getElementById('form-intro').value = data.intro || '';
+  document.getElementById('form-fields').value = JSON.stringify(data.fields || [], null, 2);
+}
+
+document.getElementById('save-form-config').addEventListener('click', async () => {
+  const msgEl = document.getElementById('form-msg');
+  const fields = parseJsonInput(document.getElementById('form-fields').value, []);
+  if (fields === null) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 字段 JSON 格式错误';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中...';
+  const res = await api('POST', '/form_config', {
+    intro: document.getElementById('form-intro').value,
+    fields,
+  });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 保存成功';
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 保存失败：' + (res.error || '未知错误');
+  }
+});
+
+// ── Content Management ─────────────────────────────────────────────────────────
+
+async function loadContentConfig() {
+  const data = await api('GET', '/contents');
+  if (data.error) return;
+  document.getElementById('content-help-text').value = data.help_text || '';
+  document.getElementById('content-activity-title').value = data.activity_title || '';
+  document.getElementById('content-activity-content').value = data.activity_content || '';
+  document.getElementById('content-faq').value = JSON.stringify(data.faq || [], null, 2);
+}
+
+document.getElementById('save-content-config').addEventListener('click', async () => {
+  const msgEl = document.getElementById('content-msg');
+  const faq = parseJsonInput(document.getElementById('content-faq').value, []);
+  if (faq === null) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ FAQ JSON 格式错误';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中...';
+  const res = await api('POST', '/contents', {
+    help_text: document.getElementById('content-help-text').value,
+    activity_title: document.getElementById('content-activity-title').value,
+    activity_content: document.getElementById('content-activity-content').value,
+    faq,
+  });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 保存成功';
   } else {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ 保存失败：' + (res.error || '未知错误');
@@ -101,11 +241,13 @@ async function loadAutoReplies() {
   data.forEach(r => {
     const div = document.createElement('div');
     div.className = 'ar-item';
+    const buttons = (r.buttons_text || '').trim();
     div.innerHTML = `
       <div class="ar-text">
         <div class="ar-kw">🔑 ${esc(r.keyword)}</div>
         <div>💬 ${esc(r.reply)}</div>
         <div style="font-size:11px;color:#888">${esc(r.match_type)}</div>
+        ${buttons ? `<div style="font-size:11px;color:#888">🔘 ${esc(buttons)}</div>` : ''}
       </div>
       <button class="ar-del" title="删除">🗑</button>`;
     div.querySelector('.ar-del').addEventListener('click', () => deleteAR(r.id));
@@ -123,17 +265,21 @@ document.getElementById('ar-add').addEventListener('click', async () => {
   const keyword = document.getElementById('ar-keyword').value.trim();
   const reply   = document.getElementById('ar-reply').value.trim();
   const match   = document.getElementById('ar-match').value;
+  const buttons = document.getElementById('ar-buttons').value;
   if (!keyword || !reply) {
     msgEl.className = 'msg fail';
     msgEl.textContent = '关键词和回复内容不能为空';
     return;
   }
-  const res = await api('POST', '/auto_replies', { keyword, reply, match_type: match });
+  const res = await api('POST', '/auto_replies', {
+    keyword, reply, match_type: match, buttons_text: buttons,
+  });
   if (res.id) {
     msgEl.className = 'msg ok';
     msgEl.textContent = '✅ 已添加';
     document.getElementById('ar-keyword').value = '';
     document.getElementById('ar-reply').value   = '';
+    document.getElementById('ar-buttons').value = '';
     loadAutoReplies();
   } else {
     msgEl.className = 'msg fail';
