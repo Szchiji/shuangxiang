@@ -302,22 +302,75 @@ body {
   color: var(--hint);
   margin-bottom: 4px;
 }
-.btn-entry {
+
+/* Pills area */
+.btn-pills-area {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
-  align-items: center;
+  min-height: 0;
 }
-.btn-entry input {
-  flex: 1;
+.btn-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  color: var(--primary);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  transition: background .15s, border-color .15s;
+  max-width: 160px;
+}
+.btn-pill:hover {
+  background: color-mix(in srgb, var(--primary) 25%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+}
+.pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+.pill-edit-hint {
+  font-size: 11px;
+  opacity: .6;
+}
+
+/* Inline add/edit form inside a row */
+.btn-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1.5px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  border-radius: 8px;
+}
+.btn-inline-form input {
+  width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 13px;
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   outline: none;
+  transition: border-color .15s;
 }
-.btn-entry input:focus { border-color: var(--primary); }
+.btn-inline-form input:focus { border-color: var(--primary); }
+.btn-inline-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 2px;
+}
+.btn-inline-actions .btn-ghost { flex: 1; }
+
 .btn-row-actions {
   display: flex;
   gap: 4px;

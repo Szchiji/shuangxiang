@@ -72,65 +72,137 @@ function initTabs() {
  * Returns { getText } — serialises to "text - url && text - url\ntext - url" format.
  */
 function initButtonBuilder(containerEl, addRowBtnId) {
-  function createEntry(text = '', url = '') {
-    const entry = document.createElement('div');
-    entry.className = 'btn-entry';
-    const txtInput = document.createElement('input');
-    txtInput.type = 'text';
-    txtInput.placeholder = '按钮文字';
-    txtInput.value = text;
-    const urlInput = document.createElement('input');
-    urlInput.type = 'text';
-    urlInput.placeholder = 'https://链接';
-    urlInput.value = url;
-    const delBtn = document.createElement('button');
-    delBtn.className = 'btn-icon danger';
-    delBtn.title = '删除此按钮';
-    delBtn.textContent = '✕';
-    entry.append(txtInput, urlInput, delBtn);
-    delBtn.addEventListener('click', () => {
-      const row = entry.parentElement;
-      entry.remove();
-      if (!row.querySelectorAll('.btn-entry').length) row.remove();
+  /**
+   * Each button is stored as a data object { text, url } on the pill element.
+   * Pills are rendered inside .btn-pills-area of each .btn-row.
+   * An inline edit form (.btn-inline-form) is shown/hidden per row when
+   * the user clicks "＋ 添加按钮" or clicks an existing pill.
+   */
+
+  function showInlineForm(row, pillEl) {
+    // Close any open form in this row first
+    closeInlineForm(row);
+
+    const pillsArea = row.querySelector('.btn-pills-area');
+    const form = document.createElement('div');
+    form.className = 'btn-inline-form';
+
+    const isEdit = !!pillEl;
+    const initText = isEdit ? pillEl.dataset.btnText : '';
+    const initUrl  = isEdit ? pillEl.dataset.btnUrl  : '';
+
+    form.innerHTML = `
+      <input class="btn-inline-txt" type="text" placeholder="按钮文字" value="${esc(initText)}">
+      <input class="btn-inline-url" type="text" placeholder="https://链接" value="${esc(initUrl)}">
+      <div class="btn-inline-actions">
+        <button class="btn-ghost btn-sm btn-inline-save">💾 保存</button>
+        <button class="btn-ghost btn-sm btn-inline-cancel">取消</button>
+        ${isEdit ? '<button class="btn-icon danger btn-inline-del" title="删除此按钮">🗑</button>' : ''}
+      </div>`;
+
+    row.insertBefore(form, pillsArea.nextSibling);
+
+    const txtInput = form.querySelector('.btn-inline-txt');
+    const urlInput = form.querySelector('.btn-inline-url');
+    txtInput.focus();
+
+    form.querySelector('.btn-inline-save').addEventListener('click', () => {
+      const t = txtInput.value.trim();
+      const u = urlInput.value.trim();
+      if (!t || !u) {
+        txtInput.style.borderColor = t ? '' : 'var(--danger)';
+        urlInput.style.borderColor = u ? '' : 'var(--danger)';
+        return;
+      }
+      if (isEdit) {
+        pillEl.dataset.btnText = t;
+        pillEl.dataset.btnUrl  = u;
+        pillEl.querySelector('.pill-label').textContent = t;
+        pillEl.title = u;
+      } else {
+        pillsArea.appendChild(createPill(t, u));
+      }
+      closeInlineForm(row);
     });
-    return entry;
+
+    form.querySelector('.btn-inline-cancel').addEventListener('click', () => closeInlineForm(row));
+
+    if (isEdit) {
+      form.querySelector('.btn-inline-del').addEventListener('click', () => {
+        pillEl.remove();
+        closeInlineForm(row);
+        if (!row.querySelector('.btn-pill')) row.remove();
+      });
+    }
   }
 
-  function createRow(initialEntries = [['', '']]) {
+  function closeInlineForm(row) {
+    row.querySelector('.btn-inline-form')?.remove();
+  }
+
+  function createPill(text, url) {
+    const pill = document.createElement('div');
+    pill.className = 'btn-pill';
+    pill.dataset.btnText = text;
+    pill.dataset.btnUrl  = url;
+    pill.title = url;
+    pill.innerHTML = `<span class="pill-label">${esc(text)}</span><span class="pill-edit-hint">✏️</span>`;
+    pill.addEventListener('click', () => {
+      const row = pill.closest('.btn-row');
+      showInlineForm(row, pill);
+    });
+    return pill;
+  }
+
+  function createRow(initialEntries = []) {
     const row = document.createElement('div');
     row.className = 'btn-row';
-    row.innerHTML = `
-      <div class="btn-row-header">
-        <span>一行按钮</span>
-      </div>
-      <div class="btn-row-actions">
-        <button class="btn-ghost btn-sm add-btn-in-row">＋ 添加按钮</button>
-        <button class="btn-icon danger remove-row" title="删除此行">✕ 删除行</button>
-      </div>`;
-    // Insert entries before actions
-    const actions = row.querySelector('.btn-row-actions');
+
+    const header = document.createElement('div');
+    header.className = 'btn-row-header';
+    header.innerHTML = '<span>一行按钮</span>';
+
+    const removeRowBtn = document.createElement('button');
+    removeRowBtn.className = 'btn-icon danger remove-row';
+    removeRowBtn.title = '删除此行';
+    removeRowBtn.textContent = '✕';
+    removeRowBtn.addEventListener('click', () => row.remove());
+    header.appendChild(removeRowBtn);
+
+    const pillsArea = document.createElement('div');
+    pillsArea.className = 'btn-pills-area';
+
+    const actions = document.createElement('div');
+    actions.className = 'btn-row-actions';
+    const addBtnInRow = document.createElement('button');
+    addBtnInRow.className = 'btn-ghost btn-sm add-btn-in-row';
+    addBtnInRow.textContent = '＋ 添加按钮';
+    addBtnInRow.addEventListener('click', () => showInlineForm(row, null));
+    actions.appendChild(addBtnInRow);
+
+    row.append(header, pillsArea, actions);
+
     initialEntries.forEach(([t, u]) => {
-      row.insertBefore(createEntry(t, u), actions);
+      if (t && u) pillsArea.appendChild(createPill(t, u));
     });
-    row.querySelector('.add-btn-in-row').addEventListener('click', () => {
-      row.insertBefore(createEntry(), actions);
-    });
-    row.querySelector('.remove-row').addEventListener('click', () => row.remove());
+
     return row;
   }
 
   document.getElementById(addRowBtnId).addEventListener('click', () => {
-    containerEl.appendChild(createRow());
+    const row = createRow();
+    containerEl.appendChild(row);
+    // Immediately open the add form for the new row
+    showInlineForm(row, null);
   });
 
   function getText() {
     const lines = [];
     containerEl.querySelectorAll('.btn-row').forEach(row => {
       const parts = [];
-      row.querySelectorAll('.btn-entry').forEach(entry => {
-        const [txtEl, urlEl] = entry.querySelectorAll('input');
-        const t = txtEl.value.trim();
-        const u = urlEl.value.trim();
+      row.querySelectorAll('.btn-pill').forEach(pill => {
+        const t = pill.dataset.btnText;
+        const u = pill.dataset.btnUrl;
         if (t && u) parts.push(`${t} - ${u}`);
       });
       if (parts.length) lines.push(parts.join(' && '));
