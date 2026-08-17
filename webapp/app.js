@@ -34,7 +34,8 @@ function showError(msg) {
 
 function esc(s) {
   return String(s || '')
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -125,7 +126,11 @@ function initButtonBuilder(containerEl, addRowBtnId) {
       closeInlineForm(row);
     });
 
-    form.querySelector('.btn-inline-cancel').addEventListener('click', () => closeInlineForm(row));
+    form.querySelector('.btn-inline-cancel').addEventListener('click', () => {
+      closeInlineForm(row);
+      // Remove the row if it has no pills (e.g. newly added row where user cancelled)
+      if (!row.querySelector('.btn-pill')) row.remove();
+    });
 
     if (isEdit) {
       form.querySelector('.btn-inline-del').addEventListener('click', () => {
