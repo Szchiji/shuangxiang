@@ -13,6 +13,17 @@ const HEADERS = { 'Content-Type': 'application/json', 'X-Init-Data': initData };
 function show(id) { document.getElementById(id).style.display = ''; }
 function hide(id) { document.getElementById(id).style.display = 'none'; }
 
+function setActiveTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + tab));
+  if (tab === 'stats')      loadStats();
+  if (tab === 'banned')     loadBanned();
+  if (tab === 'auto-reply') loadAutoReplies();
+  if (tab === 'page')       loadPageConfig();
+  if (tab === 'form')       loadFormConfig();
+  if (tab === 'content')    loadContentConfig();
+}
+
 async function api(method, path, body) {
   const opts = { method, headers: HEADERS };
   if (body !== undefined) opts.body = JSON.stringify(body);
@@ -50,19 +61,23 @@ function parseJsonInput(value, fallback) {
 
 function initTabs() {
   document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-      if (btn.dataset.tab === 'stats')      loadStats();
-      if (btn.dataset.tab === 'banned')     loadBanned();
-      if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
-      if (btn.dataset.tab === 'page')       loadPageConfig();
-      if (btn.dataset.tab === 'form')       loadFormConfig();
-      if (btn.dataset.tab === 'content')    loadContentConfig();
-    });
+    btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
+  document.getElementById('jump-settings')?.addEventListener('click', () => setActiveTab('settings'));
+  document.getElementById('jump-auto-reply')?.addEventListener('click', () => setActiveTab('auto-reply'));
+  document.getElementById('jump-stats')?.addEventListener('click', () => setActiveTab('stats'));
+}
+
+function refreshSettingsOverview(data) {
+  document.getElementById('overview-welcome').textContent =
+    (data.welcome_text || '').trim() ? '已配置' : '未设置';
+  const forceSubLines = (data.force_sub_text || '').split('\n').filter(line => line.trim());
+  document.getElementById('overview-force-sub').textContent =
+    data.force_sub_on ? `已开启 · ${forceSubLines.length} 个频道` : '未开启';
+  const guardStates = [];
+  if (data.antiflood) guardStates.push('防刷屏');
+  if (data.alphabet_latin) guardStates.push('拦截英文');
+  document.getElementById('overview-guard').textContent = guardStates.join(' / ') || '默认';
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
@@ -72,12 +87,14 @@ async function loadSettings() {
   if (data.error) { showError('无法加载设置：' + data.error); return; }
   document.getElementById('welcome-text').value = data.welcome_text || '';
   document.getElementById('welcome-buttons').value = data.welcome_btns_text || '';
+  document.getElementById('force-sub-text').value = data.force_sub_text || '';
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
   document.getElementById('force-sub-on').checked   = !!data.force_sub_on;
   if (data.bot_name) {
     document.getElementById('bot-name').textContent = '🤖 ' + data.bot_name;
   }
+  refreshSettingsOverview(data);
   hide('loading');
   show('main');
 }
@@ -89,6 +106,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
   const res = await api('POST', '/settings', {
     welcome_text:   document.getElementById('welcome-text').value,
     welcome_btns_text: document.getElementById('welcome-buttons').value,
+    force_sub_text: document.getElementById('force-sub-text').value,
     antiflood:      document.getElementById('antiflood').checked,
     alphabet_latin: document.getElementById('alphabet-latin').checked,
     force_sub_on:   document.getElementById('force-sub-on').checked,
@@ -97,6 +115,13 @@ document.getElementById('save-settings').addEventListener('click', async () => {
     msgEl.className = 'msg ok';
     msgEl.textContent = '✅ 保存成功';
     tg?.HapticFeedback?.notificationOccurred('success');
+    refreshSettingsOverview({
+      welcome_text: document.getElementById('welcome-text').value,
+      force_sub_text: document.getElementById('force-sub-text').value,
+      antiflood: document.getElementById('antiflood').checked,
+      alphabet_latin: document.getElementById('alphabet-latin').checked,
+      force_sub_on: document.getElementById('force-sub-on').checked,
+    });
   } else {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ 保存失败：' + (res.error || '未知错误');

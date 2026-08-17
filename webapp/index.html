@@ -13,7 +13,18 @@
 
     <div id="main" style="display:none">
       <header>
-        <h1 id="bot-name">🤖 管理后台</h1>
+        <div class="hero-card">
+          <div>
+            <p class="eyebrow">Telegram Mini App</p>
+            <h1 id="bot-name">🤖 管理后台</h1>
+            <p class="hero-desc">把常用配置集中到一个更清晰的后台里，减少来回切换和记忆成本。</p>
+          </div>
+          <div class="hero-actions">
+            <button id="jump-settings" class="chip-btn" type="button">⚙️ 基本设置</button>
+            <button id="jump-auto-reply" class="chip-btn" type="button">💬 自动回复</button>
+            <button id="jump-stats" class="chip-btn" type="button">📊 数据统计</button>
+          </div>
+        </div>
         <nav>
           <button class="tab-btn active" data-tab="settings">⚙️ 设置</button>
           <button class="tab-btn" data-tab="page">🎨 页面装修</button>
@@ -27,28 +38,68 @@
 
       <!-- ── Settings ──────────────────────────────────────────────── -->
       <section id="tab-settings" class="tab active">
-        <h2>基本设置</h2>
-        <label>启动语
-          <textarea id="welcome-text" rows="4"
-            placeholder="用户发送 /start 时显示的欢迎语"></textarea>
-        </label>
-        <label>启动语内联按钮
-          <textarea id="welcome-buttons" rows="4"
-            placeholder="每行一个或多个按钮：按钮文字 - https://链接&#10;同一行多个按钮可用 && 分隔"></textarea>
-        </label>
-        <div class="toggles">
-          <label class="toggle-row">
-            <span>🛡 防刷屏过滤</span>
-            <input type="checkbox" id="antiflood">
-          </label>
-          <label class="toggle-row">
-            <span>🔤 拦截英文消息</span>
-            <input type="checkbox" id="alphabet-latin">
-          </label>
-          <label class="toggle-row">
-            <span>📣 强制订阅开关</span>
-            <input type="checkbox" id="force-sub-on">
-          </label>
+        <div class="panel-grid">
+          <article class="panel-card compact-card">
+            <h2>快捷概览</h2>
+            <div class="overview-list">
+              <div class="overview-item">
+                <span>启动语</span>
+                <strong id="overview-welcome">未设置</strong>
+              </div>
+              <div class="overview-item">
+                <span>强制订阅</span>
+                <strong id="overview-force-sub">未开启</strong>
+              </div>
+              <div class="overview-item">
+                <span>安全过滤</span>
+                <strong id="overview-guard">默认</strong>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-card">
+            <h2>基本设置</h2>
+            <p class="section-tip">这里放最常改的内容：启动语、按钮和开关。</p>
+            <label>启动语
+              <textarea id="welcome-text" rows="4"
+                placeholder="用户发送 /start 时显示的欢迎语"></textarea>
+            </label>
+            <label>启动语内联按钮
+              <textarea id="welcome-buttons" rows="4"
+                placeholder="每行一个或多个按钮：按钮文字 - https://链接&#10;同一行多个按钮可用 && 分隔"></textarea>
+            </label>
+          </article>
+
+          <article class="panel-card">
+            <h2>强制订阅频道</h2>
+            <p class="section-tip">现在可直接在后台填写频道内容；每行一个频道。</p>
+            <label>频道列表
+              <textarea id="force-sub-text" rows="5"
+                placeholder="@频道用户名 | https://t.me/yourchannel&#10;官方频道 | @yourchannel | https://t.me/yourchannel&#10;私有频道可填写：名称 | -1001234567890 | https://t.me/+invite"></textarea>
+            </label>
+            <p class="field-hint">支持：频道 | 链接，或 名称 | 频道 | 链接。公开频道会自动规范成 @用户名。</p>
+            <div class="toggles">
+              <label class="toggle-row">
+                <span>📣 强制订阅开关</span>
+                <input type="checkbox" id="force-sub-on">
+              </label>
+            </div>
+          </article>
+
+          <article class="panel-card">
+            <h2>安全过滤</h2>
+            <p class="section-tip">减少垃圾消息，保持私聊更干净。</p>
+            <div class="toggles">
+              <label class="toggle-row">
+                <span>🛡 防刷屏过滤</span>
+                <input type="checkbox" id="antiflood">
+              </label>
+              <label class="toggle-row">
+                <span>🔤 拦截英文消息</span>
+                <input type="checkbox" id="alphabet-latin">
+              </label>
+            </div>
+          </article>
         </div>
         <button id="save-settings" class="btn-primary">💾 保存设置</button>
         <div id="settings-msg" class="msg"></div>

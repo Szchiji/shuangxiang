@@ -11,6 +11,7 @@ import pytest
 
 from core.database import Database
 from core.webapp import _verify_init_data, create_app
+from modules.customize_module import SK_FORCE_SUB
 
 # ── initData validation helpers ───────────────────────────────────────────────
 
@@ -159,6 +160,46 @@ async def test_post_settings_supports_welcome_buttons(aiohttp_client, app, db, t
     )
     data = await resp.json()
     assert data["welcome_btns_text"] == buttons_text
+
+
+@pytest.mark.asyncio
+async def test_post_settings_supports_force_sub_text(aiohttp_client, app, db, tenant_id,
+                                                     init_data_header):
+    client = await aiohttp_client(app)
+    force_sub_text = (
+        "@channel_a | https://t.me/channel_a\n"
+        "官方群 | @channel_b | https://t.me/channel_b"
+    )
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"force_sub_text": force_sub_text, "force_sub_on": True},
+    )
+    assert resp.status == 200
+    stored = json.loads(db.get_setting(tenant_id, SK_FORCE_SUB))
+    assert stored[0]["chat"] == "@channel_a"
+    assert stored[0]["title"] == "@channel_a"
+    assert stored[1]["title"] == "官方群"
+    assert db.get_bool_setting(tenant_id, "force_sub_on", False) is True
+
+    resp = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["force_sub_text"] == force_sub_text
+
+
+@pytest.mark.asyncio
+async def test_post_settings_rejects_invalid_force_sub_text(aiohttp_client, app, tenant_id,
+                                                            init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"force_sub_text": "坏格式 | not-a-link"},
+    )
+    assert resp.status == 400
 
 
 @pytest.mark.asyncio
