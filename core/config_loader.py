@@ -19,6 +19,9 @@ def load_config(path: str = "config.yaml") -> dict:
     config["db_path"] = os.getenv("DB_PATH", "bot.db")
 
     if os.getenv("WEBAPP_URL"):
-        config.setdefault("webapp", {})["url"] = os.getenv("WEBAPP_URL")
+        webapp = config.setdefault("webapp", {})
+        webapp["url"] = os.getenv("WEBAPP_URL")
+        # A non-empty URL implies the webapp should be enabled.
+        webapp["enabled"] = True
 
     return config
