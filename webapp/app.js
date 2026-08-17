@@ -325,16 +325,41 @@ function renderFsubList() {
   _fsubChannels.forEach((ch, i) => {
     const div = document.createElement('div');
     div.className = 'fsub-item';
-    div.innerHTML = `
-      <div class="fsub-info">
-        <div class="fsub-title">${esc(ch.title || ch.chat)}</div>
-        <div class="fsub-chat">${esc(ch.chat)}${ch.url && (ch.url.startsWith('https://') || ch.url.startsWith('http://') || ch.url.startsWith('tg://')) ? ' · <a href="' + esc(ch.url) + '" target="_blank">加入链接</a>' : ''}</div>
-      </div>
-      <button class="btn-icon danger" title="删除">🗑</button>`;
-    div.querySelector('.btn-icon.danger').addEventListener('click', () => {
+
+    const info = document.createElement('div');
+    info.className = 'fsub-info';
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'fsub-title';
+    titleEl.textContent = ch.title || ch.chat;
+
+    const chatEl = document.createElement('div');
+    chatEl.className = 'fsub-chat';
+    chatEl.textContent = ch.chat;
+
+    const safeUrl = ch.url || '';
+    if (safeUrl && (safeUrl.startsWith('https://') || safeUrl.startsWith('http://') || safeUrl.startsWith('tg://'))) {
+      const sep = document.createTextNode(' · ');
+      const a = document.createElement('a');
+      a.href = safeUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = '加入链接';
+      chatEl.append(sep, a);
+    }
+
+    info.append(titleEl, chatEl);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-icon danger';
+    delBtn.title = '删除';
+    delBtn.textContent = '🗑';
+    delBtn.addEventListener('click', () => {
       _fsubChannels.splice(i, 1);
       saveFsubChannels();
     });
+
+    div.append(info, delBtn);
     list.appendChild(div);
   });
 }
