@@ -255,10 +255,37 @@ def _normalize_button_text(raw, *, max_len: int) -> str:
         raise ValueError("button text invalid")
     if not text:
         return ""
-    rows = parse_buttons(text)
+    try:
+        rows = parse_buttons(text)
+    except Exception as e:
+        raise ValueError("buttons invalid") from e
     if not rows:
         raise ValueError("buttons invalid")
     return json.dumps(rows, ensure_ascii=False)
+
+
+def _normalize_button_payload(raw, *, max_len: int) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, list):
+        text = _button_rows_to_text(raw)
+        if raw and not text:
+            raise ValueError("buttons invalid")
+        return _normalize_button_text(text, max_len=max_len)
+    if not isinstance(raw, str):
+        raise ValueError("buttons invalid")
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        pass
+    else:
+        if not isinstance(parsed, list):
+            raise ValueError("buttons invalid")
+        return _normalize_button_payload(parsed, max_len=max_len)
+    return _normalize_button_text(raw, max_len=max_len)
 
 
 # ── Middleware ────────────────────────────────────────────────────────────────
@@ -326,7 +353,10 @@ async def _post_settings(request: web.Request):
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if SK_WELCOME_TEXT in body:
-        db.set_setting(tid, SK_WELCOME_TEXT, str(body[SK_WELCOME_TEXT]))
+        welcome_text = _clean_text(body[SK_WELCOME_TEXT], max_len=4000)
+        if welcome_text is None:
+            return web.json_response({"error": "welcome_text invalid"}, status=400)
+        db.set_setting(tid, SK_WELCOME_TEXT, welcome_text)
     if "welcome_btns_text" in body:
         try:
             buttons_json = _normalize_button_text(body["welcome_btns_text"], max_len=2000)
@@ -334,7 +364,11 @@ async def _post_settings(request: web.Request):
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_WELCOME_BTNS, buttons_json)
     elif SK_WELCOME_BTNS in body:
-        db.set_setting(tid, SK_WELCOME_BTNS, str(body[SK_WELCOME_BTNS]))
+        try:
+            buttons_json = _normalize_button_payload(body[SK_WELCOME_BTNS], max_len=2000)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        db.set_setting(tid, SK_WELCOME_BTNS, buttons_json)
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")

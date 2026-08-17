@@ -174,6 +174,46 @@ async def test_post_settings_rejects_invalid_welcome_buttons(aiohttp_client, app
 
 
 @pytest.mark.asyncio
+async def test_post_settings_rejects_invalid_welcome_text(aiohttp_client, app, tenant_id,
+                                                          init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_text": ["bad"]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_post_settings_validates_legacy_welcome_buttons_payload(aiohttp_client, app, db,
+                                                                      tenant_id,
+                                                                      init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_buttons": [[{"text": "频道", "url": "https://t.me/a"}]]},
+    )
+    assert resp.status == 200
+    assert db.get_setting(tenant_id, "welcome_buttons")
+
+
+@pytest.mark.asyncio
+async def test_post_settings_accepts_empty_legacy_welcome_buttons_payload(aiohttp_client, app, db,
+                                                                          tenant_id,
+                                                                          init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_buttons": "[]"},
+    )
+    assert resp.status == 200
+    assert db.get_setting(tenant_id, "welcome_buttons") == ""
+
+
+@pytest.mark.asyncio
 async def test_get_stats_ok(aiohttp_client, app, db, tenant_id, init_data_header):
     client = await aiohttp_client(app)
     resp = await client.get(
