@@ -45,6 +45,7 @@ _VALID_MATCH_TYPES = frozenset({"contains", "exact", "startswith", "regex"})
 _VALID_FORM_FIELD_TYPES = frozenset({"text", "textarea", "select", "datetime", "image"})
 _VALID_PAGE_MODULES = frozenset({"welcome", "auto_reply", "banned", "stats", "content"})
 _KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
+_CHAT_USERNAME_RE = re.compile(r"^@[A-Za-z0-9_]{1,32}$")
 
 SK_PAGE_CONFIG = "webapp_page_config"
 SK_FORM_CONFIG = "webapp_form_config"
@@ -339,6 +340,8 @@ def _normalize_force_sub_text(raw, *, max_len: int) -> str:
         if norm_chat is None:
             raise ValueError(f"force_sub line {idx} invalid")
         chat_value = str(norm_chat)
+        if not (chat_value.lstrip("-").isdigit() or _CHAT_USERNAME_RE.fullmatch(chat_value)):
+            raise ValueError(f"force_sub line {idx} invalid")
         title = _clean_text(title or chat_value, max_len=80, allow_empty=False)
         url = _clean_text(url or _default_join_url(chat_value), max_len=500, allow_empty=False)
         if title is None or url is None or not url.startswith(("http://", "https://", "tg://")):
