@@ -307,7 +307,7 @@ def _force_sub_to_text(raw) -> str:
         url = _clean_text(row.get("url", ""), max_len=500, allow_empty=False)
         if chat is None or url is None:
             continue
-        parts = [title, chat, url] if title else [chat, url]
+        parts = [chat, url] if not title or title == chat else [title, chat, url]
         lines.append(" | ".join(part for part in parts if part))
     return "\n".join(lines)
 
@@ -327,7 +327,10 @@ def _normalize_force_sub_text(raw, *, max_len: int) -> str:
         if len(parts) == 1:
             title, chat, url = "", parts[0], ""
         elif len(parts) == 2:
-            title, chat, url = "", parts[0], parts[1]
+            if parts[1].startswith(("http://", "https://", "tg://")):
+                title, chat, url = "", parts[0], parts[1]
+            else:
+                title, chat, url = parts[0], parts[1], ""
         elif len(parts) == 3:
             title, chat, url = parts
         else:
