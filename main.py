@@ -3,10 +3,10 @@ import logging
 
 from telegram.error import InvalidToken
 
+from core.admin_web import AdminWebServer
 from core.bot import ModularBot
 from core.config_loader import load_config
 from core.database import Database
-from core.admin_web import AdminWebServer
 from core.logging_config import setup_logging
 from core.tenant_manager import TenantManager
 

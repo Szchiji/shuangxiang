@@ -164,8 +164,12 @@ class AdminWebServer:
 
             def _new_session(self, tenant_id: int) -> str:
                 sid = secrets.token_urlsafe(32)
+                now = time.time()
                 with outer._lock:
-                    outer._sessions[sid] = (tenant_id, time.time() + outer.session_ttl)
+                    expired = [k for k, (_, exp) in outer._sessions.items() if exp <= now]
+                    for k in expired:
+                        outer._sessions.pop(k, None)
+                    outer._sessions[sid] = (tenant_id, now + outer.session_ttl)
                 return sid
 
             def _clear_session(self) -> None:
