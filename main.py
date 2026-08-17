@@ -60,7 +60,9 @@ async def main():
         # 可选：启动 Web 管理后台
         webapp_runner = None
         webapp_cfg = config.get("webapp", {})
-        if webapp_cfg.get("enabled") or os.getenv("WEBAPP_ENABLED", "").lower() in ("1", "true"):
+        if (webapp_cfg.get("enabled")
+                or os.getenv("WEBAPP_ENABLED", "").lower() in ("1", "true")
+                or webapp_cfg.get("url")):
             from core.webapp import start_webapp
             host = os.getenv("WEBAPP_HOST") or webapp_cfg.get("host", "0.0.0.0")
             port = int(os.getenv("WEBAPP_PORT") or webapp_cfg.get("port", 8080))
