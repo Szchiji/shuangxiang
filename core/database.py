@@ -182,8 +182,8 @@ class Database:
                 ("buttons", "TEXT DEFAULT ''"),
                 ("media_type", "TEXT DEFAULT ''"),
                 ("media_id", "TEXT DEFAULT ''"),
-                ("created_at", "TEXT DEFAULT (datetime('now'))"),
-                ("updated_at", "TEXT DEFAULT (datetime('now'))"),
+                ("created_at", "TEXT DEFAULT NULL"),
+                ("updated_at", "TEXT DEFAULT NULL"),
             ],
         }
         with self._conn() as c:
