@@ -45,7 +45,7 @@ function summarizeText(text, maxLen = 48) {
 }
 
 function formatDateTime(value) {
-  if (!value) return '刚刚';
+  if (!value) return '—';
   const normalized = String(value).replace(' ', 'T');
   const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return String(value);
@@ -505,9 +505,14 @@ function resetFsubEditor() {
 }
 
 function startCreateFsub() {
-  resetFsubEditor();
-  hide('fsub-list-view');
-  show('fsub-editor-view');
+  _fsubEditIndex = null;
+  document.getElementById('fsub-editor-title').textContent = '➕ 添加频道';
+  document.getElementById('fsub-add-title').value = '';
+  document.getElementById('fsub-add-chat').value = '';
+  document.getElementById('fsub-add-url').value = '';
+  document.getElementById('fsub-msg').textContent = '';
+  document.getElementById('fsub-msg').className = 'msg';
+  showFsubView('fsub-editor-view');
 }
 
 function startEditFsub(index) {
@@ -718,6 +723,8 @@ function renderBanned() {
 
 async function loadBanned() {
   const list = document.getElementById('banned-list');
+  document.getElementById('banned-msg').textContent = '';
+  document.getElementById('banned-msg').className = 'msg';
   list.innerHTML = '<p class="empty-state">加载中…</p>';
   const data = await api('GET', '/banned');
   if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
@@ -727,8 +734,18 @@ async function loadBanned() {
 
 async function unban(uid) {
   if (!window.confirm('确定要解封这个用户吗？')) return;
-  await api('POST', '/unban/' + uid);
-  loadBanned();
+  const msgEl = document.getElementById('banned-msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = '处理中…';
+  const res = await api('POST', '/unban/' + uid);
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已解封';
+    loadBanned();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '解封失败');
+  }
 }
 
 document.getElementById('banned-search').addEventListener('input', renderBanned);
