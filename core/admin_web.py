@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import html
+import hmac
+import hashlib
 import secrets
 import threading
 import time
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from core.database import Database
 
@@ -22,6 +25,50 @@ def _to_bool(v: str) -> bool:
     return v in ("1", "true", "True", "on", "yes")
 
 
+def _b64u_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64u_decode(raw: str) -> bytes:
+    pad = "=" * (-len(raw) % 4)
+    return base64.urlsafe_b64decode((raw + pad).encode("ascii"))
+
+
+def make_autologin_token(
+    secret_key: str, tenant_id: int, ttl_seconds: int = 180, now: int | None = None
+) -> str:
+    """生成后台一键登录 token（短时有效，签名防篡改）。"""
+    now = int(time.time()) if now is None else int(now)
+    exp = now + max(30, int(ttl_seconds))
+    nonce = secrets.token_hex(8)
+    payload = f"{int(tenant_id)}:{exp}:{nonce}"
+    sig = hmac.new(
+        secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return _b64u_encode(f"{payload}.{sig}".encode("utf-8"))
+
+
+def parse_autologin_token(secret_key: str, token: str, now: int | None = None) -> int | None:
+    """校验后台一键登录 token，返回 tenant_id；失败返回 None。"""
+    if not secret_key or not token:
+        return None
+    try:
+        decoded = _b64u_decode(token).decode("utf-8")
+        payload, sig = decoded.rsplit(".", 1)
+        expected = hmac.new(
+            secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        tid_s, exp_s, _nonce = payload.split(":", 2)
+        now = int(time.time()) if now is None else int(now)
+        if int(exp_s) < now:
+            return None
+        return int(tid_s)
+    except Exception:
+        return None
+
+
 class AdminWebServer:
     """本地 HTTP 管理后台（无额外依赖）。"""
 
@@ -31,11 +78,13 @@ class AdminWebServer:
         host: str = "127.0.0.1",
         port: int = 8080,
         session_ttl: int = 3600,
+        autologin_secret: str = "",
     ) -> None:
         self.db = db
         self.host = host
         self.port = int(port)
         self.session_ttl = max(300, int(session_ttl))
+        self.autologin_secret = autologin_secret or ""
         self._sessions: dict[str, tuple[int, float]] = {}
         self._lock = threading.Lock()
         self._httpd: ThreadingHTTPServer | None = None
@@ -78,6 +127,9 @@ class AdminWebServer:
                 return
 
             def do_GET(self) -> None:  # noqa: N802
+                if self.path.startswith("/admin/auto-login"):
+                    self._auto_login()
+                    return
                 if self.path.startswith("/admin/logout"):
                     self._logout()
                     return
@@ -194,6 +246,19 @@ class AdminWebServer:
                     self._send_html(self._login_page("Token 无效，请重试。"), status=401)
                     return
                 sid = self._new_session(int(tenant["id"]))
+                self._redirect(
+                    "/admin",
+                    headers={"Set-Cookie": self._cookie_header(sid, outer.session_ttl)},
+                )
+
+            def _auto_login(self) -> None:
+                parsed = urlparse(self.path)
+                token = parse_qs(parsed.query).get("t", [""])[0]
+                tenant_id = parse_autologin_token(outer.autologin_secret, token)
+                if tenant_id is None or outer.db.get_tenant(tenant_id) is None:
+                    self._send_html(self._login_page("登录链接已失效，请重新获取。"), status=401)
+                    return
+                sid = self._new_session(int(tenant_id))
                 self._redirect(
                     "/admin",
                     headers={"Set-Cookie": self._cookie_header(sid, outer.session_ttl)},

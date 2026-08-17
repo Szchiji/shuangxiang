@@ -21,6 +21,7 @@ def make_module(db, manage_group=None, admin_id=99):
     mod._album_delay = 0.05
     mod._topic_locks = {}
     mod._last_dm_user = None
+    mod.admin_web = {}
     mod._manage_group = lambda: manage_group
     return mod
 
@@ -194,3 +195,26 @@ def test_forward_origin_label_hidden_user(db):
     assert label == "隐藏用户"
     # 非转发消息返回 None
     assert mod._forward_origin_label(FakeMessage(2)) is None
+
+
+@pytest.mark.asyncio
+async def test_admin_start_shows_web_login_button(db):
+    mod = make_module(db, admin_id=99)
+    mod.admin_web = {
+        "enabled": True,
+        "public_base_url": "https://admin.example.com",
+        "autologin_secret": "secret",
+        "autologin_ttl": 180,
+    }
+    msg = FakeMessage(90, text="/start")
+    update = types.SimpleNamespace(
+        message=msg,
+        effective_chat=types.SimpleNamespace(type="private"),
+        effective_user=types.SimpleNamespace(id=99, full_name="Admin", username="admin"),
+    )
+    await mod.cmd_start(update, None)
+    text, kwargs = msg.replies[0]
+    assert "设置入口已迁移到网页后台" in text
+    kb = kwargs["reply_markup"].inline_keyboard
+    assert kb[0][0].text == "🖥️ 打开设置后台"
+    assert kb[0][0].url.startswith("https://admin.example.com/admin/auto-login?t=")

@@ -11,6 +11,7 @@
 import asyncio
 import html
 import logging
+from urllib.parse import quote
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
@@ -24,6 +25,7 @@ from telegram.ext import (
 )
 
 from core import ui
+from core.admin_web import make_autologin_token
 from core.base_module import BaseModule
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
@@ -65,6 +67,7 @@ class PrivateChatModule(BaseModule):
             "👋 管理员你好！用户的消息会转发到这里，"
             "直接「回复」某条消息即可回复对应用户。\n\n"
             "💡 把我加入一个开启「话题」的群并运行 /setgroup 可启用 Topics 管理模式。")
+        self.admin_web = self.config.get("admin_web", {})
         self.received = msgs.get("received", "")
         # 用户消息成功转发后给用户的「已发送」轻提示，默认 5 秒后自动删除。
         self.sent_ack = (msgs.get("sent_ack")
@@ -144,9 +147,21 @@ class PrivateChatModule(BaseModule):
             return
         user = update.effective_user
         if self._is_admin(user.id):
+            text = ui.section(
+                "管理提醒", emoji="🧭",
+                body=(
+                    "设置入口已迁移到网页后台。\n"
+                    "请点击下方按钮一键登录后台进行设置。"))
+            login_url = self._admin_web_login_url()
+            if login_url:
+                markup = InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🖥️ 打开设置后台", url=login_url)]]
+                )
+            else:
+                text += "\n\n⚠️ 后台暂未启用，请联系平台管理员开启。"
+                markup = None
             await update.message.reply_text(
-                self.admin_welcome + self.admin_onboarding, parse_mode="Markdown",
-                reply_markup=self._panel_markup())
+                text, parse_mode="Markdown", reply_markup=markup)
         else:
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)
@@ -161,6 +176,25 @@ class PrivateChatModule(BaseModule):
             await reply_with_optional_media(
                 update.message, text, media_type, media_id,
                 reply_markup=self._user_home_markup())
+
+    def _admin_web_login_url(self) -> str | None:
+        cfg = self.admin_web or {}
+        if not cfg.get("enabled"):
+            return None
+        secret = cfg.get("autologin_secret", "")
+        if not secret:
+            return None
+        base = (cfg.get("public_base_url") or "").strip()
+        if not base:
+            host = cfg.get("host", "127.0.0.1")
+            port = int(cfg.get("port", 8080))
+            base = f"http://{host}:{port}"
+        token = make_autologin_token(
+            secret_key=secret,
+            tenant_id=self.tenant_id,
+            ttl_seconds=int(cfg.get("autologin_ttl", 180)),
+        )
+        return f"{base.rstrip('/')}/admin/auto-login?t={quote(token)}"
 
     async def cmd_setgroup(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):

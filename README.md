@@ -111,8 +111,12 @@ python main.py
 | `ADMIN_WEB_HOST` | 管理后台监听地址（默认 `127.0.0.1`） |
 | `ADMIN_WEB_PORT` | 管理后台端口（默认 `8080`） |
 | `ADMIN_WEB_SESSION_TTL` | 后台登录会话有效期（秒，默认 `3600`） |
+| `ADMIN_WEB_PUBLIC_BASE_URL` | 后台公网访问地址（可选，如 `https://admin.example.com`） |
+| `ADMIN_WEB_AUTOLOGIN_SECRET` | `/start` 一键登录签名密钥（建议在生产环境显式配置） |
+| `ADMIN_WEB_AUTOLOGIN_TTL` | `/start` 一键登录链接有效期（秒，默认 `180`） |
 
-启用后访问 `http://<ADMIN_WEB_HOST>:<ADMIN_WEB_PORT>/admin`，使用你的机器人 Token 登录即可管理该机器人。
+启用后访问 `http://<ADMIN_WEB_HOST>:<ADMIN_WEB_PORT>/admin`，使用你的机器人 Token 登录即可管理该机器人。  
+当租户管理员私聊机器人发送 `/start` 时，会收到“前往设置后台”按钮，点击后自动登录进入后台（需正确配置公网地址与签名密钥）。
 
 ## 稳定性与性能
 

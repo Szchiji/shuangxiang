@@ -1,7 +1,7 @@
 import http.client
 from urllib.parse import urlencode
 
-from core.admin_web import AdminWebServer
+from core.admin_web import AdminWebServer, make_autologin_token
 
 
 def _request(port: int, method: str, path: str, data: dict | None = None, cookie: str = ""):
@@ -104,5 +104,29 @@ def test_admin_web_auto_reply_and_filters(db):
             cookie=cookie,
         )
         assert db.get_filters(tid) == []
+    finally:
+        server.stop()
+
+
+def test_admin_web_autologin_endpoint(db):
+    token = "222222:ABCDEF"
+    tid = db.add_tenant(token=token, owner_user_id=8, bot_username="robot", bot_name="R")
+    secret = "test-secret"
+    server = AdminWebServer(
+        db, host="127.0.0.1", port=0, session_ttl=600, autologin_secret=secret
+    )
+    server.start()
+    try:
+        login_token = make_autologin_token(secret, tid, ttl_seconds=120)
+        status, headers, _ = _request(
+            server.bound_port, "GET", f"/admin/auto-login?t={login_token}"
+        )
+        assert status == 303
+        cookie = headers.get("Set-Cookie", "").split(";", 1)[0]
+        assert "sx_admin_session=" in cookie
+
+        status, _, html = _request(server.bound_port, "GET", "/admin", cookie=cookie)
+        assert status == 200
+        assert "当前机器人" in html
     finally:
         server.stop()

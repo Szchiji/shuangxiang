@@ -53,6 +53,7 @@ async def main():
             host=admin_cfg.get("host", "127.0.0.1"),
             port=admin_cfg.get("port", 8080),
             session_ttl=admin_cfg.get("session_ttl", 3600),
+            autologin_secret=admin_cfg.get("autologin_secret", ""),
         )
         admin_web.start()
         logger.info(

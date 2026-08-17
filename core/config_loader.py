@@ -1,4 +1,5 @@
 import os
+import secrets
 
 import yaml
 
@@ -23,6 +24,10 @@ def load_config(path: str = "config.yaml") -> dict:
         "host": os.getenv("ADMIN_WEB_HOST", "127.0.0.1"),
         "port": int(os.getenv("ADMIN_WEB_PORT", "8080")),
         "session_ttl": int(os.getenv("ADMIN_WEB_SESSION_TTL", "3600")),
+        "public_base_url": os.getenv("ADMIN_WEB_PUBLIC_BASE_URL", "").strip(),
+        "autologin_secret": os.getenv("ADMIN_WEB_AUTOLOGIN_SECRET", "")
+        or secrets.token_urlsafe(32),
+        "autologin_ttl": int(os.getenv("ADMIN_WEB_AUTOLOGIN_TTL", "180")),
     }
 
     return config
