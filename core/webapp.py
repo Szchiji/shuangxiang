@@ -343,7 +343,10 @@ def _normalize_force_sub_text(raw, *, max_len: int) -> str:
         if not (chat_value.lstrip("-").isdigit() or _CHAT_USERNAME_RE.fullmatch(chat_value)):
             raise ValueError(f"force_sub line {idx} invalid")
         title = _clean_text(title or chat_value, max_len=80, allow_empty=False)
-        url = _clean_text(url or _default_join_url(chat_value), max_len=500, allow_empty=False)
+        derived_url = url or _default_join_url(chat_value)
+        if not derived_url:
+            raise ValueError(f"force_sub line {idx} requires a join URL")
+        url = _clean_text(derived_url, max_len=500, allow_empty=False)
         if title is None or url is None or not url.startswith(("http://", "https://", "tg://")):
             raise ValueError(f"force_sub line {idx} invalid")
         channels.append({"title": title, "chat": chat_value, "url": url})
@@ -370,7 +373,10 @@ def _normalize_force_sub_payload(raw, *, max_len: int) -> str:
     else:
         if not isinstance(parsed, list):
             raise ValueError("force_sub invalid")
-        return _normalize_force_sub_payload(parsed, max_len=max_len)
+        text = _force_sub_to_text(parsed)
+        if parsed and not text:
+            raise ValueError("force_sub invalid")
+        return _normalize_force_sub_text(text, max_len=max_len)
     return _normalize_force_sub_text(raw, max_len=max_len)
 
 

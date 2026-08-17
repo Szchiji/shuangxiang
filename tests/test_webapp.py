@@ -201,9 +201,29 @@ async def test_post_settings_rejects_invalid_force_sub_text(aiohttp_client, app,
     resp = await client.post(
         f"/api/{tenant_id}/settings",
         headers={"X-Init-Data": init_data_header},
-        json={"force_sub_text": "坏格式 | not-a-link"},
+        json={"force_sub_text": "a | b | c | d"},
     )
     assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_post_settings_supports_force_sub_json_payload(aiohttp_client, app, db, tenant_id,
+                                                             init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "force_sub": [
+                {"title": "官方群", "chat": "@channel_b", "url": "https://t.me/channel_b"},
+            ],
+        },
+    )
+    assert resp.status == 200
+    stored = json.loads(db.get_setting(tenant_id, SK_FORCE_SUB))
+    assert stored == [
+        {"title": "官方群", "chat": "@channel_b", "url": "https://t.me/channel_b"},
+    ]
 
 
 @pytest.mark.asyncio
