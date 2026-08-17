@@ -140,6 +140,40 @@ async def test_post_settings_ok(aiohttp_client, app, db, tenant_id, init_data_he
 
 
 @pytest.mark.asyncio
+async def test_post_settings_supports_welcome_buttons(aiohttp_client, app, db, tenant_id,
+                                                      init_data_header):
+    client = await aiohttp_client(app)
+    buttons_text = "频道 - https://t.me/a && 客服 - https://t.me/b"
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_btns_text": buttons_text},
+    )
+    assert resp.status == 200
+    stored = json.loads(db.get_setting(tenant_id, "welcome_buttons"))
+    assert [btn["text"] for btn in stored[0]] == ["频道", "客服"]
+
+    resp = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["welcome_btns_text"] == buttons_text
+
+
+@pytest.mark.asyncio
+async def test_post_settings_rejects_invalid_welcome_buttons(aiohttp_client, app, tenant_id,
+                                                             init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_btns_text": "坏按钮 - ftp://bad"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
 async def test_get_stats_ok(aiohttp_client, app, db, tenant_id, init_data_header):
     client = await aiohttp_client(app)
     resp = await client.get(
@@ -317,12 +351,17 @@ async def test_auto_replies_crud(aiohttp_client, app, db, tenant_id, init_data_h
     resp = await client.post(
         f"/api/{tenant_id}/auto_replies",
         headers={"X-Init-Data": init_data_header},
-        json={"keyword": "hi", "reply": "hello"},
+        json={
+            "keyword": "hi",
+            "reply": "hello",
+            "buttons_text": "官网 - https://example.com",
+        },
     )
     assert resp.status == 200
     data = await resp.json()
     rid = data["id"]
     assert rid
+    assert json.loads(db.get_auto_replies(tenant_id)[0]["buttons"])[0][0]["url"] == "https://example.com"
 
     # List
     resp = await client.get(
@@ -331,7 +370,8 @@ async def test_auto_replies_crud(aiohttp_client, app, db, tenant_id, init_data_h
     )
     assert resp.status == 200
     items = await resp.json()
-    assert any(r["id"] == rid for r in items)
+    row = next(r for r in items if r["id"] == rid)
+    assert row["buttons_text"] == "官网 - https://example.com"
 
     # Delete
     resp = await client.delete(
@@ -340,6 +380,18 @@ async def test_auto_replies_crud(aiohttp_client, app, db, tenant_id, init_data_h
     )
     assert resp.status == 200
     assert (await resp.json())["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_auto_replies_reject_invalid_buttons(aiohttp_client, app, tenant_id,
+                                                   init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/auto_replies",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "hi", "reply": "hello", "buttons_text": "坏 - ftp://bad"},
+    )
+    assert resp.status == 400
 
 
 @pytest.mark.asyncio

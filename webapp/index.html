@@ -32,6 +32,10 @@
           <textarea id="welcome-text" rows="4"
             placeholder="用户发送 /start 时显示的欢迎语"></textarea>
         </label>
+        <label>启动语内联按钮
+          <textarea id="welcome-buttons" rows="4"
+            placeholder="每行一个或多个按钮：按钮文字 - https://链接&#10;同一行多个按钮可用 && 分隔"></textarea>
+        </label>
         <div class="toggles">
           <label class="toggle-row">
             <span>🛡 防刷屏过滤</span>
@@ -131,6 +135,10 @@
               <option value="startswith">开头匹配</option>
               <option value="regex">正则表达式</option>
             </select>
+          </label>
+          <label>内联按钮
+            <textarea id="ar-buttons" rows="4"
+              placeholder="可留空；格式同上：按钮文字 - https://链接"></textarea>
           </label>
           <button id="ar-add" class="btn-primary">➕ 添加</button>
           <div id="ar-msg" class="msg"></div>

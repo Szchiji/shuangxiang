@@ -71,6 +71,7 @@ async function loadSettings() {
   const data = await api('GET', '/settings');
   if (data.error) { showError('无法加载设置：' + data.error); return; }
   document.getElementById('welcome-text').value = data.welcome_text || '';
+  document.getElementById('welcome-buttons').value = data.welcome_btns_text || '';
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
   document.getElementById('force-sub-on').checked   = !!data.force_sub_on;
@@ -87,6 +88,7 @@ document.getElementById('save-settings').addEventListener('click', async () => {
   msgEl.textContent = '保存中...';
   const res = await api('POST', '/settings', {
     welcome_text:   document.getElementById('welcome-text').value,
+    welcome_btns_text: document.getElementById('welcome-buttons').value,
     antiflood:      document.getElementById('antiflood').checked,
     alphabet_latin: document.getElementById('alphabet-latin').checked,
     force_sub_on:   document.getElementById('force-sub-on').checked,
@@ -239,11 +241,13 @@ async function loadAutoReplies() {
   data.forEach(r => {
     const div = document.createElement('div');
     div.className = 'ar-item';
+    const buttons = (r.buttons_text || '').trim();
     div.innerHTML = `
       <div class="ar-text">
         <div class="ar-kw">🔑 ${esc(r.keyword)}</div>
         <div>💬 ${esc(r.reply)}</div>
         <div style="font-size:11px;color:#888">${esc(r.match_type)}</div>
+        ${buttons ? `<div style="font-size:11px;color:#888">🔘 ${esc(buttons)}</div>` : ''}
       </div>
       <button class="ar-del" title="删除">🗑</button>`;
     div.querySelector('.ar-del').addEventListener('click', () => deleteAR(r.id));
@@ -261,17 +265,21 @@ document.getElementById('ar-add').addEventListener('click', async () => {
   const keyword = document.getElementById('ar-keyword').value.trim();
   const reply   = document.getElementById('ar-reply').value.trim();
   const match   = document.getElementById('ar-match').value;
+  const buttons = document.getElementById('ar-buttons').value;
   if (!keyword || !reply) {
     msgEl.className = 'msg fail';
     msgEl.textContent = '关键词和回复内容不能为空';
     return;
   }
-  const res = await api('POST', '/auto_replies', { keyword, reply, match_type: match });
+  const res = await api('POST', '/auto_replies', {
+    keyword, reply, match_type: match, buttons_text: buttons,
+  });
   if (res.id) {
     msgEl.className = 'msg ok';
     msgEl.textContent = '✅ 已添加';
     document.getElementById('ar-keyword').value = '';
     document.getElementById('ar-reply').value   = '';
+    document.getElementById('ar-buttons').value = '';
     loadAutoReplies();
   } else {
     msgEl.className = 'msg fail';

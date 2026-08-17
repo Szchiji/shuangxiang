@@ -26,6 +26,7 @@ from modules.customize_module import (
     SK_FORCE_SUB_ON,
     SK_WELCOME_BTNS,
     SK_WELCOME_TEXT,
+    parse_buttons,
 )
 
 logger = logging.getLogger("shuangxiang.webapp")
@@ -223,6 +224,43 @@ def _normalize_content_config(raw: dict | None) -> dict:
     }
 
 
+def _button_rows_to_text(raw) -> str:
+    if not raw:
+        return ""
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return ""
+    lines = []
+    for row in rows or []:
+        if not isinstance(row, list):
+            continue
+        parts = []
+        for btn in row:
+            if not isinstance(btn, dict):
+                continue
+            text = _clean_text(btn.get("text", ""), max_len=80, allow_empty=False)
+            url = _clean_text(btn.get("url", ""), max_len=500, allow_empty=False)
+            if text is None or url is None:
+                continue
+            parts.append(f"{text} - {url}")
+        if parts:
+            lines.append(" && ".join(parts))
+    return "\n".join(lines)
+
+
+def _normalize_button_text(raw, *, max_len: int) -> str:
+    text = _clean_text(raw, max_len=max_len)
+    if text is None:
+        raise ValueError("button text invalid")
+    if not text:
+        return ""
+    rows = parse_buttons(text)
+    if not rows:
+        raise ValueError("buttons invalid")
+    return json.dumps(rows, ensure_ascii=False)
+
+
 # ── Middleware ────────────────────────────────────────────────────────────────
 
 @web.middleware
@@ -266,9 +304,11 @@ def _auth(request: web.Request):
 async def _get_settings(request: web.Request):
     tenant = _auth(request)
     tid, db = tenant["id"], Database()
+    welcome_btns = db.get_setting(tid, SK_WELCOME_BTNS, "") or ""
     return web.json_response({
         "welcome_text":   db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
-        "welcome_btns":   db.get_setting(tid, SK_WELCOME_BTNS, "") or "",
+        "welcome_btns":   welcome_btns,
+        "welcome_btns_text": _button_rows_to_text(welcome_btns),
         "antiflood":      db.get_bool_setting(tid, SK_ANTIFLOOD, True),
         "alphabet_latin": db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
         "force_sub_on":   db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
@@ -285,9 +325,16 @@ async def _post_settings(request: web.Request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    for key in (SK_WELCOME_TEXT, SK_WELCOME_BTNS):
-        if key in body:
-            db.set_setting(tid, key, str(body[key]))
+    if SK_WELCOME_TEXT in body:
+        db.set_setting(tid, SK_WELCOME_TEXT, str(body[SK_WELCOME_TEXT]))
+    if "welcome_btns_text" in body:
+        try:
+            buttons_json = _normalize_button_text(body["welcome_btns_text"], max_len=2000)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        db.set_setting(tid, SK_WELCOME_BTNS, buttons_json)
+    elif SK_WELCOME_BTNS in body:
+        db.set_setting(tid, SK_WELCOME_BTNS, str(body[SK_WELCOME_BTNS]))
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
@@ -383,7 +430,13 @@ async def _post_contents(request: web.Request):
 async def _get_auto_replies(request: web.Request):
     tenant = _auth(request)
     rows = Database().get_auto_replies(tenant["id"])
-    return web.json_response([dict(r) for r in rows])
+    return web.json_response([
+        {
+            **dict(r),
+            "buttons_text": _button_rows_to_text(r["buttons"] or ""),
+        }
+        for r in rows
+    ])
 
 
 async def _post_auto_reply(request: web.Request):
@@ -400,7 +453,12 @@ async def _post_auto_reply(request: web.Request):
     if match_type not in _VALID_MATCH_TYPES:
         return web.json_response(
             {"error": f"match_type must be one of {sorted(_VALID_MATCH_TYPES)}"}, status=400)
-    rid = Database().add_auto_reply(tenant["id"], keyword, reply, match_type)
+    try:
+        buttons_json = _normalize_button_text(body.get("buttons_text", ""), max_len=2000)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    rid = Database().add_auto_reply(
+        tenant["id"], keyword, reply, match_type, buttons=buttons_json)
     return web.json_response({"id": rid})
 
 
