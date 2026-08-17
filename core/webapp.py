@@ -8,6 +8,7 @@ Authentication uses Telegram's WebApp initData HMAC-SHA256 validation:
 https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 """
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ import os
 import time
 from urllib.parse import parse_qsl
 
+import aiohttp as _aiohttp
 from aiohttp import web
 
 from core.database import Database
@@ -352,6 +354,33 @@ async def _post_auto_reply(request: web.Request):
     return web.json_response({"id": rid})
 
 
+async def _put_auto_reply(request: web.Request):
+    tenant = _auth(request)
+    try:
+        rid = int(request.match_info["rid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    keyword = str(body.get("keyword", "")).strip()
+    reply   = str(body.get("reply", "")).strip()
+    if not keyword or not reply:
+        return web.json_response({"error": "keyword and reply required"}, status=400)
+    match_type = str(body.get("match_type", "contains"))
+    if match_type not in _VALID_MATCH_TYPES:
+        return web.json_response(
+            {"error": f"match_type must be one of {sorted(_VALID_MATCH_TYPES)}"}, status=400)
+    try:
+        buttons_json = _normalize_button_text(body.get("buttons_text", ""), max_len=2000)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    Database().update_auto_reply(
+        tenant["id"], rid, keyword, reply, match_type, buttons=buttons_json)
+    return web.json_response({"ok": True})
+
+
 async def _delete_auto_reply(request: web.Request):
     tenant = _auth(request)
     try:
@@ -373,6 +402,40 @@ async def _get_banned(request: web.Request):
         }
         for r in rows
     ])
+
+
+async def _do_broadcast(user_ids: list, token: str, text: str) -> None:
+    """Send text to all user_ids concurrently (max 20 at a time) using the Bot API."""
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+    sem = asyncio.Semaphore(20)
+
+    async def _send(uid):
+        async with sem:
+            try:
+                async with _aiohttp.ClientSession() as session:
+                    async with session.post(api_url, json={
+                        "chat_id": uid, "text": text, "parse_mode": "HTML",
+                    }, timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+                        data = await resp.json()
+                        return bool(data.get("ok"))
+            except Exception:
+                return False
+
+    await asyncio.gather(*(_send(uid) for uid in user_ids))
+
+
+async def _post_broadcast(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    text = _clean_text(body.get("text", ""), max_len=4096, allow_empty=False)
+    if text is None:
+        return web.json_response({"error": "text required (max 4096 chars)"}, status=400)
+    user_ids = Database().get_tenant_user_ids(tenant["id"], only_active=True)
+    asyncio.create_task(_do_broadcast(user_ids, tenant["token"], text))
+    return web.json_response({"ok": True, "queued": len(user_ids)}, status=202)
 
 
 async def _post_unban(request: web.Request):
@@ -420,12 +483,16 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/auto_replies",       _get_auto_replies)
     app.router.add_post(
         "/api/{tenant_id}/auto_replies",       _post_auto_reply)
+    app.router.add_put(
+        "/api/{tenant_id}/auto_replies/{rid}", _put_auto_reply)
     app.router.add_delete(
         "/api/{tenant_id}/auto_replies/{rid}", _delete_auto_reply)
     app.router.add_get(
         "/api/{tenant_id}/banned",             _get_banned)
     app.router.add_post(
         "/api/{tenant_id}/unban/{uid}",        _post_unban)
+    app.router.add_post(
+        "/api/{tenant_id}/broadcast",          _post_broadcast)
 
     return app
 

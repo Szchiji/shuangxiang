@@ -9,93 +9,134 @@
 </head>
 <body>
   <div id="app">
-    <div id="loading">⏳ 正在验证身份...</div>
+    <div id="loading"><div class="spinner"></div><p>正在验证身份…</p></div>
 
     <div id="main" style="display:none">
-      <header>
-        <h1 id="bot-name">🤖 管理后台</h1>
-        <nav>
-          <button class="tab-btn active" data-tab="settings">⚙️ 设置</button>
-          <button class="tab-btn" data-tab="auto-reply">💬 自动回复</button>
-          <button class="tab-btn" data-tab="banned">⛔ 封禁</button>
-          <button class="tab-btn" data-tab="stats">📊 统计</button>
+      <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+          <span id="bot-name" class="sidebar-title">🤖 管理后台</span>
+          <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="收起侧栏">&#9776;</button>
+        </div>
+        <nav class="sidebar-nav">
+          <button class="nav-item active" data-tab="settings">
+            <span class="nav-icon">⚙️</span><span class="nav-label">基本设置</span>
+          </button>
+          <button class="nav-item" data-tab="auto-reply">
+            <span class="nav-icon">💬</span><span class="nav-label">自动回复</span>
+          </button>
+          <button class="nav-item" data-tab="broadcast">
+            <span class="nav-icon">📣</span><span class="nav-label">群发广告</span>
+          </button>
+          <button class="nav-item" data-tab="banned">
+            <span class="nav-icon">⛔</span><span class="nav-label">封禁管理</span>
+          </button>
+          <button class="nav-item" data-tab="stats">
+            <span class="nav-icon">📊</span><span class="nav-label">数据统计</span>
+          </button>
         </nav>
-      </header>
+      </aside>
 
-      <!-- ── Settings ──────────────────────────────────────────────── -->
-      <section id="tab-settings" class="tab active">
-        <h2>基本设置</h2>
-        <label>启动语
-          <textarea id="welcome-text" rows="4"
-            placeholder="用户发送 /start 时显示的欢迎语"></textarea>
-        </label>
-        <label>启动语内联按钮
-          <textarea id="welcome-buttons" rows="4"
-            placeholder="每行一个或多个按钮：按钮文字 - https://链接&#10;同一行多个按钮可用 && 分隔"></textarea>
-        </label>
-        <label>强制订阅频道
-          <textarea id="force-sub-channels" rows="5"
-            placeholder="每行一个频道：名称 | @频道用户名 | https://t.me/链接&#10;也支持：名称 | @频道用户名"></textarea>
-        </label>
-        <div class="toggles">
-          <label class="toggle-row">
-            <span>🛡 防刷屏过滤</span>
-            <input type="checkbox" id="antiflood">
-          </label>
-          <label class="toggle-row">
-            <span>🔤 拦截英文消息</span>
-            <input type="checkbox" id="alphabet-latin">
-          </label>
-          <label class="toggle-row">
-            <span>📣 强制订阅开关</span>
-            <input type="checkbox" id="force-sub-on">
-          </label>
-        </div>
-        <button id="save-settings" class="btn-primary">💾 保存设置</button>
-        <div id="settings-msg" class="msg"></div>
-      </section>
+      <!-- ── Main content ───────────────────────────────────────────── -->
+      <main id="content">
 
-      <!-- ── Auto Reply ─────────────────────────────────────────────── -->
-      <section id="tab-auto-reply" class="tab">
-        <h2>自动回复规则</h2>
-        <div id="ar-list"></div>
-        <div class="ar-form">
-          <h3>添加规则</h3>
-          <label>关键词
-            <input type="text" id="ar-keyword" placeholder="关键词">
-          </label>
-          <label>回复内容
-            <textarea id="ar-reply" rows="3"
-              placeholder="自动回复的内容"></textarea>
-          </label>
-          <label>匹配方式
-            <select id="ar-match">
-              <option value="contains">包含</option>
-              <option value="exact">完全匹配</option>
-              <option value="startswith">开头匹配</option>
-              <option value="regex">正则表达式</option>
-            </select>
-          </label>
-          <label>内联按钮
-            <textarea id="ar-buttons" rows="4"
-              placeholder="可留空；格式同上：按钮文字 - https://链接"></textarea>
-          </label>
-          <button id="ar-add" class="btn-primary">➕ 添加</button>
-          <div id="ar-msg" class="msg"></div>
-        </div>
-      </section>
+        <!-- Settings -->
+        <section id="tab-settings" class="tab active">
+          <div class="page-header"><h2>⚙️ 基本设置</h2></div>
+          <div class="card">
+            <label class="field-label">启动欢迎语
+              <textarea id="welcome-text" rows="4"
+                placeholder="用户发送 /start 时显示的欢迎语"></textarea>
+            </label>
+            <label class="field-label">欢迎语内联按钮
+              <div id="welcome-buttons-builder" class="btn-builder"></div>
+              <button class="btn-ghost btn-sm" id="welcome-buttons-add-row">＋ 添加一行按钮</button>
+            </label>
+            <label class="field-label">强制订阅频道
+              <textarea id="force-sub-channels" rows="4"
+                placeholder="每行一个频道：名称 | @频道用户名 | https://t.me/链接"></textarea>
+            </label>
+            <div class="toggles">
+              <div class="toggle-row">
+                <span>🛡 防刷屏过滤</span>
+                <label class="switch"><input type="checkbox" id="antiflood"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <span>🔤 拦截英文消息</span>
+                <label class="switch"><input type="checkbox" id="alphabet-latin"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <span>📣 强制订阅开关</span>
+                <label class="switch"><input type="checkbox" id="force-sub-on"><span class="slider"></span></label>
+              </div>
+            </div>
+            <button id="save-settings" class="btn-primary">💾 保存设置</button>
+            <div id="settings-msg" class="msg"></div>
+          </div>
+        </section>
 
-      <!-- ── Banned Users ───────────────────────────────────────────── -->
-      <section id="tab-banned" class="tab">
-        <h2>封禁用户管理</h2>
-        <div id="banned-list"></div>
-      </section>
+        <!-- Auto Reply -->
+        <section id="tab-auto-reply" class="tab">
+          <div class="page-header"><h2>💬 自动回复规则</h2></div>
+          <div id="ar-list"></div>
 
-      <!-- ── Stats ─────────────────────────────────────────────────── -->
-      <section id="tab-stats" class="tab">
-        <h2>数据统计</h2>
-        <div id="stats-content"></div>
-      </section>
+          <!-- Edit / Add form (shared) -->
+          <div class="card ar-form" id="ar-form">
+            <h3 id="ar-form-title">➕ 添加规则</h3>
+            <input type="hidden" id="ar-edit-id" value="">
+            <label class="field-label">关键词
+              <input type="text" id="ar-keyword" placeholder="触发关键词">
+            </label>
+            <label class="field-label">回复内容
+              <textarea id="ar-reply" rows="3" placeholder="自动回复的内容"></textarea>
+            </label>
+            <label class="field-label">匹配方式
+              <select id="ar-match">
+                <option value="contains">包含</option>
+                <option value="exact">完全匹配</option>
+                <option value="startswith">开头匹配</option>
+                <option value="regex">正则表达式</option>
+              </select>
+            </label>
+            <label class="field-label">内联按钮
+              <div id="ar-buttons-builder" class="btn-builder"></div>
+              <button class="btn-ghost btn-sm" id="ar-buttons-add-row">＋ 添加一行按钮</button>
+            </label>
+            <div class="form-actions">
+              <button id="ar-submit" class="btn-primary">➕ 添加</button>
+              <button id="ar-cancel" class="btn-ghost" style="display:none">取消</button>
+            </div>
+            <div id="ar-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Broadcast -->
+        <section id="tab-broadcast" class="tab">
+          <div class="page-header"><h2>📣 群发广告</h2></div>
+          <div class="card">
+            <p class="hint-text">向所有活跃用户发送一条文本消息（支持 HTML 格式标签）。</p>
+            <label class="field-label">消息内容
+              <textarea id="bc-text" rows="6"
+                placeholder="在此输入要群发的内容，支持 &lt;b&gt;粗体&lt;/b&gt;、&lt;i&gt;斜体&lt;/i&gt;、&lt;a href=&quot;链接&quot;&gt;超链接&lt;/a&gt; 等 HTML 标签"></textarea>
+            </label>
+            <button id="bc-send" class="btn-primary">🚀 发送群发</button>
+            <div id="bc-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Banned -->
+        <section id="tab-banned" class="tab">
+          <div class="page-header"><h2>⛔ 封禁用户管理</h2></div>
+          <div id="banned-list"></div>
+        </section>
+
+        <!-- Stats -->
+        <section id="tab-stats" class="tab">
+          <div class="page-header"><h2>📊 数据统计</h2></div>
+          <div id="stats-content"></div>
+        </section>
+
+      </main>
     </div>
 
     <div id="error-msg" style="display:none" class="error-box"></div>
