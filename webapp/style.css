@@ -11,7 +11,7 @@
   --border:     rgba(0,0,0,.09);
   --danger:     #ef4444;
   --success:    #22c55e;
-  --sidebar-w:  220px;
+  --sidebar-w:  180px;
   --sidebar-collapsed: 56px;
   --radius:     12px;
   --shadow:     0 1px 4px rgba(0,0,0,.08);
@@ -322,6 +322,21 @@ body {
 .ar-reply-preview { font-size: 13px; color: var(--hint); margin-bottom: 3px; word-break: break-all; }
 .ar-meta  { font-size: 11px; color: var(--hint); }
 .ar-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* ── Force-sub channel list ───────────────────────────────────────────── */
+.fsub-item {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fsub-info { flex: 1; min-width: 0; }
+.fsub-title { font-weight: 700; font-size: 14px; color: var(--text); margin-bottom: 2px; }
+.fsub-chat  { font-size: 12px; color: var(--hint); word-break: break-all; }
 
 /* ── Banned list ─────────────────────────────────────────────────────── */
 .ban-item {

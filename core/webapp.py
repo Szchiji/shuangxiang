@@ -24,6 +24,7 @@ from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
 from modules.customize_module import (
     SK_FORCE_SUB,
+    SK_FORCE_SUB_MSG,
     SK_FORCE_SUB_ON,
     SK_WELCOME_BTNS,
     SK_WELCOME_TEXT,
@@ -263,18 +264,28 @@ async def _get_settings(request: web.Request):
     tid, db = tenant["id"], Database()
     welcome_btns = db.get_setting(tid, SK_WELCOME_BTNS, "") or ""
     force_sub = db.get_setting(tid, SK_FORCE_SUB, "") or ""
+    force_sub_channels: list = []
+    if force_sub:
+        try:
+            parsed = json.loads(force_sub)
+            if isinstance(parsed, list):
+                force_sub_channels = parsed
+        except ValueError:
+            pass
     return web.json_response({
-        "welcome_text":   db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
-        "welcome_btns":   welcome_btns,
-        "welcome_btns_text": _button_rows_to_text(welcome_btns),
-        "force_sub":      force_sub,
-        "force_sub_text": _force_sub_rows_to_text(force_sub),
-        "antiflood":      db.get_bool_setting(tid, SK_ANTIFLOOD, True),
-        "alphabet_latin": db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
-        "force_sub_on":   db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
-        "manage_group":   db.get_manage_group(tid),
-        "bot_username":   tenant["bot_username"] or "",
-        "bot_name":       tenant["bot_name"] or "",
+        "welcome_text":        db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
+        "welcome_btns":        welcome_btns,
+        "welcome_btns_text":   _button_rows_to_text(welcome_btns),
+        "force_sub":           force_sub,
+        "force_sub_text":      _force_sub_rows_to_text(force_sub),
+        "force_sub_channels":  force_sub_channels,
+        "force_sub_msg":       db.get_setting(tid, SK_FORCE_SUB_MSG, "") or "",
+        "antiflood":           db.get_bool_setting(tid, SK_ANTIFLOOD, True),
+        "alphabet_latin":      db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
+        "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
+        "manage_group":        db.get_manage_group(tid),
+        "bot_username":        tenant["bot_username"] or "",
+        "bot_name":            tenant["bot_name"] or "",
     })
 
 
@@ -308,6 +319,11 @@ async def _post_settings(request: web.Request):
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_FORCE_SUB, force_sub_json)
+    if SK_FORCE_SUB_MSG in body:
+        fsub_msg = _clean_text(body[SK_FORCE_SUB_MSG], max_len=500)
+        if fsub_msg is None:
+            return web.json_response({"error": "force_sub_msg invalid (max 500 chars)"}, status=400)
+        db.set_setting(tid, SK_FORCE_SUB_MSG, fsub_msg)
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
@@ -404,18 +420,44 @@ async def _get_banned(request: web.Request):
     ])
 
 
-async def _do_broadcast(user_ids: list, token: str, text: str) -> None:
-    """Send text to all user_ids concurrently (max 20 at a time) using the Bot API."""
-    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+async def _do_broadcast(
+    user_ids: list, token: str, text: str, *,
+    photo: str | None = None,
+    reply_markup: dict | None = None,
+    silent: bool = False,
+) -> None:
+    """Send message to all user_ids concurrently (max 20 at a time) using the Bot API.
+
+    When *photo* is provided a photo message is sent (caption = text).
+    *reply_markup* adds inline keyboard buttons.
+    *silent* disables sound/vibration notifications.
+    """
+    if photo:
+        api_method = "sendPhoto"
+        base_payload: dict = {"photo": photo, "parse_mode": "HTML"}
+        if text:
+            base_payload["caption"] = text
+    else:
+        api_method = "sendMessage"
+        base_payload = {"text": text, "parse_mode": "HTML"}
+
+    if reply_markup:
+        base_payload["reply_markup"] = reply_markup
+    if silent:
+        base_payload["disable_notification"] = True
+
+    api_url = f"https://api.telegram.org/bot{token}/{api_method}"
     sem = asyncio.Semaphore(20)
 
     async def _send(uid):
         async with sem:
             try:
                 async with _aiohttp.ClientSession() as session:
-                    async with session.post(api_url, json={
-                        "chat_id": uid, "text": text, "parse_mode": "HTML",
-                    }, timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+                    async with session.post(
+                        api_url,
+                        json={**base_payload, "chat_id": uid},
+                        timeout=_aiohttp.ClientTimeout(total=10),
+                    ) as resp:
                         data = await resp.json()
                         return bool(data.get("ok"))
             except Exception:
@@ -430,11 +472,44 @@ async def _post_broadcast(request: web.Request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    text = _clean_text(body.get("text", ""), max_len=4096, allow_empty=False)
+    text = _clean_text(body.get("text", ""), max_len=4096)
     if text is None:
-        return web.json_response({"error": "text required (max 4096 chars)"}, status=400)
+        return web.json_response({"error": "text too long (max 4096 chars)"}, status=400)
+    photo = _clean_text(body.get("photo", ""), max_len=500)
+    if photo is None:
+        return web.json_response({"error": "photo url too long"}, status=400)
+    if photo and not photo.startswith(("http://", "https://")):
+        return web.json_response({"error": "photo must be a http/https URL"}, status=400)
+    if not text and not photo:
+        return web.json_response({"error": "text or photo required"}, status=400)
+    # Caption text is required for sendPhoto with HTML parse_mode when buttons are used;
+    # allow empty caption but photo is mandatory.
+    silent = bool(body.get("silent", False))
+    # Parse optional inline keyboard
+    reply_markup: dict | None = None
+    buttons_raw = body.get("buttons", "")
+    if buttons_raw:
+        try:
+            buttons_json = _normalize_button_text(buttons_raw, max_len=2000)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        if buttons_json:
+            try:
+                rows = json.loads(buttons_json)
+                inline_keyboard = [
+                    [{"text": btn["text"], "url": btn["url"]} for btn in row]
+                    for row in rows
+                ]
+            except (KeyError, TypeError, ValueError):
+                return web.json_response({"error": "buttons invalid"}, status=400)
+            reply_markup = {"inline_keyboard": inline_keyboard}
     user_ids = Database().get_tenant_user_ids(tenant["id"], only_active=True)
-    asyncio.create_task(_do_broadcast(user_ids, tenant["token"], text))
+    asyncio.create_task(_do_broadcast(
+        user_ids, tenant["token"], text,
+        photo=photo or None,
+        reply_markup=reply_markup,
+        silent=silent,
+    ))
     return web.json_response({"ok": True, "queued": len(user_ids)}, status=202)
 
 

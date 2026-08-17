@@ -25,6 +25,9 @@
           <button class="nav-item" data-tab="auto-reply">
             <span class="nav-icon">💬</span><span class="nav-label">自动回复</span>
           </button>
+          <button class="nav-item" data-tab="force-sub">
+            <span class="nav-icon">📢</span><span class="nav-label">强制订阅</span>
+          </button>
           <button class="nav-item" data-tab="broadcast">
             <span class="nav-icon">📣</span><span class="nav-label">群发广告</span>
           </button>
@@ -52,10 +55,6 @@
               <div id="welcome-buttons-builder" class="btn-builder"></div>
               <button class="btn-ghost btn-sm" id="welcome-buttons-add-row">＋ 添加一行按钮</button>
             </label>
-            <label class="field-label">强制订阅频道
-              <textarea id="force-sub-channels" rows="4"
-                placeholder="每行一个频道：名称 | @频道用户名 | https://t.me/链接"></textarea>
-            </label>
             <div class="toggles">
               <div class="toggle-row">
                 <span>🛡 防刷屏过滤</span>
@@ -64,10 +63,6 @@
               <div class="toggle-row">
                 <span>🔤 拦截英文消息</span>
                 <label class="switch"><input type="checkbox" id="alphabet-latin"><span class="slider"></span></label>
-              </div>
-              <div class="toggle-row">
-                <span>📣 强制订阅开关</span>
-                <label class="switch"><input type="checkbox" id="force-sub-on"><span class="slider"></span></label>
               </div>
             </div>
             <button id="save-settings" class="btn-primary">💾 保存设置</button>
@@ -110,15 +105,73 @@
           </div>
         </section>
 
+        <!-- Force Subscribe -->
+        <section id="tab-force-sub" class="tab">
+          <div class="page-header"><h2>📢 强制订阅</h2></div>
+
+          <!-- Toggle + status -->
+          <div class="card">
+            <div class="toggles" style="margin-bottom:0">
+              <div class="toggle-row">
+                <span>📢 强制订阅开关</span>
+                <label class="switch"><input type="checkbox" id="force-sub-on"><span class="slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Channel list -->
+          <div class="card">
+            <p class="hint-text">⚠️ 需将本机器人设为各频道的管理员，否则无法校验成员资格。</p>
+            <div id="fsub-list"></div>
+
+            <!-- Add channel form -->
+            <h3 style="font-size:14px;font-weight:700;margin:12px 0 8px">➕ 添加频道</h3>
+            <label class="field-label">频道名称
+              <input type="text" id="fsub-add-title" placeholder="官方频道（可留空自动获取）">
+            </label>
+            <label class="field-label">频道标识（@用户名 或 -100 数字 ID）
+              <input type="text" id="fsub-add-chat" placeholder="@mychannel 或 -1001234567890">
+            </label>
+            <label class="field-label">加入链接（可留空自动生成）
+              <input type="text" id="fsub-add-url" placeholder="https://t.me/mychannel">
+            </label>
+            <button id="fsub-add-btn" class="btn-primary" style="margin-top:4px">➕ 添加频道</button>
+            <div id="fsub-msg" class="msg"></div>
+          </div>
+
+          <!-- Custom prompt message -->
+          <div class="card">
+            <label class="field-label">自定义拦截提示语
+              <textarea id="fsub-msg-text" rows="3"
+                placeholder="🔒 请先加入以下频道后再继续：（留空使用默认）"></textarea>
+            </label>
+            <button id="fsub-save-msg" class="btn-primary">💾 保存提示语</button>
+            <div id="fsub-save-msg-result" class="msg"></div>
+          </div>
+        </section>
+
         <!-- Broadcast -->
         <section id="tab-broadcast" class="tab">
           <div class="page-header"><h2>📣 群发广告</h2></div>
           <div class="card">
-            <p class="hint-text">向所有活跃用户发送一条文本消息（支持 HTML 格式标签）。</p>
+            <p class="hint-text">向所有活跃用户群发消息，支持图片、内联按钮和静默推送。</p>
+            <label class="field-label">图片 URL（可选）
+              <input type="text" id="bc-photo" placeholder="https://... （留空则仅发文字）">
+            </label>
             <label class="field-label">消息内容
               <textarea id="bc-text" rows="6"
                 placeholder="在此输入要群发的内容，支持 &lt;b&gt;粗体&lt;/b&gt;、&lt;i&gt;斜体&lt;/i&gt;、&lt;a href=&quot;链接&quot;&gt;超链接&lt;/a&gt; 等 HTML 标签"></textarea>
             </label>
+            <label class="field-label">内联按钮（可选）
+              <div id="bc-buttons-builder" class="btn-builder"></div>
+              <button class="btn-ghost btn-sm" id="bc-buttons-add-row">＋ 添加一行按钮</button>
+            </label>
+            <div class="toggles" style="margin-bottom:12px">
+              <div class="toggle-row">
+                <span>🔕 静默推送（不提醒用户）</span>
+                <label class="switch"><input type="checkbox" id="bc-silent"><span class="slider"></span></label>
+              </div>
+            </div>
             <button id="bc-send" class="btn-primary">🚀 发送群发</button>
             <div id="bc-msg" class="msg"></div>
           </div>
