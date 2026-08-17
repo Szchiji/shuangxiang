@@ -8,6 +8,7 @@ Authentication uses Telegram's WebApp initData HMAC-SHA256 validation:
 https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
 """
 
+import copy
 import hashlib
 import hmac
 import json
@@ -97,7 +98,12 @@ def _extract_tg_user(params: dict) -> dict | None:
 
 
 def _clean_text(value, *, max_len: int, allow_empty: bool = True) -> str | None:
-    s = str(value if value is not None else "").strip()
+    if value is None:
+        s = ""
+    elif isinstance(value, str):
+        s = value.strip()
+    else:
+        return None
     if not allow_empty and not s:
         return None
     if len(s) > max_len:
@@ -106,7 +112,7 @@ def _clean_text(value, *, max_len: int, allow_empty: bool = True) -> str | None:
 
 
 def _normalize_page_config(raw: dict | None) -> dict:
-    cfg = json.loads(json.dumps(_DEFAULT_PAGE_CONFIG))
+    cfg = copy.deepcopy(_DEFAULT_PAGE_CONFIG)
     raw = raw or {}
     announcement = _clean_text(raw.get("announcement", ""), max_len=300)
     theme_color = _clean_text(raw.get("theme_color", ""), max_len=16)
@@ -132,7 +138,7 @@ def _normalize_page_config(raw: dict | None) -> dict:
             if not isinstance(row, dict):
                 raise ValueError(f"{field} item invalid")
             title = _clean_text(row.get("title", ""), max_len=40, allow_empty=False)
-            url = _clean_text(row.get("url", ""), max_len=500)
+            url = _clean_text(row.get("url", ""), max_len=500, allow_empty=False)
             if title is None or url is None:
                 raise ValueError(f"{field} title/url invalid")
             cleaned.append({
@@ -165,12 +171,15 @@ def _normalize_form_config(raw: dict | None) -> dict:
             raise ValueError("field key format invalid")
         if field_type not in _VALID_FORM_FIELD_TYPES:
             raise ValueError("field type invalid")
+        default_value = _clean_text(item.get("default", ""), max_len=200)
+        if default_value is None:
+            raise ValueError("field default invalid")
         row = {
             "key": key,
             "label": label,
             "type": field_type,
             "required": bool(item.get("required", False)),
-            "default": _clean_text(item.get("default", ""), max_len=200) or "",
+            "default": default_value,
         }
         if field_type == "select":
             options = item.get("options", [])
@@ -293,11 +302,12 @@ async def _get_stats(request: web.Request):
 async def _get_page_config(request: web.Request):
     tenant = _auth(request)
     db = Database()
-    raw = db.get_json_setting(tenant["id"], SK_PAGE_CONFIG, _DEFAULT_PAGE_CONFIG)
+    raw = db.get_json_setting(
+        tenant["id"], SK_PAGE_CONFIG, copy.deepcopy(_DEFAULT_PAGE_CONFIG))
     try:
         data = _normalize_page_config(raw)
     except ValueError:
-        data = json.loads(json.dumps(_DEFAULT_PAGE_CONFIG))
+        data = copy.deepcopy(_DEFAULT_PAGE_CONFIG)
     return web.json_response(data)
 
 
@@ -319,11 +329,12 @@ async def _post_page_config(request: web.Request):
 async def _get_form_config(request: web.Request):
     tenant = _auth(request)
     db = Database()
-    raw = db.get_json_setting(tenant["id"], SK_FORM_CONFIG, _DEFAULT_FORM_CONFIG)
+    raw = db.get_json_setting(
+        tenant["id"], SK_FORM_CONFIG, copy.deepcopy(_DEFAULT_FORM_CONFIG))
     try:
         data = _normalize_form_config(raw)
     except ValueError:
-        data = json.loads(json.dumps(_DEFAULT_FORM_CONFIG))
+        data = copy.deepcopy(_DEFAULT_FORM_CONFIG)
     return web.json_response(data)
 
 
@@ -346,11 +357,11 @@ async def _get_contents(request: web.Request):
     tenant = _auth(request)
     db = Database()
     raw = db.get_json_setting(
-        tenant["id"], SK_CONTENT_MANAGEMENT, _DEFAULT_CONTENT_CONFIG)
+        tenant["id"], SK_CONTENT_MANAGEMENT, copy.deepcopy(_DEFAULT_CONTENT_CONFIG))
     try:
         data = _normalize_content_config(raw)
     except ValueError:
-        data = json.loads(json.dumps(_DEFAULT_CONTENT_CONFIG))
+        data = copy.deepcopy(_DEFAULT_CONTENT_CONFIG)
     return web.json_response(data)
 
 

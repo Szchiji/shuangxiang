@@ -191,6 +191,28 @@ async def test_page_config_invalid_theme(aiohttp_client, app, tenant_id, init_da
 
 
 @pytest.mark.asyncio
+async def test_page_config_invalid_empty_url(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"banners": [{"title": "活动", "url": ""}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_page_config_invalid_non_string_text(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"announcement": ["bad"]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
 async def test_form_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
     client = await aiohttp_client(app)
     payload = {
@@ -226,6 +248,17 @@ async def test_form_config_invalid_key(aiohttp_client, app, tenant_id, init_data
         f"/api/{tenant_id}/form_config",
         headers={"X-Init-Data": init_data_header},
         json={"fields": [{"key": "1bad", "label": "x", "type": "text"}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_form_config_invalid_default_length(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"fields": [{"key": "name", "label": "姓名", "type": "text", "default": "x" * 201}]},
     )
     assert resp.status == 400
 
