@@ -38,6 +38,41 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function summarizeText(text, maxLen = 48) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '—';
+  return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
+}
+
+function formatDateTime(value) {
+  if (!value) return '—';
+  const normalized = String(value).replace(' ', 'T');
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+async function saveSettingsPartial(payload, msgId, successText) {
+  const msgEl = document.getElementById(msgId);
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('POST', '/settings', payload);
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = successText;
+    tg?.HapticFeedback?.notificationOccurred('success');
+    return true;
+  }
+  msgEl.className = 'msg fail';
+  msgEl.textContent = '❌ ' + (res.error || '保存失败');
+  return false;
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 function initSidebar() {
@@ -252,30 +287,40 @@ async function loadSettings() {
   show('main');
 }
 
-document.getElementById('save-settings').addEventListener('click', async () => {
-  const msgEl = document.getElementById('settings-msg');
-  msgEl.className = 'msg';
-  msgEl.textContent = '保存中…';
-  const res = await api('POST', '/settings', {
+document.getElementById('save-welcome-text').addEventListener('click', async () => {
+  await saveSettingsPartial({
     welcome_text:      document.getElementById('welcome-text').value,
+  }, 'welcome-text-msg', '✅ 欢迎语已保存');
+});
+
+document.getElementById('save-welcome-buttons').addEventListener('click', async () => {
+  await saveSettingsPartial({
     welcome_btns_text: _welcomeBuilder.getText(),
+  }, 'welcome-buttons-msg', '✅ 欢迎按钮已保存');
+});
+
+document.getElementById('save-security-settings').addEventListener('click', async () => {
+  await saveSettingsPartial({
     antiflood:         document.getElementById('antiflood').checked,
     alphabet_latin:    document.getElementById('alphabet-latin').checked,
-  });
-  if (res.ok) {
-    msgEl.className = 'msg ok';
-    msgEl.textContent = '✅ 保存成功';
-    tg?.HapticFeedback?.notificationOccurred('success');
-  } else {
-    msgEl.className = 'msg fail';
-    msgEl.textContent = '❌ 保存失败：' + (res.error || '未知错误');
-  }
+  }, 'settings-msg', '✅ 安全设置已保存');
 });
 
 // ── Auto Replies ──────────────────────────────────────────────────────────────
 
 let _arBuilder;
 let _arEditId = null;
+let _autoRepliesCache = [];
+
+function showArListView() {
+  show('ar-list-view');
+  hide('ar-editor-view');
+}
+
+function showArEditorView() {
+  hide('ar-list-view');
+  show('ar-editor-view');
+}
 
 function resetArForm() {
   _arEditId = null;
@@ -289,6 +334,7 @@ function resetArForm() {
   _arBuilder.loadText('');
   document.getElementById('ar-msg').textContent = '';
   document.getElementById('ar-msg').className   = 'msg';
+  showArListView();
 }
 
 function startEditAr(r) {
@@ -301,25 +347,60 @@ function startEditAr(r) {
   document.getElementById('ar-reply').value   = r.reply   || '';
   document.getElementById('ar-match').value   = r.match_type || 'contains';
   _arBuilder.loadText(r.buttons_text || '');
-  document.getElementById('ar-form').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('ar-msg').textContent = '';
+  document.getElementById('ar-msg').className = 'msg';
+  showArEditorView();
+  document.getElementById('ar-editor-view').scrollIntoView({ behavior: 'smooth' });
 }
 
-async function loadAutoReplies() {
+function startCreateAr() {
+  _arEditId = null;
+  document.getElementById('ar-edit-id').value = '';
+  document.getElementById('ar-form-title').textContent = '➕ 添加规则';
+  document.getElementById('ar-submit').textContent = '➕ 添加';
+  show('ar-cancel');
+  document.getElementById('ar-keyword').value = '';
+  document.getElementById('ar-reply').value = '';
+  document.getElementById('ar-match').value = 'contains';
+  _arBuilder.loadText('');
+  document.getElementById('ar-msg').textContent = '';
+  document.getElementById('ar-msg').className = 'msg';
+  showArEditorView();
+  document.getElementById('ar-editor-view').scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderAutoReplies() {
   const list = document.getElementById('ar-list');
-  list.innerHTML = '<p style="color:var(--hint);padding:4px">加载中…</p>';
-  const data = await api('GET', '/auto_replies');
-  if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
-  if (!data.length) { list.innerHTML = '<p style="color:var(--hint);padding:4px">暂无自动回复规则。</p>'; return; }
+  const query = document.getElementById('ar-search').value.trim().toLowerCase();
+  const match = document.getElementById('ar-filter-match').value;
+  const rows = _autoRepliesCache.filter(r => {
+    if (match && r.match_type !== match) return false;
+    if (!query) return true;
+    return [r.keyword, r.reply, matchLabel(r.match_type)]
+      .some(v => String(v || '').toLowerCase().includes(query));
+  });
+
+  if (!rows.length) {
+    list.innerHTML = `<p class="empty-state">${
+      _autoRepliesCache.length ? '没有匹配的自动回复规则。' : '暂无自动回复规则。'
+    }</p>`;
+    return;
+  }
+
   list.innerHTML = '';
-  data.forEach(r => {
+  rows.forEach(r => {
     const div = document.createElement('div');
     div.className = 'ar-item';
     const buttons = (r.buttons_text || '').trim();
     div.innerHTML = `
       <div class="ar-text">
         <div class="ar-kw">🔑 ${esc(r.keyword)}</div>
-        <div class="ar-reply-preview">💬 ${esc(r.reply)}</div>
-        <div class="ar-meta">${esc(matchLabel(r.match_type))}${buttons ? '　🔘 有按钮' : ''}</div>
+        <div class="ar-reply-preview">💬 ${esc(summarizeText(r.reply, 72))}</div>
+        <div class="ar-meta">
+          ${esc(matchLabel(r.match_type))}
+          ${buttons ? '　🔘 有按钮' : ''}
+          ${r.updated_at || r.created_at ? `　🕒 ${esc(formatDateTime(r.updated_at || r.created_at))}` : ''}
+        </div>
       </div>
       <div class="ar-actions">
         <button class="btn-icon edit" title="编辑">✏️</button>
@@ -329,6 +410,16 @@ async function loadAutoReplies() {
     div.querySelector('.btn-icon.danger').addEventListener('click', () => deleteAR(r.id));
     list.appendChild(div);
   });
+}
+
+async function loadAutoReplies() {
+  const list = document.getElementById('ar-list');
+  showArListView();
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/auto_replies');
+  if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
+  _autoRepliesCache = Array.isArray(data) ? data : [];
+  renderAutoReplies();
 }
 
 function matchLabel(t) {
@@ -386,16 +477,61 @@ document.getElementById('ar-submit').addEventListener('click', async () => {
 });
 
 document.getElementById('ar-cancel').addEventListener('click', resetArForm);
+document.getElementById('ar-back').addEventListener('click', resetArForm);
+document.getElementById('ar-start-create').addEventListener('click', startCreateAr);
+document.getElementById('ar-search').addEventListener('input', renderAutoReplies);
+document.getElementById('ar-filter-match').addEventListener('change', renderAutoReplies);
 
 // ── Force Subscribe ───────────────────────────────────────────────────────────
 
 // In-memory channel list (loaded from server); mutated by add/remove, saved on change.
 let _fsubChannels = [];
+let _fsubEditIndex = null;
+
+function showFsubView(view) {
+  ['fsub-list-view', 'fsub-editor-view', 'fsub-settings-view'].forEach(id => hide(id));
+  show(view);
+}
+
+function resetFsubEditor() {
+  _fsubEditIndex = null;
+  document.getElementById('fsub-editor-title').textContent = '➕ 添加频道';
+  document.getElementById('fsub-add-title').value = '';
+  document.getElementById('fsub-add-chat').value = '';
+  document.getElementById('fsub-add-url').value = '';
+  document.getElementById('fsub-msg').textContent = '';
+  document.getElementById('fsub-msg').className = 'msg';
+  showFsubView('fsub-list-view');
+}
+
+function startCreateFsub() {
+  _fsubEditIndex = null;
+  document.getElementById('fsub-editor-title').textContent = '➕ 添加频道';
+  document.getElementById('fsub-add-title').value = '';
+  document.getElementById('fsub-add-chat').value = '';
+  document.getElementById('fsub-add-url').value = '';
+  document.getElementById('fsub-msg').textContent = '';
+  document.getElementById('fsub-msg').className = 'msg';
+  showFsubView('fsub-editor-view');
+}
+
+function startEditFsub(index) {
+  const ch = _fsubChannels[index];
+  if (!ch) return;
+  _fsubEditIndex = index;
+  document.getElementById('fsub-editor-title').textContent = '✏️ 编辑频道';
+  document.getElementById('fsub-add-title').value = ch.title || '';
+  document.getElementById('fsub-add-chat').value = ch.chat || '';
+  document.getElementById('fsub-add-url').value = ch.url || '';
+  document.getElementById('fsub-msg').textContent = '';
+  document.getElementById('fsub-msg').className = 'msg';
+  showFsubView('fsub-editor-view');
+}
 
 function renderFsubList() {
   const list = document.getElementById('fsub-list');
   if (!_fsubChannels.length) {
-    list.innerHTML = '<p style="color:var(--hint);padding:4px 0 8px">暂无配置频道。</p>';
+    list.innerHTML = '<p class="empty-state">暂无配置频道。</p>';
     return;
   }
   list.innerHTML = '';
@@ -427,16 +563,27 @@ function renderFsubList() {
 
     info.append(titleEl, chatEl);
 
+    const actions = document.createElement('div');
+    actions.className = 'fsub-actions';
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn-icon edit';
+    editBtn.title = '编辑';
+    editBtn.textContent = '✏️';
+    editBtn.addEventListener('click', () => startEditFsub(i));
+
     const delBtn = document.createElement('button');
     delBtn.className = 'btn-icon danger';
     delBtn.title = '删除';
     delBtn.textContent = '🗑';
     delBtn.addEventListener('click', () => {
+      if (!window.confirm('确定要删除这个频道吗？')) return;
       _fsubChannels.splice(i, 1);
       saveFsubChannels();
     });
 
-    div.append(info, delBtn);
+    actions.append(editBtn, delBtn);
+    div.append(info, actions);
     list.appendChild(div);
   });
 }
@@ -454,10 +601,12 @@ async function saveFsubChannels() {
   if (res.ok) {
     msgEl.className = 'msg ok';
     msgEl.textContent = '✅ 已保存';
-    setTimeout(() => { msgEl.textContent = ''; }, 2000);
+    tg?.HapticFeedback?.notificationOccurred('success');
+    return true;
   } else {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ ' + (res.error || '保存失败');
+    return false;
   }
 }
 
@@ -468,15 +617,10 @@ async function loadForceSub() {
   document.getElementById('force-sub-on').checked = !!data.force_sub_on;
   document.getElementById('fsub-msg-text').value = data.force_sub_msg || '';
   renderFsubList();
+  showFsubView('fsub-list-view');
 }
 
-// Toggle on/off
-document.getElementById('force-sub-on').addEventListener('change', async function () {
-  await api('POST', '/settings', { force_sub_on: this.checked });
-});
-
-// Add channel
-document.getElementById('fsub-add-btn').addEventListener('click', async () => {
+document.getElementById('fsub-save-btn').addEventListener('click', async () => {
   const msgEl = document.getElementById('fsub-msg');
   const chat  = document.getElementById('fsub-add-chat').value.trim();
   if (!chat) {
@@ -486,30 +630,24 @@ document.getElementById('fsub-add-btn').addEventListener('click', async () => {
   }
   const title = document.getElementById('fsub-add-title').value.trim();
   const url   = document.getElementById('fsub-add-url').value.trim();
-  _fsubChannels.push({ title, chat, url });
-  document.getElementById('fsub-add-title').value = '';
-  document.getElementById('fsub-add-chat').value  = '';
-  document.getElementById('fsub-add-url').value   = '';
-  await saveFsubChannels();
+  const next = { title, chat, url };
+  if (_fsubEditIndex === null) _fsubChannels.push(next);
+  else _fsubChannels.splice(_fsubEditIndex, 1, next);
+  if (await saveFsubChannels()) resetFsubEditor();
 });
 
-// Save custom prompt message
-document.getElementById('fsub-save-msg').addEventListener('click', async () => {
-  const resultEl = document.getElementById('fsub-save-msg-result');
-  resultEl.className = 'msg';
-  resultEl.textContent = '保存中…';
-  const res = await api('POST', '/settings', {
+document.getElementById('fsub-save-settings').addEventListener('click', async () => {
+  await saveSettingsPartial({
+    force_sub_on: document.getElementById('force-sub-on').checked,
     force_sub_msg: document.getElementById('fsub-msg-text').value,
-  });
-  if (res.ok) {
-    resultEl.className = 'msg ok';
-    resultEl.textContent = '✅ 提示语已保存';
-    tg?.HapticFeedback?.notificationOccurred('success');
-  } else {
-    resultEl.className = 'msg fail';
-    resultEl.textContent = '❌ ' + (res.error || '保存失败');
-  }
+  }, 'fsub-save-msg-result', '✅ 规则设置已保存');
 });
+
+document.getElementById('fsub-start-add').addEventListener('click', startCreateFsub);
+document.getElementById('fsub-open-settings').addEventListener('click', () => showFsubView('fsub-settings-view'));
+document.getElementById('fsub-back-from-editor').addEventListener('click', resetFsubEditor);
+document.getElementById('fsub-cancel-btn').addEventListener('click', resetFsubEditor);
+document.getElementById('fsub-back-from-settings').addEventListener('click', () => showFsubView('fsub-list-view'));
 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 
@@ -548,31 +686,69 @@ document.getElementById('bc-send').addEventListener('click', async () => {
 
 // ── Banned Users ──────────────────────────────────────────────────────────────
 
-async function loadBanned() {
+let _bannedUsersCache = [];
+
+function renderBanned() {
   const list = document.getElementById('banned-list');
-  list.innerHTML = '<p style="color:var(--hint);padding:4px">加载中…</p>';
-  const data = await api('GET', '/banned');
-  if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
-  if (!data.length) { list.innerHTML = '<p style="color:var(--hint);padding:4px">暂无封禁用户。</p>'; return; }
+  const query = document.getElementById('banned-search').value.trim().toLowerCase();
+  const rows = _bannedUsersCache.filter(u => {
+    if (!query) return true;
+    return [u.user_id, u.username, u.full_name]
+      .some(v => String(v || '').toLowerCase().includes(query));
+  });
+  if (!rows.length) {
+    list.innerHTML = `<p class="empty-state">${
+      _bannedUsersCache.length ? '没有匹配的封禁用户。' : '暂无封禁用户。'
+    }</p>`;
+    return;
+  }
   list.innerHTML = '';
-  data.forEach(u => {
+  rows.forEach(u => {
     const div  = document.createElement('div');
     div.className = 'ban-item';
-    const name = u.full_name
+    const displayName = u.full_name
       || (u.username ? '@' + u.username : '')
       || String(u.user_id);
     div.innerHTML = `
-      <div class="ban-info">👤 ${esc(name)}<small>${u.user_id}</small></div>
+      <div class="ban-info">
+        <div class="ban-name">👤 ${esc(displayName)}</div>
+        <small>${u.username ? '@' + esc(u.username) + ' · ' : ''}ID: ${esc(String(u.user_id))}</small>
+        <span class="ban-status">状态：已封禁</span>
+      </div>
       <button class="btn-unban">✅ 解封</button>`;
     div.querySelector('.btn-unban').addEventListener('click', () => unban(u.user_id));
     list.appendChild(div);
   });
 }
 
-async function unban(uid) {
-  await api('POST', '/unban/' + uid);
-  loadBanned();
+async function loadBanned() {
+  const list = document.getElementById('banned-list');
+  document.getElementById('banned-msg').textContent = '';
+  document.getElementById('banned-msg').className = 'msg';
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/banned');
+  if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
+  _bannedUsersCache = Array.isArray(data) ? data : [];
+  renderBanned();
 }
+
+async function unban(uid) {
+  if (!window.confirm('确定要解封这个用户吗？')) return;
+  const msgEl = document.getElementById('banned-msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = '处理中…';
+  const res = await api('POST', '/unban/' + uid);
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已解封';
+    loadBanned();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '解封失败');
+  }
+}
+
+document.getElementById('banned-search').addEventListener('input', renderBanned);
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 

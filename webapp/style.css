@@ -132,6 +132,12 @@ body {
   font-weight: 700;
 }
 
+.card-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
 /* ── Card ────────────────────────────────────────────────────────────── */
 .card {
   background: var(--surface);
@@ -278,6 +284,37 @@ body {
 .form-actions .btn-primary { flex: 1; margin-top: 0; }
 .form-actions .btn-ghost   { flex: 1; }
 
+.section-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.section-toolbar input,
+.section-toolbar select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.section-toolbar input:focus,
+.section-toolbar select:focus {
+  border-color: var(--primary);
+}
+.section-toolbar-btn {
+  margin-top: 0;
+}
+
+.subview-header {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 10px;
+}
+
 /* ── Interactive button builder ──────────────────────────────────────── */
 .btn-builder {
   margin-top: 6px;
@@ -379,9 +416,9 @@ body {
 
 /* ── Auto-reply list items ───────────────────────────────────────────── */
 .ar-item {
-  background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 8px 10px;
   margin-bottom: 8px;
   display: flex;
@@ -393,21 +430,27 @@ body {
 .ar-reply-preview { font-size: 13px; color: var(--hint); margin-bottom: 3px; word-break: break-all; }
 .ar-meta  { font-size: 11px; color: var(--hint); }
 .ar-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.empty-state {
+  color: var(--hint);
+  padding: 4px 0;
+  font-size: 13px;
+}
 
 /* ── Force-sub channel list ───────────────────────────────────────────── */
 .fsub-item {
-  background: var(--surface);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   padding: 8px 10px;
   margin-bottom: 8px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 .fsub-info { flex: 1; min-width: 0; }
 .fsub-title { font-weight: 700; font-size: 14px; color: var(--text); margin-bottom: 2px; }
 .fsub-chat  { font-size: 12px; color: var(--hint); word-break: break-all; }
+.fsub-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
 /* ── Banned list ─────────────────────────────────────────────────────── */
 .ban-item {
@@ -417,10 +460,12 @@ body {
   padding: 8px 10px;
   margin-bottom: 8px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
 }
 .ban-info { flex: 1; font-size: 14px; }
+.ban-name { font-weight: 700; margin-bottom: 2px; word-break: break-all; }
+.ban-status,
 .ban-info small { color: var(--hint); font-size: 12px; display: block; }
 .btn-unban {
   padding: 5px 12px;
