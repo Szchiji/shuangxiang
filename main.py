@@ -95,4 +95,13 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    except Exception as exc:
+        # 确保未捕获的启动异常通过 logger 输出（规避 stderr 缓冲导致日志截断）
+        import logging as _logging
+        _logging.getLogger("shuangxiang.main").critical(
+            "启动失败（未捕获异常）: %s", exc, exc_info=True)
+        raise SystemExit(1)
