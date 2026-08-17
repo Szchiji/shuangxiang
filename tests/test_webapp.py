@@ -152,6 +152,121 @@ async def test_get_stats_ok(aiohttp_client, app, db, tenant_id, init_data_header
 
 
 @pytest.mark.asyncio
+async def test_page_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "announcement": "系统升级通知",
+            "theme_color": "#2563eb",
+            "modules": {"stats": False},
+            "banners": [{"title": "活动", "url": "https://example.com", "enabled": True}],
+            "quick_navs": [{"title": "帮助", "url": "https://example.com/help", "enabled": True}],
+        },
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+
+    resp = await client.get(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["announcement"] == "系统升级通知"
+    assert data["theme_color"] == "#2563eb"
+    assert data["modules"]["stats"] is False
+    assert data["banners"][0]["title"] == "活动"
+
+
+@pytest.mark.asyncio
+async def test_page_config_invalid_theme(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/page_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"theme_color": "blue"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_form_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    payload = {
+        "intro": "请填写报名信息",
+        "fields": [
+            {"key": "name", "label": "姓名", "type": "text", "required": True},
+            {"key": "when", "label": "预约时间", "type": "datetime", "required": True},
+            {"key": "type", "label": "服务类型", "type": "select",
+             "required": False, "options": ["A", "B"]},
+        ],
+    }
+    resp = await client.post(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+        json=payload,
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    resp = await client.get(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["intro"] == "请填写报名信息"
+    assert len(data["fields"]) == 3
+    assert data["fields"][2]["options"] == ["A", "B"]
+
+
+@pytest.mark.asyncio
+async def test_form_config_invalid_key(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/form_config",
+        headers={"X-Init-Data": init_data_header},
+        json={"fields": [{"key": "1bad", "label": "x", "type": "text"}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_content_config_get_and_post(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    payload = {
+        "help_text": "帮助中心内容",
+        "activity_title": "九月活动",
+        "activity_content": "活动详情",
+        "faq": [{"question": "怎么联系管理员？", "answer": "直接发消息"}],
+    }
+    resp = await client.post(
+        f"/api/{tenant_id}/contents",
+        headers={"X-Init-Data": init_data_header},
+        json=payload,
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    resp = await client.get(
+        f"/api/{tenant_id}/contents",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    assert data["activity_title"] == "九月活动"
+    assert data["faq"][0]["question"] == "怎么联系管理员？"
+
+
+@pytest.mark.asyncio
+async def test_content_config_invalid_faq(aiohttp_client, app, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/contents",
+        headers={"X-Init-Data": init_data_header},
+        json={"faq": [{"question": "", "answer": "x"}]},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
 async def test_auto_replies_invalid_match_type(aiohttp_client, app, db, tenant_id, init_data_header):
     client = await aiohttp_client(app)
     resp = await client.post(

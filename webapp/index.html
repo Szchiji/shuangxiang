@@ -16,6 +16,9 @@
         <h1 id="bot-name">🤖 管理后台</h1>
         <nav>
           <button class="tab-btn active" data-tab="settings">⚙️ 设置</button>
+          <button class="tab-btn" data-tab="page">🎨 页面装修</button>
+          <button class="tab-btn" data-tab="form">🧾 表单配置</button>
+          <button class="tab-btn" data-tab="content">📝 内容管理</button>
           <button class="tab-btn" data-tab="auto-reply">💬 自动回复</button>
           <button class="tab-btn" data-tab="banned">⛔ 封禁</button>
           <button class="tab-btn" data-tab="stats">📊 统计</button>
@@ -45,6 +48,67 @@
         </div>
         <button id="save-settings" class="btn-primary">💾 保存设置</button>
         <div id="settings-msg" class="msg"></div>
+      </section>
+
+      <!-- ── Page Decoration ─────────────────────────────────────────── -->
+      <section id="tab-page" class="tab">
+        <h2>页面装修</h2>
+        <label>公告文案
+          <textarea id="page-announcement" rows="3" placeholder="首页公告"></textarea>
+        </label>
+        <label>主题色（Hex）
+          <input type="text" id="page-theme-color" placeholder="#2563eb">
+        </label>
+        <h3>模块显示开关</h3>
+        <div class="toggles">
+          <label class="toggle-row"><span>欢迎设置</span><input type="checkbox" id="mod-welcome"></label>
+          <label class="toggle-row"><span>自动回复</span><input type="checkbox" id="mod-auto-reply"></label>
+          <label class="toggle-row"><span>封禁管理</span><input type="checkbox" id="mod-banned"></label>
+          <label class="toggle-row"><span>数据统计</span><input type="checkbox" id="mod-stats"></label>
+          <label class="toggle-row"><span>内容管理</span><input type="checkbox" id="mod-content"></label>
+        </div>
+        <label>轮播图（JSON 数组）
+          <textarea id="page-banners" rows="4" placeholder='[{"title":"活动","url":"https://...","enabled":true}]'></textarea>
+        </label>
+        <label>导航入口（JSON 数组）
+          <textarea id="page-quick-navs" rows="4" placeholder='[{"title":"帮助中心","url":"https://...","enabled":true}]'></textarea>
+        </label>
+        <button id="save-page-config" class="btn-primary">💾 保存页面装修</button>
+        <div id="page-msg" class="msg"></div>
+      </section>
+
+      <!-- ── Form Config ─────────────────────────────────────────────── -->
+      <section id="tab-form" class="tab">
+        <h2>表单配置</h2>
+        <label>表单说明
+          <textarea id="form-intro" rows="3" placeholder="例如：请填写报名信息"></textarea>
+        </label>
+        <label>字段配置（JSON 数组）
+          <textarea id="form-fields" rows="8"
+            placeholder='[{"key":"name","label":"姓名","type":"text","required":true}]'></textarea>
+        </label>
+        <button id="save-form-config" class="btn-primary">💾 保存表单配置</button>
+        <div id="form-msg" class="msg"></div>
+      </section>
+
+      <!-- ── Content Management ──────────────────────────────────────── -->
+      <section id="tab-content" class="tab">
+        <h2>内容管理</h2>
+        <label>帮助中心内容
+          <textarea id="content-help-text" rows="5" placeholder="帮助中心图文"></textarea>
+        </label>
+        <label>活动标题
+          <input type="text" id="content-activity-title" placeholder="最新活动">
+        </label>
+        <label>活动内容
+          <textarea id="content-activity-content" rows="5" placeholder="活动详情"></textarea>
+        </label>
+        <label>FAQ（JSON 数组）
+          <textarea id="content-faq" rows="8"
+            placeholder='[{"question":"如何联系管理员？","answer":"直接发送消息即可"}]'></textarea>
+        </label>
+        <button id="save-content-config" class="btn-primary">💾 保存内容管理</button>
+        <div id="content-msg" class="msg"></div>
       </section>
 
       <!-- ── Auto Reply ─────────────────────────────────────────────── -->

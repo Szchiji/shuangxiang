@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from urllib.parse import parse_qsl
 
@@ -36,6 +37,29 @@ _INIT_DATA_MAX_AGE = 3600  # 1 hour
 
 # Allowed values for auto-reply match_type.
 _VALID_MATCH_TYPES = frozenset({"contains", "exact", "startswith", "regex"})
+_VALID_FORM_FIELD_TYPES = frozenset({"text", "textarea", "select", "datetime", "image"})
+_VALID_PAGE_MODULES = frozenset({"welcome", "auto_reply", "banned", "stats", "content"})
+_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,31}$")
+
+SK_PAGE_CONFIG = "webapp_page_config"
+SK_FORM_CONFIG = "webapp_form_config"
+SK_CONTENT_MANAGEMENT = "webapp_content_management"
+
+_DEFAULT_PAGE_CONFIG = {
+    "announcement": "",
+    "theme_color": "",
+    "modules": {
+        "welcome": True,
+        "auto_reply": True,
+        "banned": True,
+        "stats": True,
+        "content": True,
+    },
+    "banners": [],
+    "quick_navs": [],
+}
+_DEFAULT_FORM_CONFIG = {"intro": "", "fields": []}
+_DEFAULT_CONTENT_CONFIG = {"help_text": "", "activity_title": "", "activity_content": "", "faq": []}
 
 
 # ── Telegram initData validation ─────────────────────────────────────────────
@@ -70,6 +94,124 @@ def _extract_tg_user(params: dict) -> dict | None:
         return json.loads(params.get("user", "{}")) or None
     except Exception:
         return None
+
+
+def _clean_text(value, *, max_len: int, allow_empty: bool = True) -> str | None:
+    s = str(value if value is not None else "").strip()
+    if not allow_empty and not s:
+        return None
+    if len(s) > max_len:
+        return None
+    return s
+
+
+def _normalize_page_config(raw: dict | None) -> dict:
+    cfg = json.loads(json.dumps(_DEFAULT_PAGE_CONFIG))
+    raw = raw or {}
+    announcement = _clean_text(raw.get("announcement", ""), max_len=300)
+    theme_color = _clean_text(raw.get("theme_color", ""), max_len=16)
+    if announcement is None or theme_color is None:
+        raise ValueError("invalid text length")
+    if theme_color and not re.fullmatch(r"#[0-9A-Fa-f]{6}", theme_color):
+        raise ValueError("theme_color must be hex like #2563eb")
+    cfg["announcement"] = announcement
+    cfg["theme_color"] = theme_color
+
+    raw_modules = raw.get("modules")
+    if isinstance(raw_modules, dict):
+        for key in _VALID_PAGE_MODULES:
+            if key in raw_modules:
+                cfg["modules"][key] = bool(raw_modules[key])
+
+    for field, limit in (("banners", 6), ("quick_navs", 10)):
+        rows = raw.get(field, [])
+        if not isinstance(rows, list) or len(rows) > limit:
+            raise ValueError(f"{field} invalid")
+        cleaned = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError(f"{field} item invalid")
+            title = _clean_text(row.get("title", ""), max_len=40, allow_empty=False)
+            url = _clean_text(row.get("url", ""), max_len=500)
+            if title is None or url is None:
+                raise ValueError(f"{field} title/url invalid")
+            cleaned.append({
+                "title": title,
+                "url": url,
+                "enabled": bool(row.get("enabled", True)),
+            })
+        cfg[field] = cleaned
+    return cfg
+
+
+def _normalize_form_config(raw: dict | None) -> dict:
+    raw = raw or {}
+    intro = _clean_text(raw.get("intro", ""), max_len=500)
+    if intro is None:
+        raise ValueError("intro invalid")
+    fields = raw.get("fields", [])
+    if not isinstance(fields, list) or len(fields) > 30:
+        raise ValueError("fields invalid")
+    cleaned = []
+    for item in fields:
+        if not isinstance(item, dict):
+            raise ValueError("field item invalid")
+        key = _clean_text(item.get("key", ""), max_len=32, allow_empty=False)
+        label = _clean_text(item.get("label", ""), max_len=40, allow_empty=False)
+        field_type = _clean_text(item.get("type", ""), max_len=20, allow_empty=False)
+        if key is None or label is None or field_type is None:
+            raise ValueError("field key/label/type required")
+        if not _KEY_RE.fullmatch(key):
+            raise ValueError("field key format invalid")
+        if field_type not in _VALID_FORM_FIELD_TYPES:
+            raise ValueError("field type invalid")
+        row = {
+            "key": key,
+            "label": label,
+            "type": field_type,
+            "required": bool(item.get("required", False)),
+            "default": _clean_text(item.get("default", ""), max_len=200) or "",
+        }
+        if field_type == "select":
+            options = item.get("options", [])
+            if not isinstance(options, list) or not options or len(options) > 20:
+                raise ValueError("select options invalid")
+            cleaned_options = []
+            for opt in options:
+                opt_text = _clean_text(opt, max_len=30, allow_empty=False)
+                if opt_text is None:
+                    raise ValueError("select option invalid")
+                cleaned_options.append(opt_text)
+            row["options"] = cleaned_options
+        cleaned.append(row)
+    return {"intro": intro, "fields": cleaned}
+
+
+def _normalize_content_config(raw: dict | None) -> dict:
+    raw = raw or {}
+    help_text = _clean_text(raw.get("help_text", ""), max_len=2000)
+    activity_title = _clean_text(raw.get("activity_title", ""), max_len=80)
+    activity_content = _clean_text(raw.get("activity_content", ""), max_len=4000)
+    if help_text is None or activity_title is None or activity_content is None:
+        raise ValueError("content text invalid")
+    faq = raw.get("faq", [])
+    if not isinstance(faq, list) or len(faq) > 30:
+        raise ValueError("faq invalid")
+    cleaned_faq = []
+    for item in faq:
+        if not isinstance(item, dict):
+            raise ValueError("faq item invalid")
+        q = _clean_text(item.get("question", ""), max_len=120, allow_empty=False)
+        a = _clean_text(item.get("answer", ""), max_len=1000, allow_empty=False)
+        if q is None or a is None:
+            raise ValueError("faq question/answer required")
+        cleaned_faq.append({"question": q, "answer": a})
+    return {
+        "help_text": help_text,
+        "activity_title": activity_title,
+        "activity_content": activity_content,
+        "faq": cleaned_faq,
+    }
 
 
 # ── Middleware ────────────────────────────────────────────────────────────────
@@ -146,6 +288,85 @@ async def _post_settings(request: web.Request):
 async def _get_stats(request: web.Request):
     tenant = _auth(request)
     return web.json_response(Database().get_tenant_user_count(tenant["id"]))
+
+
+async def _get_page_config(request: web.Request):
+    tenant = _auth(request)
+    db = Database()
+    raw = db.get_json_setting(tenant["id"], SK_PAGE_CONFIG, _DEFAULT_PAGE_CONFIG)
+    try:
+        data = _normalize_page_config(raw)
+    except ValueError:
+        data = json.loads(json.dumps(_DEFAULT_PAGE_CONFIG))
+    return web.json_response(data)
+
+
+async def _post_page_config(request: web.Request):
+    tenant = _auth(request)
+    db = Database()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        payload = _normalize_page_config(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    db.set_json_setting(tenant["id"], SK_PAGE_CONFIG, payload)
+    return web.json_response({"ok": True})
+
+
+async def _get_form_config(request: web.Request):
+    tenant = _auth(request)
+    db = Database()
+    raw = db.get_json_setting(tenant["id"], SK_FORM_CONFIG, _DEFAULT_FORM_CONFIG)
+    try:
+        data = _normalize_form_config(raw)
+    except ValueError:
+        data = json.loads(json.dumps(_DEFAULT_FORM_CONFIG))
+    return web.json_response(data)
+
+
+async def _post_form_config(request: web.Request):
+    tenant = _auth(request)
+    db = Database()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        payload = _normalize_form_config(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    db.set_json_setting(tenant["id"], SK_FORM_CONFIG, payload)
+    return web.json_response({"ok": True})
+
+
+async def _get_contents(request: web.Request):
+    tenant = _auth(request)
+    db = Database()
+    raw = db.get_json_setting(
+        tenant["id"], SK_CONTENT_MANAGEMENT, _DEFAULT_CONTENT_CONFIG)
+    try:
+        data = _normalize_content_config(raw)
+    except ValueError:
+        data = json.loads(json.dumps(_DEFAULT_CONTENT_CONFIG))
+    return web.json_response(data)
+
+
+async def _post_contents(request: web.Request):
+    tenant = _auth(request)
+    db = Database()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        payload = _normalize_content_config(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    db.set_json_setting(tenant["id"], SK_CONTENT_MANAGEMENT, payload)
+    return web.json_response({"ok": True})
 
 
 async def _get_auto_replies(request: web.Request):
@@ -236,6 +457,18 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/settings",           _post_settings)
     app.router.add_get(
         "/api/{tenant_id}/stats",              _get_stats)
+    app.router.add_get(
+        "/api/{tenant_id}/page_config",        _get_page_config)
+    app.router.add_post(
+        "/api/{tenant_id}/page_config",        _post_page_config)
+    app.router.add_get(
+        "/api/{tenant_id}/form_config",        _get_form_config)
+    app.router.add_post(
+        "/api/{tenant_id}/form_config",        _post_form_config)
+    app.router.add_get(
+        "/api/{tenant_id}/contents",           _get_contents)
+    app.router.add_post(
+        "/api/{tenant_id}/contents",           _post_contents)
     app.router.add_get(
         "/api/{tenant_id}/auto_replies",       _get_auto_replies)
     app.router.add_post(
