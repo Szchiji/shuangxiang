@@ -464,9 +464,9 @@ async def _post_settings(request: web.Request):
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_FORCE_SUB, force_sub_json)
-    elif SK_FORCE_SUB in body:
+    elif "force_sub" in body:
         try:
-            force_sub_json = _normalize_force_sub_payload(body[SK_FORCE_SUB], max_len=4000)
+            force_sub_json = _normalize_force_sub_payload(body["force_sub"], max_len=4000)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_FORCE_SUB, force_sub_json)

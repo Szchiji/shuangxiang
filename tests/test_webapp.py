@@ -187,7 +187,11 @@ async def test_post_settings_supports_force_sub_text(aiohttp_client, app, db, te
         headers={"X-Init-Data": init_data_header},
     )
     data = await resp.json()
-    assert data["force_sub_text"] == force_sub_text
+    lines = [line.strip() for line in data["force_sub_text"].splitlines() if line.strip()]
+    assert lines == [
+        "@channel_a | https://t.me/channel_a",
+        "官方群 | @channel_b | https://t.me/channel_b",
+    ]
 
 
 @pytest.mark.asyncio
