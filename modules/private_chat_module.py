@@ -62,11 +62,6 @@ class PrivateChatModule(BaseModule):
         self.welcome   = msgs.get(
             "welcome",
             "👋 你好！直接发送消息即可联系管理员，我们会尽快回复你。")
-        self.admin_welcome = msgs.get(
-            "admin_welcome",
-            "👋 管理员你好！用户的消息会转发到这里，"
-            "直接「回复」某条消息即可回复对应用户。\n\n"
-            "💡 把我加入一个开启「话题」的群并运行 /setgroup 可启用 Topics 管理模式。")
         self.admin_web = self.config.get("admin_web", {})
         self.received = msgs.get("received", "")
         # 用户消息成功转发后给用户的「已发送」轻提示，默认 5 秒后自动删除。
@@ -76,11 +71,6 @@ class PrivateChatModule(BaseModule):
         self.banned   = msgs.get("banned", "⛔ 你已被封禁，无法发送消息。")
         # 可配置品牌署名页脚（默认关闭，尊重租户；设置后追加到用户欢迎语末尾）
         self.brand    = (msgs.get("brand") or "").strip()
-        # 拥有者首次进入时的「下一步」上手清单
-        self.admin_onboarding = (
-            "\n\n🚀 *第一次使用？*\n"
-            "点下方 *⚙️ 控制面板*，用按钮即可设置自动回复、启动语、安全过滤等，"
-            "全程无需记忆指令。")
 
         # 指令
         app.add_handler(CommandHandler("start", self.cmd_start))
