@@ -9,9 +9,8 @@ from urllib.parse import urlencode
 
 import pytest
 
-from core.webapp import _verify_init_data, create_app
 from core.database import Database
-
+from core.webapp import _verify_init_data, create_app
 
 # ── initData validation helpers ───────────────────────────────────────────────
 
@@ -236,7 +235,6 @@ async def test_missing_tenant_id(aiohttp_client, app, db, init_data_header):
 async def test_admin_start_with_webapp_shows_button(db):
     """When webapp.url is configured, admin /start sends a WebApp button message."""
     from modules.private_chat_module import PrivateChatModule
-    from telegram import WebAppInfo
 
     captured = {}
 
@@ -288,8 +286,6 @@ async def test_admin_start_without_webapp_shows_panel(db):
     mod._webapp_url = ""
     mod.admin_welcome = "welcome"
     mod.admin_onboarding = " onboard"
-    # Minimal stubs for _panel_markup
-    from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
 
     update = types.SimpleNamespace(
         effective_chat=types.SimpleNamespace(type="private"),
