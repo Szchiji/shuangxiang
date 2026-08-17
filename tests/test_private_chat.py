@@ -206,7 +206,14 @@ async def test_admin_start_shows_web_login_button(db):
         "autologin_secret": "secret",
         "autologin_ttl": 180,
     }
-    msg = FakeMessage(90, text="/start")
+    class _Msg:
+        def __init__(self):
+            self.replies = []
+
+        async def reply_text(self, text, **k):
+            self.replies.append((text, k))
+
+    msg = _Msg()
     update = types.SimpleNamespace(
         message=msg,
         effective_chat=types.SimpleNamespace(type="private"),

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import base64
-import html
-import hmac
 import hashlib
+import hmac
+import html
 import secrets
 import threading
 import time
@@ -22,7 +22,11 @@ SK_ALPHABET_LATIN = "alphabet_latin"
 
 
 def _to_bool(v: str) -> bool:
-    return v in ("1", "true", "True", "on", "yes")
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int):
+        return v != 0
+    return str(v).strip().lower() in ("1", "true", "on", "yes")
 
 
 def _b64u_encode(raw: bytes) -> str:
@@ -79,12 +83,14 @@ class AdminWebServer:
         port: int = 8080,
         session_ttl: int = 3600,
         autologin_secret: str = "",
+        secure_cookies: bool = False,
     ) -> None:
         self.db = db
         self.host = host
         self.port = int(port)
         self.session_ttl = max(300, int(session_ttl))
         self.autologin_secret = autologin_secret or ""
+        self.secure_cookies = bool(secure_cookies)
         self._sessions: dict[str, tuple[int, float]] = {}
         self._lock = threading.Lock()
         self._httpd: ThreadingHTTPServer | None = None
@@ -231,11 +237,11 @@ class AdminWebServer:
                 with outer._lock:
                     outer._sessions.pop(sid, None)
 
-            @staticmethod
-            def _cookie_header(value: str, max_age: int) -> str:
+            def _cookie_header(self, value: str, max_age: int) -> str:
+                secure = "; Secure" if outer.secure_cookies else ""
                 return (
                     f"sx_admin_session={value}; Path=/; Max-Age={max_age}; "
-                    "HttpOnly; SameSite=Lax"
+                    f"HttpOnly; SameSite=Lax{secure}"
                 )
 
             def _login(self) -> None:

@@ -114,6 +114,7 @@ python main.py
 | `ADMIN_WEB_PUBLIC_BASE_URL` | 后台公网访问地址（可选，如 `https://admin.example.com`） |
 | `ADMIN_WEB_AUTOLOGIN_SECRET` | `/start` 一键登录签名密钥（建议在生产环境显式配置） |
 | `ADMIN_WEB_AUTOLOGIN_TTL` | `/start` 一键登录链接有效期（秒，默认 `180`） |
+| `ADMIN_WEB_SECURE_COOKIES` | 强制为后台会话 Cookie 加 `Secure`（`1`/`0`，默认自动随 HTTPS 地址启用） |
 
 启用后访问 `http://<ADMIN_WEB_HOST>:<ADMIN_WEB_PORT>/admin`，使用你的机器人 Token 登录即可管理该机器人。  
 当租户管理员私聊机器人发送 `/start` 时，会收到“前往设置后台”按钮，点击后自动登录进入后台（需正确配置公网地址与签名密钥）。
