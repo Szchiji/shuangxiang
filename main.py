@@ -6,6 +6,7 @@ from telegram.error import InvalidToken
 from core.bot import ModularBot
 from core.config_loader import load_config
 from core.database import Database
+from core.admin_web import AdminWebServer
 from core.logging_config import setup_logging
 from core.tenant_manager import TenantManager
 
@@ -43,7 +44,22 @@ async def main():
     config = load_config("config.yaml")
 
     # 2. 初始化数据库
-    Database(db_path=config["db_path"])
+    db = Database(db_path=config["db_path"])
+    admin_web = None
+    admin_cfg = config.get("admin_web", {})
+    if admin_cfg.get("enabled"):
+        admin_web = AdminWebServer(
+            db=db,
+            host=admin_cfg.get("host", "127.0.0.1"),
+            port=admin_cfg.get("port", 8080),
+            session_ttl=admin_cfg.get("session_ttl", 3600),
+        )
+        admin_web.start()
+        logger.info(
+            "管理后台已启动：http://%s:%s/admin",
+            admin_cfg.get("host", "127.0.0.1"),
+            admin_cfg.get("port", 8080),
+        )
 
     # 3. 平台主机器人（机器人工厂）
     bot = ModularBot(config=config)
@@ -79,6 +95,9 @@ async def main():
             "平台主机器人 Token 无效（Unauthorized）。请检查环境变量 BOT_TOKEN "
             "或 config.yaml 中的 bot.token 是否正确、是否已被 BotFather 撤销。")
         raise SystemExit(1)
+    finally:
+        if admin_web:
+            admin_web.stop()
 
 
 if __name__ == "__main__":

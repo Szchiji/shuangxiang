@@ -17,5 +17,12 @@ def load_config(path: str = "config.yaml") -> dict:
         config.setdefault("bot", {})["admin_id"] = int(os.getenv("ADMIN_ID"))
 
     config["db_path"] = os.getenv("DB_PATH", "bot.db")
+    config["admin_web"] = {
+        "enabled": os.getenv("ADMIN_WEB_ENABLED", "0").lower()
+        in ("1", "true", "on", "yes"),
+        "host": os.getenv("ADMIN_WEB_HOST", "127.0.0.1"),
+        "port": int(os.getenv("ADMIN_WEB_PORT", "8080")),
+        "session_ttl": int(os.getenv("ADMIN_WEB_SESSION_TTL", "3600")),
+    }
 
     return config
