@@ -111,7 +111,9 @@ class Database:
                     stop       INTEGER DEFAULT 0,
                     buttons    TEXT DEFAULT '',
                     media_type TEXT DEFAULT '',
-                    media_id   TEXT DEFAULT ''
+                    media_id   TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS filters (
                     id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,6 +182,8 @@ class Database:
                 ("buttons", "TEXT DEFAULT ''"),
                 ("media_type", "TEXT DEFAULT ''"),
                 ("media_id", "TEXT DEFAULT ''"),
+                ("created_at", "TEXT DEFAULT (datetime('now'))"),
+                ("updated_at", "TEXT DEFAULT (datetime('now'))"),
             ],
         }
         with self._conn() as c:
@@ -491,7 +495,7 @@ class Database:
             c.execute(
                 """UPDATE auto_replies
                        SET keyword=?, reply=?, match_type=?, stop=?, buttons=?,
-                           media_type=?, media_id=?
+                           media_type=?, media_id=?, updated_at=datetime('now')
                    WHERE tenant_id=? AND id=?""",
                 (keyword, reply, match_type, stop, buttons, media_type, media_id,
                  tenant_id, rid))

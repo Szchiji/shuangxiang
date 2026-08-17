@@ -47,14 +47,25 @@
         <section id="tab-settings" class="tab active">
           <div class="page-header"><h2>⚙️ 基本设置</h2></div>
           <div class="card">
+            <h3 class="card-title">欢迎语设置</h3>
             <label class="field-label">启动欢迎语
               <textarea id="welcome-text" rows="4"
                 placeholder="用户发送 /start 时显示的欢迎语"></textarea>
             </label>
+            <button id="save-welcome-text" class="btn-primary">💾 保存欢迎语</button>
+            <div id="welcome-text-msg" class="msg"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">欢迎按钮设置</h3>
             <label class="field-label">欢迎语内联按钮
               <div id="welcome-buttons-builder" class="btn-builder"></div>
               <button class="btn-ghost btn-sm" id="welcome-buttons-add-row">＋ 添加一行按钮</button>
             </label>
+            <button id="save-welcome-buttons" class="btn-primary">💾 保存欢迎按钮</button>
+            <div id="welcome-buttons-msg" class="msg"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">安全开关</h3>
             <div class="toggles">
               <div class="toggle-row">
                 <span>🛡 防刷屏过滤</span>
@@ -65,7 +76,7 @@
                 <label class="switch"><input type="checkbox" id="alphabet-latin"><span class="slider"></span></label>
               </div>
             </div>
-            <button id="save-settings" class="btn-primary">💾 保存设置</button>
+            <button id="save-security-settings" class="btn-primary">💾 保存安全设置</button>
             <div id="settings-msg" class="msg"></div>
           </div>
         </section>
@@ -73,10 +84,25 @@
         <!-- Auto Reply -->
         <section id="tab-auto-reply" class="tab">
           <div class="page-header"><h2>💬 自动回复规则</h2></div>
-          <div id="ar-list"></div>
+          <div class="card" id="ar-list-view">
+            <div class="section-toolbar">
+              <input type="text" id="ar-search" placeholder="搜索关键词或回复内容">
+              <select id="ar-filter-match">
+                <option value="">全部匹配方式</option>
+                <option value="contains">包含</option>
+                <option value="exact">完全匹配</option>
+                <option value="startswith">开头匹配</option>
+                <option value="regex">正则表达式</option>
+              </select>
+              <button id="ar-start-create" class="btn-primary section-toolbar-btn">➕ 新增自动回复</button>
+            </div>
+            <div id="ar-list"></div>
+          </div>
 
-          <!-- Edit / Add form (shared) -->
-          <div class="card ar-form" id="ar-form">
+          <div class="card ar-form" id="ar-editor-view" style="display:none">
+            <div class="subview-header">
+              <button id="ar-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
             <h3 id="ar-form-title">➕ 添加规则</h3>
             <input type="hidden" id="ar-edit-id" value="">
             <label class="field-label">关键词
@@ -108,24 +134,20 @@
         <!-- Force Subscribe -->
         <section id="tab-force-sub" class="tab">
           <div class="page-header"><h2>📢 强制订阅</h2></div>
-
-          <!-- Toggle + status -->
-          <div class="card">
-            <div class="toggles" style="margin-bottom:0">
-              <div class="toggle-row">
-                <span>📢 强制订阅开关</span>
-                <label class="switch"><input type="checkbox" id="force-sub-on"><span class="slider"></span></label>
-              </div>
+          <div class="card" id="fsub-list-view">
+            <div class="section-toolbar">
+              <button id="fsub-start-add" class="btn-primary section-toolbar-btn">➕ 新增频道</button>
+              <button id="fsub-open-settings" class="btn-ghost">⚙️ 规则设置</button>
             </div>
-          </div>
-
-          <!-- Channel list -->
-          <div class="card">
             <p class="hint-text">⚠️ 需将本机器人设为各频道的管理员，否则无法校验成员资格。</p>
             <div id="fsub-list"></div>
+          </div>
 
-            <!-- Add channel form -->
-            <h3 style="font-size:14px;font-weight:700;margin:12px 0 8px">➕ 添加频道</h3>
+          <div class="card" id="fsub-editor-view" style="display:none">
+            <div class="subview-header">
+              <button id="fsub-back-from-editor" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
+            <h3 id="fsub-editor-title" class="card-title">➕ 添加频道</h3>
             <label class="field-label">频道名称
               <input type="text" id="fsub-add-title" placeholder="官方频道（可留空自动获取）">
             </label>
@@ -135,17 +157,29 @@
             <label class="field-label">加入链接（可留空自动生成）
               <input type="text" id="fsub-add-url" placeholder="https://t.me/mychannel">
             </label>
-            <button id="fsub-add-btn" class="btn-primary" style="margin-top:4px">➕ 添加频道</button>
+            <div class="form-actions">
+              <button id="fsub-save-btn" class="btn-primary">💾 保存频道</button>
+              <button id="fsub-cancel-btn" class="btn-ghost">取消</button>
+            </div>
             <div id="fsub-msg" class="msg"></div>
           </div>
 
-          <!-- Custom prompt message -->
-          <div class="card">
+          <div class="card" id="fsub-settings-view" style="display:none">
+            <div class="subview-header">
+              <button id="fsub-back-from-settings" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
+            <h3 class="card-title">规则设置</h3>
+            <div class="toggles">
+              <div class="toggle-row">
+                <span>📢 强制订阅开关</span>
+                <label class="switch"><input type="checkbox" id="force-sub-on"><span class="slider"></span></label>
+              </div>
+            </div>
             <label class="field-label">自定义拦截提示语
               <textarea id="fsub-msg-text" rows="3"
                 placeholder="🔒 请先加入以下频道后再继续：（留空使用默认）"></textarea>
             </label>
-            <button id="fsub-save-msg" class="btn-primary">💾 保存提示语</button>
+            <button id="fsub-save-settings" class="btn-primary">💾 保存规则设置</button>
             <div id="fsub-save-msg-result" class="msg"></div>
           </div>
         </section>
@@ -180,6 +214,11 @@
         <!-- Banned -->
         <section id="tab-banned" class="tab">
           <div class="page-header"><h2>⛔ 封禁用户管理</h2></div>
+          <div class="card">
+            <label class="field-label">搜索封禁用户
+              <input type="text" id="banned-search" placeholder="输入用户 ID、用户名或昵称">
+            </label>
+          </div>
           <div id="banned-list"></div>
         </section>
 
