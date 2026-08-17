@@ -54,12 +54,17 @@ def match_type_of(row) -> str:
 
 class AutoReplyModule(BaseModule):
 
+    # 每隔多少秒清理一次过期的防刷屏条目（与 _FLOOD_WINDOW 相同量级即可）
+    _FLOOD_CLEANUP_INTERVAL = _FLOOD_WINDOW * 10
+
     def setup(self, app: Application) -> None:
         self.db        = Database()
         self.tenant_id = int(self.config.get("tenant_id", 0))
         self.admin_id  = int(self.config["bot"]["admin_id"])
         # 防刷屏：内存中按用户记录最近消息时间戳
         self._flood: dict[int, list[float]] = {}
+        # 上次清理过期条目的时间（单调时钟），用于定期触发 _cleanup_flood
+        self._flood_last_cleanup: float = 0.0
 
         app.add_handler(CommandHandler("ar_add", self.ar_add))
         app.add_handler(CommandHandler("ar_list", self.ar_list))
@@ -195,12 +200,22 @@ class AutoReplyModule(BaseModule):
     # ── 防刷屏检测 ──────────────────────────────────────────
 
     def _is_flooding(self, user_id: int, now: float | None = None) -> bool:
-        """记录一次消息，并判断是否超过窗口内的频率阈值。"""
+        """记录一次消息，并判断是否超过窗口内的频率阈值。
+
+        过期用户条目在窗口结束后即时清除，避免长时间运行后内存无限增长。
+        """
         now = time.monotonic() if now is None else now
         bucket = [t for t in self._flood.get(user_id, []) if now - t < _FLOOD_WINDOW]
         bucket.append(now)
         self._flood[user_id] = bucket
         return len(bucket) > _FLOOD_MAX_MSGS
+
+    def _cleanup_flood(self, now: float) -> None:
+        """删除 _flood 中所有时间戳均已过期的用户条目，释放内存。"""
+        stale = [uid for uid, ts in self._flood.items()
+                 if not any(now - t < _FLOOD_WINDOW for t in ts)]
+        for uid in stale:
+            del self._flood[uid]
 
     # ── 用户消息拦截 ────────────────────────────────────────
 
@@ -211,7 +226,12 @@ class AutoReplyModule(BaseModule):
 
         # 0) 防刷屏（默认开启，可关闭）
         if self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True):
-            if self._is_flooding(update.effective_user.id):
+            now = time.monotonic()
+            # 定期清理过期条目，防止内存无限增长
+            if now - self._flood_last_cleanup >= self._FLOOD_CLEANUP_INTERVAL:
+                self._cleanup_flood(now)
+                self._flood_last_cleanup = now
+            if self._is_flooding(update.effective_user.id, now):
                 raise ApplicationHandlerStop
 
         text = msg.text or msg.caption or ""
@@ -224,9 +244,11 @@ class AutoReplyModule(BaseModule):
                 await msg.reply_text("⚠️ 不支持包含英文/拉丁字母的消息。")
                 raise ApplicationHandlerStop
 
-        # 2) 过滤违禁词 → 拦截
+        # 2) 过滤违禁词 → 拦截（支持大小写不敏感匹配）
+        text_lower = text.lower()
         for f in self.db.get_filters(self.tenant_id):
-            if f["keyword"] in text:
+            kw = f["keyword"]
+            if kw.lower() in text_lower:
                 await msg.reply_text("⚠️ 您的消息包含不被允许的内容，未发送。")
                 raise ApplicationHandlerStop
 
@@ -245,9 +267,9 @@ class AutoReplyModule(BaseModule):
     def _matches(row, text: str) -> bool:
         """判断一条自动回复是否命中。
 
-        match_type='regex' → 把 keyword 当作正则表达式（不区分大小写），
-        要求*整条消息*完全匹配该正则（re.fullmatch）；
-        其它（默认 'contains'）→ 子串包含匹配。无效正则视为不命中。
+        match_type='regex'      → 把 keyword 当作正则（不区分大小写），整条消息完全匹配；
+        match_type='ci_contains'→ 大小写不敏感子串包含匹配；
+        其它（默认 'contains'） → 区分大小写子串包含匹配。无效正则视为不命中。
         """
         keyword = row["keyword"]
         match_type = match_type_of(row)
@@ -256,12 +278,19 @@ class AutoReplyModule(BaseModule):
                 return re.fullmatch(keyword, text, re.IGNORECASE) is not None
             except re.error:
                 return False
+        if match_type == "ci_contains":
+            return keyword.lower() in text.lower()
         return keyword in text
 
     @staticmethod
     def _type_tag(row) -> str:
-        """命中方式标签：正则显示「[正则] 」，包含匹配不额外标注。"""
-        return "[正则] " if match_type_of(row) == "regex" else ""
+        """命中方式标签，用于列表展示。"""
+        mt = match_type_of(row)
+        if mt == "regex":
+            return "[正则] "
+        if mt == "ci_contains":
+            return "[忽略大小写] "
+        return ""
 
     @staticmethod
     def _media_of(row):

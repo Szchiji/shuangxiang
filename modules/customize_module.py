@@ -358,7 +358,9 @@ class CustomizeModule(BaseModule):
         for i, r in enumerate(rows, 1):
             tag = " [拦截]" if r["stop"] else ""
             mt = (r["match_type"] if "match_type" in r.keys() else "") or "contains"
-            mt_tag = " [正则]" if mt == "regex" else ""
+            mt_tag = (" [正则]" if mt == "regex"
+                      else " [忽略大小写]" if mt == "ci_contains"
+                      else "")
             has_btn = " 🔘" if (r["buttons"] or "") else ""
             has_media = " 🖼" if self._ar_media(r)[1] else ""
             lines.append(f"{i}. 「{r['keyword']}」{mt_tag}{tag}{has_btn}{has_media}")
@@ -406,7 +408,7 @@ class CustomizeModule(BaseModule):
             parse_mode="Markdown")
 
     async def _pick_ar_match(self, q, ctx, match_type: str) -> None:
-        """向导第 2/4 步：选择匹配方式（包含 / 正则）。"""
+        """向导第 2/4 步：选择匹配方式（包含 / 忽略大小写 / 正则）。"""
         state = ctx.user_data.get("cz")
         if not state or state.get("flow") != "ar" or state.get("step") != "match":
             await q.answer()
@@ -423,7 +425,8 @@ class CustomizeModule(BaseModule):
         buf["match_type"] = match_type
         state["step"] = "reply"
         await q.answer()
-        label = "正则匹配" if match_type == "regex" else "包含匹配"
+        labels = {"regex": "正则匹配", "ci_contains": "忽略大小写包含匹配"}
+        label = labels.get(match_type, "包含匹配")
         await q.edit_message_text(
             f"匹配方式：*{label}*\n\n（第 3/4 步）请发送命中后要*自动回复的内容*。\n"
             "可发送文本，或直接发送*图片 / 视频*等媒体（图说作为回复文字）。",
@@ -622,11 +625,14 @@ class CustomizeModule(BaseModule):
             await msg.reply_text(
                 "（第 2/4 步）请选择*匹配方式*：\n\n"
                 "• 包含匹配：消息中*包含*该关键词即命中（推荐）。\n"
+                "• 忽略大小写：同上，但英文大小写不区分。\n"
                 "• 正则匹配：把关键词当作*正则表达式*，*整条消息*需完全匹配（高级）。",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔡 包含匹配（推荐）",
                                           callback_data="cz:ar:mt:contains")],
+                    [InlineKeyboardButton("🔠 忽略大小写包含",
+                                          callback_data="cz:ar:mt:ci_contains")],
                     [InlineKeyboardButton("🧩 正则匹配",
                                           callback_data="cz:ar:mt:regex")],
                 ]))
