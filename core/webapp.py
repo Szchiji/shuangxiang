@@ -157,10 +157,7 @@ def _normalize_chat(chat: str):
     if not chat:
         return None
     if chat.lstrip("-").isdigit():
-        try:
-            return int(chat)
-        except ValueError:
-            return None
+        return int(chat)
     return chat if chat.startswith("@") else "@" + chat
 
 
@@ -306,13 +303,6 @@ async def _post_settings(request: web.Request):
     if "force_sub_text" in body:
         try:
             force_sub_json = _normalize_force_sub_text(body["force_sub_text"], max_len=5000)
-        except ValueError as e:
-            return web.json_response({"error": str(e)}, status=400)
-        db.set_setting(tid, SK_FORCE_SUB, force_sub_json)
-    elif SK_FORCE_SUB in body:
-        try:
-            force_sub_json = _normalize_force_sub_text(_force_sub_rows_to_text(body[SK_FORCE_SUB]),
-                                                       max_len=5000)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_FORCE_SUB, force_sub_json)

@@ -174,6 +174,7 @@ async def test_post_settings_supports_force_sub_text(aiohttp_client, app, db, te
     assert resp.status == 200
     stored = json.loads(db.get_setting(tenant_id, "force_sub"))
     assert stored[0]["chat"] == "@mychan"
+    assert stored[0]["url"] == "https://t.me/mychan"
     assert stored[1]["url"] == "https://t.me/groupchat"
 
     resp = await client.get(
