@@ -18,4 +18,7 @@ def load_config(path: str = "config.yaml") -> dict:
 
     config["db_path"] = os.getenv("DB_PATH", "bot.db")
 
+    if os.getenv("WEBAPP_URL"):
+        config.setdefault("webapp", {})["url"] = os.getenv("WEBAPP_URL")
+
     return config

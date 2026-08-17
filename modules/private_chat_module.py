@@ -12,7 +12,12 @@ import asyncio
 import html
 import logging
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+    WebAppInfo,
+)
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
@@ -78,6 +83,9 @@ class PrivateChatModule(BaseModule):
             "\n\n🚀 *第一次使用？*\n"
             "点下方 *⚙️ 控制面板*，用按钮即可设置自动回复、启动语、安全过滤等，"
             "全程无需记忆指令。")
+        # 管理后台小程序 URL（配置后 /start 将引导管理员进入 Web 后台）
+        webapp_cfg          = self.config.get("webapp", {})
+        self._webapp_url    = (webapp_cfg.get("url") or "").rstrip("/")
 
         # 指令
         app.add_handler(CommandHandler("start", self.cmd_start))
@@ -139,14 +147,41 @@ class PrivateChatModule(BaseModule):
 
     # ── 指令 ────────────────────────────────────────────────
 
+    async def _send_admin_webapp_entry(self, update: Update) -> None:
+        """当管理后台 URL 已配置时，向管理员发送带 WebApp 按钮的提醒消息。
+
+        点击按钮将在 Telegram 内打开管理后台小程序，自动完成身份验证。
+        """
+        webapp_url = f"{self._webapp_url}/?tenant_id={self.tenant_id}"
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "🖥 进入管理后台",
+                web_app=WebAppInfo(url=webapp_url),
+            )
+        ]])
+        text = (
+            "👋 *管理员你好！*\n"
+            "──────────────\n\n"
+            "机器人管理已升级为 *网页后台* 模式。\n"
+            "点击下方按钮即可自动登录进入管理后台，"
+            "在后台中设置自动回复、启动语、封禁管理等。\n\n"
+            "💡 你也可以继续使用 /panel 打开传统控制面板。"
+        )
+        await update.message.reply_text(
+            text, parse_mode="Markdown", reply_markup=markup)
+
     async def cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if update.effective_chat.type != "private":
             return
         user = update.effective_user
         if self._is_admin(user.id):
-            await update.message.reply_text(
-                self.admin_welcome + self.admin_onboarding, parse_mode="Markdown",
-                reply_markup=self._panel_markup())
+            if self._webapp_url:
+                await self._send_admin_webapp_entry(update)
+            else:
+                await update.message.reply_text(
+                    self.admin_welcome + self.admin_onboarding,
+                    parse_mode="Markdown",
+                    reply_markup=self._panel_markup())
         else:
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)

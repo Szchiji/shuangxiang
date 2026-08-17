@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>机器人管理后台</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div id="loading">⏳ 正在验证身份...</div>
+
+    <div id="main" style="display:none">
+      <header>
+        <h1 id="bot-name">🤖 管理后台</h1>
+        <nav>
+          <button class="tab-btn active" data-tab="settings">⚙️ 设置</button>
+          <button class="tab-btn" data-tab="auto-reply">💬 自动回复</button>
+          <button class="tab-btn" data-tab="banned">⛔ 封禁</button>
+          <button class="tab-btn" data-tab="stats">📊 统计</button>
+        </nav>
+      </header>
+
+      <!-- ── Settings ──────────────────────────────────────────────── -->
+      <section id="tab-settings" class="tab active">
+        <h2>基本设置</h2>
+        <label>启动语
+          <textarea id="welcome-text" rows="4"
+            placeholder="用户发送 /start 时显示的欢迎语"></textarea>
+        </label>
+        <div class="toggles">
+          <label class="toggle-row">
+            <span>🛡 防刷屏过滤</span>
+            <input type="checkbox" id="antiflood">
+          </label>
+          <label class="toggle-row">
+            <span>🔤 拦截英文消息</span>
+            <input type="checkbox" id="alphabet-latin">
+          </label>
+          <label class="toggle-row">
+            <span>📣 强制订阅开关</span>
+            <input type="checkbox" id="force-sub-on">
+          </label>
+        </div>
+        <button id="save-settings" class="btn-primary">💾 保存设置</button>
+        <div id="settings-msg" class="msg"></div>
+      </section>
+
+      <!-- ── Auto Reply ─────────────────────────────────────────────── -->
+      <section id="tab-auto-reply" class="tab">
+        <h2>自动回复规则</h2>
+        <div id="ar-list"></div>
+        <div class="ar-form">
+          <h3>添加规则</h3>
+          <label>关键词
+            <input type="text" id="ar-keyword" placeholder="关键词">
+          </label>
+          <label>回复内容
+            <textarea id="ar-reply" rows="3"
+              placeholder="自动回复的内容"></textarea>
+          </label>
+          <label>匹配方式
+            <select id="ar-match">
+              <option value="contains">包含</option>
+              <option value="exact">完全匹配</option>
+              <option value="startswith">开头匹配</option>
+              <option value="regex">正则表达式</option>
+            </select>
+          </label>
+          <button id="ar-add" class="btn-primary">➕ 添加</button>
+          <div id="ar-msg" class="msg"></div>
+        </div>
+      </section>
+
+      <!-- ── Banned Users ───────────────────────────────────────────── -->
+      <section id="tab-banned" class="tab">
+        <h2>封禁用户管理</h2>
+        <div id="banned-list"></div>
+      </section>
+
+      <!-- ── Stats ─────────────────────────────────────────────────── -->
+      <section id="tab-stats" class="tab">
+        <h2>数据统计</h2>
+        <div id="stats-content"></div>
+      </section>
+    </div>
+
+    <div id="error-msg" style="display:none" class="error-box"></div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
