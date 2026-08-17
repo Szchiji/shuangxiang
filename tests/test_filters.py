@@ -13,6 +13,7 @@ def make_module(db, admin_id=99):
     mod.tenant_id = 1
     mod.admin_id = admin_id
     mod._flood = {}
+    mod._flood_last_cleanup = 0.0
     return mod
 
 

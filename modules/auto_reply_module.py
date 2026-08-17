@@ -54,12 +54,17 @@ def match_type_of(row) -> str:
 
 class AutoReplyModule(BaseModule):
 
+    # 每隔多少秒清理一次过期的防刷屏条目（与 _FLOOD_WINDOW 相同量级即可）
+    _FLOOD_CLEANUP_INTERVAL = _FLOOD_WINDOW * 10
+
     def setup(self, app: Application) -> None:
         self.db        = Database()
         self.tenant_id = int(self.config.get("tenant_id", 0))
         self.admin_id  = int(self.config["bot"]["admin_id"])
         # 防刷屏：内存中按用户记录最近消息时间戳
         self._flood: dict[int, list[float]] = {}
+        # 上次清理过期条目的时间（单调时钟），用于定期触发 _cleanup_flood
+        self._flood_last_cleanup: float = 0.0
 
         app.add_handler(CommandHandler("ar_add", self.ar_add))
         app.add_handler(CommandHandler("ar_list", self.ar_list))
@@ -202,11 +207,7 @@ class AutoReplyModule(BaseModule):
         now = time.monotonic() if now is None else now
         bucket = [t for t in self._flood.get(user_id, []) if now - t < _FLOOD_WINDOW]
         bucket.append(now)
-        if len(bucket) > 1:
-            self._flood[user_id] = bucket
-        else:
-            # 仅一条记录说明之前的条目已全部过期，保留当前时间戳即可
-            self._flood[user_id] = bucket
+        self._flood[user_id] = bucket
         return len(bucket) > _FLOOD_MAX_MSGS
 
     def _cleanup_flood(self, now: float) -> None:
@@ -226,10 +227,11 @@ class AutoReplyModule(BaseModule):
         # 0) 防刷屏（默认开启，可关闭）
         if self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True):
             now = time.monotonic()
+            # 定期清理过期条目，防止内存无限增长
+            if now - self._flood_last_cleanup >= self._FLOOD_CLEANUP_INTERVAL:
+                self._cleanup_flood(now)
+                self._flood_last_cleanup = now
             if self._is_flooding(update.effective_user.id, now):
-                # 每隔 _FLOOD_WINDOW 清理一次过期条目，防止内存泄漏
-                if len(self._flood) % 50 == 0:
-                    self._cleanup_flood(now)
                 raise ApplicationHandlerStop
 
         text = msg.text or msg.caption or ""
