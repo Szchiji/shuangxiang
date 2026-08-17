@@ -23,9 +23,12 @@ from aiohttp import web
 from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
 from modules.customize_module import (
+    SK_FORCE_SUB,
     SK_FORCE_SUB_ON,
     SK_WELCOME_BTNS,
     SK_WELCOME_TEXT,
+    _default_join_url,
+    _normalize_chat,
     parse_buttons,
 )
 
@@ -288,6 +291,83 @@ def _normalize_button_payload(raw, *, max_len: int) -> str:
     return _normalize_button_text(raw, max_len=max_len)
 
 
+def _force_sub_to_text(raw) -> str:
+    if not raw:
+        return ""
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return ""
+    lines = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        title = _clean_text(row.get("title", ""), max_len=80)
+        chat = _clean_text(row.get("chat", ""), max_len=120, allow_empty=False)
+        url = _clean_text(row.get("url", ""), max_len=500, allow_empty=False)
+        if chat is None or url is None:
+            continue
+        parts = [title, chat, url] if title else [chat, url]
+        lines.append(" | ".join(part for part in parts if part))
+    return "\n".join(lines)
+
+
+def _normalize_force_sub_text(raw, *, max_len: int) -> str:
+    text = _clean_text(raw, max_len=max_len)
+    if text is None:
+        raise ValueError("force_sub text invalid")
+    if not text:
+        return ""
+    channels = []
+    for idx, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = [part.strip() for part in stripped.split("|")]
+        if len(parts) == 1:
+            title, chat, url = "", parts[0], ""
+        elif len(parts) == 2:
+            title, chat, url = "", parts[0], parts[1]
+        elif len(parts) == 3:
+            title, chat, url = parts
+        else:
+            raise ValueError(f"force_sub line {idx} invalid")
+        norm_chat = _normalize_chat(chat)
+        if norm_chat is None:
+            raise ValueError(f"force_sub line {idx} invalid")
+        chat_value = str(norm_chat)
+        title = _clean_text(title or chat_value, max_len=80, allow_empty=False)
+        url = _clean_text(url or _default_join_url(chat_value), max_len=500, allow_empty=False)
+        if title is None or url is None or not url.startswith(("http://", "https://", "tg://")):
+            raise ValueError(f"force_sub line {idx} invalid")
+        channels.append({"title": title, "chat": chat_value, "url": url})
+    return json.dumps(channels, ensure_ascii=False) if channels else ""
+
+
+def _normalize_force_sub_payload(raw, *, max_len: int) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, list):
+        text = _force_sub_to_text(raw)
+        if raw and not text:
+            raise ValueError("force_sub invalid")
+        return _normalize_force_sub_text(text, max_len=max_len)
+    if not isinstance(raw, str):
+        raise ValueError("force_sub invalid")
+    stripped = raw.strip()
+    if not stripped:
+        return ""
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        pass
+    else:
+        if not isinstance(parsed, list):
+            raise ValueError("force_sub invalid")
+        return _normalize_force_sub_payload(parsed, max_len=max_len)
+    return _normalize_force_sub_text(raw, max_len=max_len)
+
+
 # ── Middleware ────────────────────────────────────────────────────────────────
 
 @web.middleware
@@ -332,10 +412,13 @@ async def _get_settings(request: web.Request):
     tenant = _auth(request)
     tid, db = tenant["id"], Database()
     welcome_btns = db.get_setting(tid, SK_WELCOME_BTNS, "") or ""
+    force_sub = db.get_setting(tid, SK_FORCE_SUB, "") or ""
     return web.json_response({
         "welcome_text":   db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
         "welcome_btns":   welcome_btns,
         "welcome_btns_text": _button_rows_to_text(welcome_btns),
+        "force_sub":      force_sub,
+        "force_sub_text": _force_sub_to_text(force_sub),
         "antiflood":      db.get_bool_setting(tid, SK_ANTIFLOOD, True),
         "alphabet_latin": db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
         "force_sub_on":   db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
@@ -369,6 +452,18 @@ async def _post_settings(request: web.Request):
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_WELCOME_BTNS, buttons_json)
+    if "force_sub_text" in body:
+        try:
+            force_sub_json = _normalize_force_sub_text(body["force_sub_text"], max_len=4000)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        db.set_setting(tid, SK_FORCE_SUB, force_sub_json)
+    elif SK_FORCE_SUB in body:
+        try:
+            force_sub_json = _normalize_force_sub_payload(body[SK_FORCE_SUB], max_len=4000)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        db.set_setting(tid, SK_FORCE_SUB, force_sub_json)
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
