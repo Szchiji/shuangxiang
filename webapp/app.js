@@ -59,6 +59,7 @@ function initTabs() {
       if (btn.dataset.tab === 'stats')      loadStats();
       if (btn.dataset.tab === 'banned')     loadBanned();
       if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
+      if (btn.dataset.tab === 'force-sub')  loadForceSub();
     });
   });
 }
@@ -165,10 +166,8 @@ async function loadSettings() {
   if (data.error) { showError('无法加载设置：' + data.error); return; }
   document.getElementById('welcome-text').value = data.welcome_text || '';
   _welcomeBuilder.loadText(data.welcome_btns_text || '');
-  document.getElementById('force-sub-channels').value = data.force_sub_text || '';
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
-  document.getElementById('force-sub-on').checked   = !!data.force_sub_on;
   if (data.bot_name) {
     document.getElementById('bot-name').textContent = '🤖 ' + data.bot_name;
   }
@@ -183,10 +182,8 @@ document.getElementById('save-settings').addEventListener('click', async () => {
   const res = await api('POST', '/settings', {
     welcome_text:      document.getElementById('welcome-text').value,
     welcome_btns_text: _welcomeBuilder.getText(),
-    force_sub_text:    document.getElementById('force-sub-channels').value,
     antiflood:         document.getElementById('antiflood').checked,
     alphabet_latin:    document.getElementById('alphabet-latin').checked,
-    force_sub_on:      document.getElementById('force-sub-on').checked,
   });
   if (res.ok) {
     msgEl.className = 'msg ok';
@@ -312,6 +309,105 @@ document.getElementById('ar-submit').addEventListener('click', async () => {
 });
 
 document.getElementById('ar-cancel').addEventListener('click', resetArForm);
+
+// ── Force Subscribe ───────────────────────────────────────────────────────────
+
+// In-memory channel list (loaded from server); mutated by add/remove, saved on change.
+let _fsubChannels = [];
+
+function renderFsubList() {
+  const list = document.getElementById('fsub-list');
+  if (!_fsubChannels.length) {
+    list.innerHTML = '<p style="color:var(--hint);padding:4px 0 8px">暂无配置频道。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  _fsubChannels.forEach((ch, i) => {
+    const div = document.createElement('div');
+    div.className = 'fsub-item';
+    div.innerHTML = `
+      <div class="fsub-info">
+        <div class="fsub-title">${esc(ch.title || ch.chat)}</div>
+        <div class="fsub-chat">${esc(ch.chat)}${ch.url && (ch.url.startsWith('https://') || ch.url.startsWith('http://') || ch.url.startsWith('tg://')) ? ' · <a href="' + esc(ch.url) + '" target="_blank">加入链接</a>' : ''}</div>
+      </div>
+      <button class="btn-icon danger" title="删除">🗑</button>`;
+    div.querySelector('.btn-icon.danger').addEventListener('click', () => {
+      _fsubChannels.splice(i, 1);
+      saveFsubChannels();
+    });
+    list.appendChild(div);
+  });
+}
+
+async function saveFsubChannels() {
+  renderFsubList();
+  const lines = _fsubChannels.map(ch => {
+    const parts = [ch.title || '', ch.chat, ch.url || ''];
+    return parts.join(' | ');
+  });
+  const msgEl = document.getElementById('fsub-msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('POST', '/settings', { force_sub_text: lines.join('\n') });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已保存';
+    setTimeout(() => { msgEl.textContent = ''; }, 2000);
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '保存失败');
+  }
+}
+
+async function loadForceSub() {
+  const data = await api('GET', '/settings');
+  if (data.error) return;
+  _fsubChannels = Array.isArray(data.force_sub_channels) ? data.force_sub_channels : [];
+  document.getElementById('force-sub-on').checked = !!data.force_sub_on;
+  document.getElementById('fsub-msg-text').value = data.force_sub_msg || '';
+  renderFsubList();
+}
+
+// Toggle on/off
+document.getElementById('force-sub-on').addEventListener('change', async function () {
+  await api('POST', '/settings', { force_sub_on: this.checked });
+});
+
+// Add channel
+document.getElementById('fsub-add-btn').addEventListener('click', async () => {
+  const msgEl = document.getElementById('fsub-msg');
+  const chat  = document.getElementById('fsub-add-chat').value.trim();
+  if (!chat) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '频道标识不能为空';
+    return;
+  }
+  const title = document.getElementById('fsub-add-title').value.trim();
+  const url   = document.getElementById('fsub-add-url').value.trim();
+  _fsubChannels.push({ title, chat, url });
+  document.getElementById('fsub-add-title').value = '';
+  document.getElementById('fsub-add-chat').value  = '';
+  document.getElementById('fsub-add-url').value   = '';
+  await saveFsubChannels();
+});
+
+// Save custom prompt message
+document.getElementById('fsub-save-msg').addEventListener('click', async () => {
+  const resultEl = document.getElementById('fsub-save-msg-result');
+  resultEl.className = 'msg';
+  resultEl.textContent = '保存中…';
+  const res = await api('POST', '/settings', {
+    force_sub_msg: document.getElementById('fsub-msg-text').value,
+  });
+  if (res.ok) {
+    resultEl.className = 'msg ok';
+    resultEl.textContent = '✅ 提示语已保存';
+    tg?.HapticFeedback?.notificationOccurred('success');
+  } else {
+    resultEl.className = 'msg fail';
+    resultEl.textContent = '❌ ' + (res.error || '保存失败');
+  }
+});
 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 

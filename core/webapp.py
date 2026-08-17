@@ -24,6 +24,7 @@ from core.database import Database
 from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
 from modules.customize_module import (
     SK_FORCE_SUB,
+    SK_FORCE_SUB_MSG,
     SK_FORCE_SUB_ON,
     SK_WELCOME_BTNS,
     SK_WELCOME_TEXT,
@@ -263,18 +264,28 @@ async def _get_settings(request: web.Request):
     tid, db = tenant["id"], Database()
     welcome_btns = db.get_setting(tid, SK_WELCOME_BTNS, "") or ""
     force_sub = db.get_setting(tid, SK_FORCE_SUB, "") or ""
+    force_sub_channels: list = []
+    if force_sub:
+        try:
+            parsed = json.loads(force_sub)
+            if isinstance(parsed, list):
+                force_sub_channels = parsed
+        except ValueError:
+            pass
     return web.json_response({
-        "welcome_text":   db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
-        "welcome_btns":   welcome_btns,
-        "welcome_btns_text": _button_rows_to_text(welcome_btns),
-        "force_sub":      force_sub,
-        "force_sub_text": _force_sub_rows_to_text(force_sub),
-        "antiflood":      db.get_bool_setting(tid, SK_ANTIFLOOD, True),
-        "alphabet_latin": db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
-        "force_sub_on":   db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
-        "manage_group":   db.get_manage_group(tid),
-        "bot_username":   tenant["bot_username"] or "",
-        "bot_name":       tenant["bot_name"] or "",
+        "welcome_text":        db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
+        "welcome_btns":        welcome_btns,
+        "welcome_btns_text":   _button_rows_to_text(welcome_btns),
+        "force_sub":           force_sub,
+        "force_sub_text":      _force_sub_rows_to_text(force_sub),
+        "force_sub_channels":  force_sub_channels,
+        "force_sub_msg":       db.get_setting(tid, SK_FORCE_SUB_MSG, "") or "",
+        "antiflood":           db.get_bool_setting(tid, SK_ANTIFLOOD, True),
+        "alphabet_latin":      db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
+        "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
+        "manage_group":        db.get_manage_group(tid),
+        "bot_username":        tenant["bot_username"] or "",
+        "bot_name":            tenant["bot_name"] or "",
     })
 
 
@@ -308,6 +319,11 @@ async def _post_settings(request: web.Request):
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         db.set_setting(tid, SK_FORCE_SUB, force_sub_json)
+    if SK_FORCE_SUB_MSG in body:
+        fsub_msg = _clean_text(body[SK_FORCE_SUB_MSG], max_len=500)
+        if fsub_msg is None:
+            return web.json_response({"error": "force_sub_msg invalid (max 500 chars)"}, status=400)
+        db.set_setting(tid, SK_FORCE_SUB_MSG, fsub_msg)
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")

@@ -43,6 +43,9 @@ SK_WELCOME_MEDIA_TYPE = "welcome_media_type"  # 启动语封面媒体类型（ph
 SK_WELCOME_MEDIA_ID   = "welcome_media_id"    # 启动语封面媒体 file_id
 SK_FORCE_SUB    = "force_sub"          # 强制订阅频道列表（JSON）
 SK_FORCE_SUB_ON = "force_sub_on"       # 强制订阅总开关
+SK_FORCE_SUB_MSG = "force_sub_msg"     # 自定义拦截提示语（默认值见 _DEFAULT_FSUB_MSG）
+
+_DEFAULT_FSUB_MSG = "🔒 请先加入以下频道后再继续："
 
 _JOINED_STATUSES = ("member", "administrator", "creator", "owner")
 # 机器人需具备其中之一的身份，才能校验其他用户在该频道的成员资格。
@@ -811,9 +814,10 @@ class CustomizeModule(BaseModule):
 
     async def _send_join_prompt(self, target, missing) -> None:
         """向 ``target`` 发送加入频道提示；``missing`` 为待加入频道列表。"""
-        await target.reply_text(
-            "🔒 请先加入以下频道后再继续：",
-            reply_markup=self._join_markup(missing))
+        msg = (self.db.get_setting(self.tenant_id, SK_FORCE_SUB_MSG, "") or "").strip()
+        if not msg:
+            msg = _DEFAULT_FSUB_MSG
+        await target.reply_text(msg, reply_markup=self._join_markup(missing))
 
     async def _missing_subscriptions(self, ctx, user_id: int, channels):
         missing = []
