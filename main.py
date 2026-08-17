@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from telegram.error import InvalidToken
 
@@ -56,6 +57,14 @@ async def main():
 
     # 5. 启动平台主机器人 + 所有已有租户机器人
     try:
+        # 可选：启动 Web 管理后台
+        webapp_runner = None
+        webapp_cfg = config.get("webapp", {})
+        if webapp_cfg.get("enabled") or os.getenv("WEBAPP_ENABLED", "").lower() in ("1", "true"):
+            from core.webapp import start_webapp
+            host = os.getenv("WEBAPP_HOST") or webapp_cfg.get("host", "0.0.0.0")
+            port = int(os.getenv("WEBAPP_PORT") or webapp_cfg.get("port", 8080))
+            webapp_runner = await start_webapp(host, port)
         async with bot.app:
             await bot.app.initialize()
             await bot.app.start()
@@ -74,6 +83,8 @@ async def main():
                 await tm.stop_all()
                 await bot.app.updater.stop()
                 await bot.app.stop()
+                if webapp_runner is not None:
+                    await webapp_runner.cleanup()
     except InvalidToken:
         logger.error(
             "平台主机器人 Token 无效（Unauthorized）。请检查环境变量 BOT_TOKEN "

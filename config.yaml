@@ -14,6 +14,17 @@ tenant_modules:
   - modules.customize_module      # 交互式自定义（启动语/按钮/强制订阅/广播）
   - modules.auto_reply_module     # 自动回复 + 关键词过滤
 
+# 管理后台小程序（Telegram Mini App）
+# 配置后，租户机器人管理员发送 /start 时将跳出提醒与按钮，
+# 点击按钮自动登录进入 Web 管理后台（替代私聊内联控制面板）。
+webapp:
+  enabled: false                        # 设为 true 以启用 Web 管理后台
+  host:    "0.0.0.0"                    # 监听地址
+  port:    8080                         # 监听端口
+  # 部署后外部可访问的 HTTPS 公网地址（Telegram 要求 WebApp 使用 HTTPS）
+  # 例如：https://mybot.example.com
+  url:     ""
+
 # 租户机器人可自定义的提示文案（默认值）
 messages:
   welcome:       "👋 你好！直接发送消息即可联系管理员，我们会尽快回复你。"
