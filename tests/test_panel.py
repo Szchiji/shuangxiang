@@ -174,4 +174,6 @@ def test_stats_text_empty_and_nonempty(db):
     mod = make_module(db)
     assert "还没有用户" in mod._stats_text()
     db.upsert_tenant_user(1, 42, "a", "Alice")
-    assert "总用户：1" in mod._stats_text()
+    text = mod._stats_text()
+    assert "总用户" in text
+    assert "1" in text

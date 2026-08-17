@@ -30,6 +30,7 @@ class Database:
                 cls._instance._init_pragmas()
                 cls._instance._init_db()
                 cls._instance._migrate()
+                cls._instance._init_indexes()
         return cls._instance
 
     def _conn(self) -> sqlite3.Connection:
@@ -125,6 +126,32 @@ class Database:
                 );
             """)
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
+
+    def _init_indexes(self) -> None:
+        """在 _migrate() 之后创建高频查询索引（幂等，可重复执行）。
+
+        须在迁移完成后执行，避免旧 schema 缺少目标列时报错。
+        """
+        try:
+            with self._conn() as c:
+                c.executescript("""
+                    CREATE INDEX IF NOT EXISTS idx_tenants_owner
+                        ON tenants(owner_user_id);
+                    CREATE INDEX IF NOT EXISTS idx_auto_replies_tid
+                        ON auto_replies(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_filters_tid
+                        ON filters(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_tenant_users_banned
+                        ON tenant_users(tenant_id, is_banned);
+                    CREATE INDEX IF NOT EXISTS idx_tenant_users_last_seen
+                        ON tenant_users(tenant_id, last_seen);
+                    CREATE INDEX IF NOT EXISTS idx_topic_map_user
+                        ON topic_map(tenant_id, user_id);
+                    CREATE INDEX IF NOT EXISTS idx_message_map_tid
+                        ON message_map(tenant_id);
+                """)
+        except sqlite3.Error as e:
+            logger.warning("创建索引失败（不影响运行）: %s", e)
 
     def _migrate(self) -> None:
         """对早期版本创建的数据库补充后续新增的列 / 重建不兼容的旧表。
@@ -368,26 +395,24 @@ class Database:
 
     def get_tenant_user_count(self, tenant_id):
         with self._conn() as c:
-            total = c.execute(
-                "SELECT COUNT(*) FROM tenant_users WHERE tenant_id=?",
-                (tenant_id,)).fetchone()[0]
-            banned = c.execute(
-                "SELECT COUNT(*) FROM tenant_users WHERE tenant_id=? AND is_banned=1",
-                (tenant_id,)).fetchone()[0]
-            active_7d = c.execute(
-                "SELECT COUNT(*) FROM tenant_users "
-                "WHERE tenant_id=? AND last_seen >= datetime('now','-7 days')",
-                (tenant_id,)).fetchone()[0]
-            new_7d = c.execute(
-                "SELECT COUNT(*) FROM tenant_users "
-                "WHERE tenant_id=? AND joined_at >= datetime('now','-7 days')",
-                (tenant_id,)).fetchone()[0]
+            row = c.execute(
+                """SELECT
+                       COUNT(*)                                              AS total,
+                       SUM(CASE WHEN is_banned=1 THEN 1 ELSE 0 END)         AS banned,
+                       SUM(CASE WHEN last_seen >= datetime('now','-7 days')
+                                THEN 1 ELSE 0 END)                          AS active_7d,
+                       SUM(CASE WHEN joined_at >= datetime('now','-7 days')
+                                THEN 1 ELSE 0 END)                          AS new_7d
+                   FROM tenant_users WHERE tenant_id=?""",
+                (tenant_id,)).fetchone()
+            total  = row["total"]  or 0
+            banned = row["banned"] or 0
             return {
-                "total": total,
-                "active": total - banned,
-                "banned": banned,
-                "active_7d": active_7d,
-                "new_7d": new_7d,
+                "total":     total,
+                "active":    total - banned,
+                "banned":    banned,
+                "active_7d": row["active_7d"] or 0,
+                "new_7d":    row["new_7d"]    or 0,
             }
 
     def get_banned_tenant_users(self, tenant_id, limit=20):

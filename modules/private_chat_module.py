@@ -275,14 +275,17 @@ class PrivateChatModule(BaseModule):
                 "数据统计", emoji="📊",
                 body="还没有用户来联系你。\n"
                 "把你的机器人分享出去，并设置自动回复来留住第一批用户吧！")
+        ban_pct = (f"  ({s['banned'] * 100 // s['total']}%)"
+                   if s["banned"] else "")
         return ui.section(
             "数据统计", emoji="📊",
             body=(
-                f"总用户：{s['total']}\n"
-                f"正常：{s['active']}\n"
-                f"封禁：{s['banned']}\n"
-                f"近 7 天活跃：{s['active_7d']}\n"
-                f"近 7 天新增：{s['new_7d']}"))
+                f"👥 总用户：*{s['total']}*\n"
+                f"✅ 正常：{s['active']}\n"
+                f"⛔ 封禁：{s['banned']}{ban_pct}\n"
+                f"──────────────\n"
+                f"📅 近 7 天活跃：{s['active_7d']}\n"
+                f"🆕 近 7 天新增：{s['new_7d']}"))
 
     # ── 控制面板（拥有者，按钮式管理）────────────────────────
 
@@ -291,13 +294,18 @@ class PrivateChatModule(BaseModule):
         antiflood = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
         latin     = self.db.get_bool_setting(self.tenant_id, SK_ALPHABET_LATIN, False)
         topics    = self._manage_group() is not None
+        ar_count  = len(self.db.get_auto_replies(self.tenant_id))
+        fl_count  = len(self.db.get_filters(self.tenant_id))
+        ar_label  = f"💬 自动回复（{ar_count}）" if ar_count else "💬 自动回复"
+        fl_label  = f"🚫 过滤词（{fl_count}）"  if fl_count else "🚫 过滤词"
         return InlineKeyboardMarkup([
             # 常用功能（直达交互式自定义，无需记忆指令）
-            [InlineKeyboardButton("💬 自动回复", callback_data="cz:ar"),
+            [InlineKeyboardButton(ar_label, callback_data="cz:ar"),
              InlineKeyboardButton("📢 强制订阅", callback_data="cz:fsub")],
             [InlineKeyboardButton("✏️ 启动语", callback_data="cz:welcome"),
              InlineKeyboardButton("📊 数据统计", callback_data="pc:stats")],
-            [InlineKeyboardButton("📣 群发广播", callback_data="cz:bc")],
+            [InlineKeyboardButton("📣 群发广播", callback_data="cz:bc"),
+             InlineKeyboardButton(fl_label, callback_data="pc:filters")],
             # 安全开关（点一下即切换）
             [InlineKeyboardButton(
                 f"🛡 防刷屏：{'✅ 开' if antiflood else '⛔ 关'}",
@@ -319,6 +327,28 @@ class PrivateChatModule(BaseModule):
                 "一站式管理你的机器人，点按钮即可、无需记忆指令：\n"
                 "• 自定义自动回复、启动语、群发等常用功能\n"
                 "• 一键开关安全过滤与 Topics 协作模式"))
+
+    def _filters_view(self):
+        """过滤词管理视图：列出已配置的过滤词，并提供一键删除按钮。"""
+        rows = self.db.get_filters(self.tenant_id)
+        if not rows:
+            text = ui.section(
+                "过滤词管理", emoji="🚫",
+                body=(
+                    "当前没有过滤词。\n"
+                    "发送 /filter_add <关键词> 可添加。命中关键词的消息将被自动拦截。"))
+            kb = [[InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]
+            return text, InlineKeyboardMarkup(kb)
+        text = ui.section(
+            "过滤词管理", emoji="🚫",
+            body=f"共 {len(rows)} 个过滤词，点按钮删除：")
+        kb = []
+        for r in rows:
+            kw = r["keyword"][:30]
+            kb.append([InlineKeyboardButton(
+                f"🗑 {kw}", callback_data=f"pc:filter_del:{r['id']}")])
+        kb.append([InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")])
+        return text, InlineKeyboardMarkup(kb)
 
     def _bans_view(self):
         """封禁管理视图：列出已封禁用户，并提供一键解封按钮。"""
@@ -403,6 +433,20 @@ class PrivateChatModule(BaseModule):
             self.db.unban_user(self.tenant_id, target)
             await q.answer("已解封")
             text, markup = self._bans_view()
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        elif action == "filters":
+            await q.answer()
+            text, markup = self._filters_view()
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        elif action.startswith("filter_del:"):
+            try:
+                fid = int(action.split(":", 1)[1])
+            except ValueError:
+                await q.answer("⚠️ 无效 ID")
+                return
+            self.db.delete_filter(self.tenant_id, fid)
+            await q.answer("已删除")
+            text, markup = self._filters_view()
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         elif action == "toggle:antiflood":
             cur = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
