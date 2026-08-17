@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import json
+import time
 import types
 from urllib.parse import urlencode
 
@@ -17,11 +18,14 @@ from core.database import Database
 _TOKEN = "test_token_1234567890:ABCdef"
 
 
-def _make_init_data(user_id: int, token: str = _TOKEN) -> str:
+def _make_init_data(user_id: int, token: str = _TOKEN,
+                    auth_date: int | None = None) -> str:
     """Build a valid Telegram WebApp initData string for testing."""
+    if auth_date is None:
+        auth_date = int(time.time())
     user_str = json.dumps({"id": user_id, "first_name": "Test"})
     params = {
-        "auth_date": "9999999999",
+        "auth_date": str(auth_date),
         "user":      user_str,
     }
     data_check = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
@@ -55,6 +59,12 @@ def test_verify_init_data_missing_hash():
 
 def test_verify_init_data_empty():
     assert _verify_init_data("", _TOKEN) is None
+
+
+def test_verify_init_data_stale():
+    """initData with an auth_date more than 1 hour old must be rejected."""
+    stale_init_data = _make_init_data(42, auth_date=int(time.time()) - 7200)
+    assert _verify_init_data(stale_init_data, _TOKEN) is None
 
 
 # ── aiohttp app API routes ─────────────────────────────────────────────────────
@@ -140,6 +150,17 @@ async def test_get_stats_ok(aiohttp_client, app, db, tenant_id, init_data_header
     assert resp.status == 200
     data = await resp.json()
     assert "total" in data
+
+
+@pytest.mark.asyncio
+async def test_auto_replies_invalid_match_type(aiohttp_client, app, db, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/auto_replies",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "hi", "reply": "hello", "match_type": "invalid_type"},
+    )
+    assert resp.status == 400
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ import hmac
 import json
 import logging
 import os
+import time
 from urllib.parse import parse_qsl
 
 from aiohttp import web
@@ -30,6 +31,12 @@ logger = logging.getLogger("shuangxiang.webapp")
 # Directory that contains static assets (index.html, app.js, style.css)
 _WEBAPP_DIR = os.path.join(os.path.dirname(__file__), "..", "webapp")
 
+# Maximum age (seconds) of a valid initData auth_date. Rejects replayed tokens.
+_INIT_DATA_MAX_AGE = 3600  # 1 hour
+
+# Allowed values for auto-reply match_type.
+_VALID_MATCH_TYPES = frozenset({"contains", "exact", "startswith", "regex"})
+
 
 # ── Telegram initData validation ─────────────────────────────────────────────
 
@@ -46,6 +53,13 @@ def _verify_init_data(init_data: str, bot_token: str) -> dict | None:
     secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
     computed = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(computed, received_hash):
+        return None
+    # Reject stale tokens to prevent replay attacks.
+    try:
+        auth_date = int(params.get("auth_date", "0"))
+    except (ValueError, TypeError):
+        return None
+    if time.time() - auth_date > _INIT_DATA_MAX_AGE:
         return None
     return params
 
@@ -151,6 +165,9 @@ async def _post_auto_reply(request: web.Request):
     if not keyword or not reply:
         return web.json_response({"error": "keyword and reply required"}, status=400)
     match_type = str(body.get("match_type", "contains"))
+    if match_type not in _VALID_MATCH_TYPES:
+        return web.json_response(
+            {"error": f"match_type must be one of {sorted(_VALID_MATCH_TYPES)}"}, status=400)
     rid = Database().add_auto_reply(tenant["id"], keyword, reply, match_type)
     return web.json_response({"id": rid})
 

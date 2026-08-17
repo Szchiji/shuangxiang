@@ -16,8 +16,12 @@ function hide(id) { document.getElementById(id).style.display = 'none'; }
 async function api(method, path, body) {
   const opts = { method, headers: HEADERS };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(BASE + path, opts);
-  return res.json();
+  try {
+    const res = await fetch(BASE + path, opts);
+    return res.json();
+  } catch (_) {
+    return { error: '网络错误，请检查连接后重试' };
+  }
 }
 
 function showError(msg) {
