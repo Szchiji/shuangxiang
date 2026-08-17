@@ -404,18 +404,44 @@ async def _get_banned(request: web.Request):
     ])
 
 
-async def _do_broadcast(user_ids: list, token: str, text: str) -> None:
-    """Send text to all user_ids concurrently (max 20 at a time) using the Bot API."""
-    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
+async def _do_broadcast(
+    user_ids: list, token: str, text: str, *,
+    photo: str | None = None,
+    reply_markup: dict | None = None,
+    silent: bool = False,
+) -> None:
+    """Send message to all user_ids concurrently (max 20 at a time) using the Bot API.
+
+    When *photo* is provided a photo message is sent (caption = text).
+    *reply_markup* adds inline keyboard buttons.
+    *silent* disables sound/vibration notifications.
+    """
+    if photo:
+        api_method = "sendPhoto"
+        base_payload: dict = {"photo": photo, "parse_mode": "HTML"}
+        if text:
+            base_payload["caption"] = text
+    else:
+        api_method = "sendMessage"
+        base_payload = {"text": text, "parse_mode": "HTML"}
+
+    if reply_markup:
+        base_payload["reply_markup"] = reply_markup
+    if silent:
+        base_payload["disable_notification"] = True
+
+    api_url = f"https://api.telegram.org/bot{token}/{api_method}"
     sem = asyncio.Semaphore(20)
 
     async def _send(uid):
         async with sem:
             try:
                 async with _aiohttp.ClientSession() as session:
-                    async with session.post(api_url, json={
-                        "chat_id": uid, "text": text, "parse_mode": "HTML",
-                    }, timeout=_aiohttp.ClientTimeout(total=10)) as resp:
+                    async with session.post(
+                        api_url,
+                        json={**base_payload, "chat_id": uid},
+                        timeout=_aiohttp.ClientTimeout(total=10),
+                    ) as resp:
                         data = await resp.json()
                         return bool(data.get("ok"))
             except Exception:
@@ -430,11 +456,44 @@ async def _post_broadcast(request: web.Request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    text = _clean_text(body.get("text", ""), max_len=4096, allow_empty=False)
+    text = _clean_text(body.get("text", ""), max_len=4096)
     if text is None:
-        return web.json_response({"error": "text required (max 4096 chars)"}, status=400)
+        return web.json_response({"error": "text too long (max 4096 chars)"}, status=400)
+    photo = _clean_text(body.get("photo", ""), max_len=500)
+    if photo is None:
+        return web.json_response({"error": "photo url too long"}, status=400)
+    if photo and not photo.startswith(("http://", "https://")):
+        return web.json_response({"error": "photo must be a http/https URL"}, status=400)
+    if not text and not photo:
+        return web.json_response({"error": "text or photo required"}, status=400)
+    # Caption text is required for sendPhoto with HTML parse_mode when buttons are used;
+    # allow empty caption but photo is mandatory.
+    silent = bool(body.get("silent", False))
+    # Parse optional inline keyboard
+    reply_markup: dict | None = None
+    buttons_raw = body.get("buttons", "")
+    if buttons_raw:
+        try:
+            buttons_json = _normalize_button_text(buttons_raw, max_len=2000)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        if buttons_json:
+            try:
+                rows = json.loads(buttons_json)
+                inline_keyboard = [
+                    [{"text": btn["text"], "url": btn["url"]} for btn in row]
+                    for row in rows
+                ]
+            except (KeyError, TypeError, ValueError):
+                return web.json_response({"error": "buttons invalid"}, status=400)
+            reply_markup = {"inline_keyboard": inline_keyboard}
     user_ids = Database().get_tenant_user_ids(tenant["id"], only_active=True)
-    asyncio.create_task(_do_broadcast(user_ids, tenant["token"], text))
+    asyncio.create_task(_do_broadcast(
+        user_ids, tenant["token"], text,
+        photo=photo or None,
+        reply_markup=reply_markup,
+        silent=silent,
+    ))
     return web.json_response({"ok": True, "queued": len(user_ids)}, status=202)
 
 

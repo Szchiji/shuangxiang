@@ -315,12 +315,17 @@ document.getElementById('ar-cancel').addEventListener('click', resetArForm);
 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 
+let _bcBuilder;
+
 document.getElementById('bc-send').addEventListener('click', async () => {
   const msgEl = document.getElementById('bc-msg');
   const text  = document.getElementById('bc-text').value.trim();
-  if (!text) {
+  const photo = document.getElementById('bc-photo').value.trim();
+  const silent = document.getElementById('bc-silent').checked;
+  const buttons = _bcBuilder.getText();
+  if (!text && !photo) {
     msgEl.className = 'msg fail';
-    msgEl.textContent = '消息内容不能为空';
+    msgEl.textContent = '请填写消息内容或图片链接';
     return;
   }
   if (!window.confirm('确定要向所有活跃用户群发这条消息吗？')) return;
@@ -328,7 +333,10 @@ document.getElementById('bc-send').addEventListener('click', async () => {
   btn.disabled = true;
   msgEl.className = 'msg';
   msgEl.textContent = '发送中，请稍候…';
-  const res = await api('POST', '/broadcast', { text });
+  const payload = { text, silent };
+  if (photo) payload.photo = photo;
+  if (buttons) payload.buttons = buttons;
+  const res = await api('POST', '/broadcast', payload);
   btn.disabled = false;
   if (res.ok) {
     msgEl.className = 'msg ok';
@@ -402,6 +410,10 @@ _welcomeBuilder = initButtonBuilder(
 _arBuilder = initButtonBuilder(
   document.getElementById('ar-buttons-builder'),
   'ar-buttons-add-row'
+);
+_bcBuilder = initButtonBuilder(
+  document.getElementById('bc-buttons-builder'),
+  'bc-buttons-add-row'
 );
 
 initSidebar();

@@ -114,11 +114,24 @@
         <section id="tab-broadcast" class="tab">
           <div class="page-header"><h2>📣 群发广告</h2></div>
           <div class="card">
-            <p class="hint-text">向所有活跃用户发送一条文本消息（支持 HTML 格式标签）。</p>
+            <p class="hint-text">向所有活跃用户群发消息，支持图片、内联按钮和静默推送。</p>
+            <label class="field-label">图片 URL（可选）
+              <input type="text" id="bc-photo" placeholder="https://... （留空则仅发文字）">
+            </label>
             <label class="field-label">消息内容
               <textarea id="bc-text" rows="6"
                 placeholder="在此输入要群发的内容，支持 &lt;b&gt;粗体&lt;/b&gt;、&lt;i&gt;斜体&lt;/i&gt;、&lt;a href=&quot;链接&quot;&gt;超链接&lt;/a&gt; 等 HTML 标签"></textarea>
             </label>
+            <label class="field-label">内联按钮（可选）
+              <div id="bc-buttons-builder" class="btn-builder"></div>
+              <button class="btn-ghost btn-sm" id="bc-buttons-add-row">＋ 添加一行按钮</button>
+            </label>
+            <div class="toggles" style="margin-bottom:12px">
+              <div class="toggle-row">
+                <span>🔕 静默推送（不提醒用户）</span>
+                <label class="switch"><input type="checkbox" id="bc-silent"><span class="slider"></span></label>
+              </div>
+            </div>
             <button id="bc-send" class="btn-primary">🚀 发送群发</button>
             <div id="bc-msg" class="msg"></div>
           </div>
