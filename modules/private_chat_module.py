@@ -55,7 +55,8 @@ class PrivateChatModule(BaseModule):
         # 相册（媒体组）缓冲：media_group_id -> {"user", "messages", "task"}。
         # 同一相册的多张媒体以多个独立消息到达，需聚合后整体转发。
         self._albums       = {}
-        self._album_delay  = 1.0
+        self._album_delay  = 3.0
+        self._album_max    = 10   # Telegram 相册最大条数，满员立即 flush
         # 每用户话题创建锁，避免并发首条消息为同一用户重复建话题。
         self._topic_locks  = {}
         # DM 模式下最近一次转发到管理员的用户 id：连续来自同一用户的消息
@@ -531,11 +532,13 @@ class PrivateChatModule(BaseModule):
         buf["messages"].append(msg)
         if buf["task"] is not None:
             buf["task"].cancel()
-        buf["task"] = asyncio.create_task(self._flush_album_later(ctx, mgid))
+        # 满员（达到 Telegram 相册上限）时立即 flush，否则重置防抖计时器。
+        delay = 0.0 if len(buf["messages"]) >= self._album_max else self._album_delay
+        buf["task"] = asyncio.create_task(self._flush_album_later(ctx, mgid, delay))
 
-    async def _flush_album_later(self, ctx, mgid) -> None:
+    async def _flush_album_later(self, ctx, mgid, delay: float = 0.0) -> None:
         try:
-            await asyncio.sleep(self._album_delay)
+            await asyncio.sleep(delay)
         except asyncio.CancelledError:
             return
         buf = self._albums.pop(mgid, None)
@@ -544,14 +547,29 @@ class PrivateChatModule(BaseModule):
         user = buf["user"]
         messages = sorted(buf["messages"], key=lambda m: m.message_id)
         group = self._manage_group()
-        try:
+
+        async def _do_forward():
             if group is not None:
                 await self._forward_album_to_topic(ctx, group, user, messages)
             else:
                 await self._forward_album_to_dm(ctx, user, messages)
+
+        try:
+            await _do_forward()
         except TelegramError as e:
-            logger.warning("相册转发失败: %s", e)
-            return
+            logger.warning("相册转发失败，2 秒后重试: %s", e)
+            await asyncio.sleep(2)
+            try:
+                await _do_forward()
+            except TelegramError as e2:
+                logger.warning("相册转发重试仍失败: %s", e2)
+                try:
+                    await ctx.bot.send_message(
+                        chat_id=self.admin_id,
+                        text=f"⚠️ 相册转发失败（已重试）：{e2}")
+                except TelegramError:
+                    pass
+                return
         await self._notify_sent(ctx, messages[-1])
 
     async def _forward_to_dm(self, ctx, user, msg) -> None:
@@ -760,11 +778,13 @@ class PrivateChatModule(BaseModule):
         buf["messages"].append(msg)
         if buf["task"] is not None:
             buf["task"].cancel()
-        buf["task"] = asyncio.create_task(self._flush_admin_album_later(ctx, mgid))
+        # 满员（达到 Telegram 相册上限）时立即 flush，否则重置防抖计时器。
+        delay = 0.0 if len(buf["messages"]) >= self._album_max else self._album_delay
+        buf["task"] = asyncio.create_task(self._flush_admin_album_later(ctx, mgid, delay))
 
-    async def _flush_admin_album_later(self, ctx, mgid) -> None:
+    async def _flush_admin_album_later(self, ctx, mgid, delay: float = 0.0) -> None:
         try:
-            await asyncio.sleep(self._album_delay)
+            await asyncio.sleep(delay)
         except asyncio.CancelledError:
             return
         buf = self._albums.pop(mgid, None)
@@ -773,13 +793,22 @@ class PrivateChatModule(BaseModule):
         target = buf["target"]
         messages = sorted(buf["messages"], key=lambda m: m.message_id)
         first = messages[0]
-        try:
+
+        async def _do_copy():
             await ctx.bot.copy_messages(
                 chat_id=target, from_chat_id=first.chat_id,
                 message_ids=[m.message_id for m in messages])
+
+        try:
+            await _do_copy()
         except TelegramError as e:
-            await first.reply_text(f"❌ 发送失败：{e}")
-            return
+            logger.warning("管理员相册转发失败，2 秒后重试: %s", e)
+            await asyncio.sleep(2)
+            try:
+                await _do_copy()
+            except TelegramError as e2:
+                await first.reply_text(f"❌ 发送失败（已重试）：{e2}")
+                return
         await self._ack(messages[-1])
 
     @staticmethod

@@ -19,6 +19,7 @@ def make_module(db, manage_group=None, admin_id=99):
     mod._ack_delete_delay = 0
     mod._albums = {}
     mod._album_delay = 0.05
+    mod._album_max = 10
     mod._topic_locks = {}
     mod._last_dm_user = None
     mod._manage_group = lambda: manage_group
@@ -56,6 +57,21 @@ async def test_album_topics_no_duplicate_topic(db):
     )
     assert len(ctx.bot.of("create_forum_topic")) == 1
     assert db.get_user_topic(1, USER.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_full_album_flushes_immediately(db):
+    """满 10 条的相册应立即 flush，不等待防抖延时。"""
+    mod = make_module(db, manage_group=None)
+    mod._album_delay = 10.0  # 故意设长，验证满员不会等待
+    ctx = make_ctx(FakeBot())
+    for i in range(10):
+        mod._buffer_album(ctx, USER, FakeMessage(100 + i, media_group_id="G_FULL"))
+    # 满员后应立即（不到 0.5 秒）flush，无需等待 10 秒
+    await asyncio.sleep(0.1)
+    cm = ctx.bot.of("forward_messages")
+    assert len(cm) == 1
+    assert len(cm[0]["message_ids"]) == 10
 
 
 @pytest.mark.asyncio
