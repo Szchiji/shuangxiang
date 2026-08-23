@@ -286,6 +286,15 @@ class Database:
             return default
         return v in ("1", "true", "True", "on", "yes")
 
+    def get_int_setting(self, tenant_id, key, default: int) -> int:
+        v = self.get_setting(tenant_id, key, None)
+        if v is None:
+            return default
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
     def set_json_setting(self, tenant_id, key, value):
         self.set_setting(tenant_id, key, json.dumps(value, ensure_ascii=False))
 

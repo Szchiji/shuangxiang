@@ -160,6 +160,7 @@ body {
   margin-bottom: 10px;
 }
 .field-label input[type="text"],
+.field-label input[type="number"],
 .field-label textarea,
 .field-label select {
   display: block;
@@ -175,11 +176,22 @@ body {
   transition: border-color .15s;
 }
 .field-label input[type="text"]:focus,
+.field-label input[type="number"]:focus,
 .field-label textarea:focus,
 .field-label select:focus {
   border-color: var(--primary);
 }
 .field-label textarea { resize: vertical; }
+.inline-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+.inline-fields input[type="number"] {
+  width: 6em;
+  margin-top: 0;
+}
 
 /* ── Toggle (iOS-style switch) ───────────────────────────────────────── */
 .toggles { margin-bottom: 16px; }

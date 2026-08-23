@@ -419,6 +419,7 @@ class PrivateChatModule(BaseModule):
                 body=(
                     "*自动回复*：/ar_add 关键词 | 回复　/ar_list　/ar_del\n"
                     "*关键词过滤*：/filter_add 词　/filter_list　/filter_del\n"
+                    "*防刷屏*：/antiflood on｜off　/flood_limit 条数 秒数\n"
                     "*用户*：回复消息后 /ban /unban /info"))
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
         elif action == "bans":
