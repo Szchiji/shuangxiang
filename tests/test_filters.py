@@ -14,6 +14,7 @@ def make_module(db, admin_id=99):
     mod.admin_id = admin_id
     mod._flood = {}
     mod._flood_last_cleanup = 0.0
+    mod._flood_group_cache = {}
     return mod
 
 
@@ -51,6 +52,26 @@ async def test_on_message_antiflood_stop(db):
     with pytest.raises(ApplicationHandlerStop):
         for _ in range(6):
             await mod.on_message(upd, ctx)
+
+
+def test_antiflood_album_counts_as_one_message(db):
+    mod = make_module(db)
+    t = 100.0
+    # 相册（同一 media_group_id）拆成 8 条 Update 逐一到达，
+    # 但应作为一条消息计数，不应因条数多而被误判为刷屏。
+    results = [mod._is_flooding(1, media_group_id="G1", now=t + i * 0.1)
+               for i in range(8)]
+    assert results == [False] * 8
+
+
+@pytest.mark.asyncio
+async def test_on_message_album_not_blocked_by_antiflood(db):
+    mod = make_module(db)
+    ctx = make_ctx(FakeBot())
+    # 同一相册的 8 张图片应全部通过，不被防刷屏拦截（不抛出异常）。
+    for i in range(8):
+        msg = FakeMessage(i, caption=None, media_group_id="G1")
+        await mod.on_message(make_update(7, msg), ctx)
 
 
 @pytest.mark.asyncio

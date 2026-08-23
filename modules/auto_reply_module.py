@@ -65,6 +65,9 @@ class AutoReplyModule(BaseModule):
         self._flood: dict[int, list[float]] = {}
         # 上次清理过期条目的时间（单调时钟），用于定期触发 _cleanup_flood
         self._flood_last_cleanup: float = 0.0
+        # 相册（媒体组）去重缓存：user_id -> (media_group_id, 判定结果, 时间戳)，
+        # 避免同一相册的多条消息被逐条计入刷屏计数
+        self._flood_group_cache: dict[int, tuple[str, bool, float]] = {}
 
         app.add_handler(CommandHandler("ar_add", self.ar_add))
         app.add_handler(CommandHandler("ar_list", self.ar_list))
@@ -199,16 +202,31 @@ class AutoReplyModule(BaseModule):
 
     # ── 防刷屏检测 ──────────────────────────────────────────
 
-    def _is_flooding(self, user_id: int, now: float | None = None) -> bool:
+    def _is_flooding(self, user_id: int, media_group_id: str | None = None,
+                      now: float | None = None) -> bool:
         """记录一次消息，并判断是否超过窗口内的频率阈值。
 
         过期用户条目在窗口结束后即时清除，避免长时间运行后内存无限增长。
+
+        同一相册（媒体组）会拆分成多条 Update 逐一到达，若逐条计数，
+        发送稍大的相册就会导致后面的图片/视频被误判为刷屏而拦截
+        （例如管理员总是只收到前 5 张）。因此同一 media_group_id 只按
+        一条消息计数，并复用首条消息的判定结果。
         """
         now = time.monotonic() if now is None else now
+        group_cache = self._flood_group_cache
+        if media_group_id is not None:
+            cached = group_cache.get(user_id)
+            if (cached is not None and cached[0] == media_group_id
+                    and now - cached[2] < _FLOOD_WINDOW):
+                return cached[1]
         bucket = [t for t in self._flood.get(user_id, []) if now - t < _FLOOD_WINDOW]
         bucket.append(now)
         self._flood[user_id] = bucket
-        return len(bucket) > _FLOOD_MAX_MSGS
+        flooding = len(bucket) > _FLOOD_MAX_MSGS
+        if media_group_id is not None:
+            group_cache[user_id] = (media_group_id, flooding, now)
+        return flooding
 
     def _cleanup_flood(self, now: float) -> None:
         """删除 _flood 中所有时间戳均已过期的用户条目，释放内存。"""
@@ -231,7 +249,8 @@ class AutoReplyModule(BaseModule):
             if now - self._flood_last_cleanup >= self._FLOOD_CLEANUP_INTERVAL:
                 self._cleanup_flood(now)
                 self._flood_last_cleanup = now
-            if self._is_flooding(update.effective_user.id, now):
+            mgid = getattr(msg, "media_group_id", None)
+            if self._is_flooding(update.effective_user.id, mgid, now):
                 raise ApplicationHandlerStop
 
         text = msg.text or msg.caption or ""
