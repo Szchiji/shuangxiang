@@ -17,6 +17,7 @@
   - **DM 模式**：消息直接转发到管理员私聊，回复任意历史消息精准送达。
   - **Topics 模式**：把机器人加入一个开启「主题」的超级群，每个用户对应一个独立主题，便于多管理员协作。
 - 🤖 **自动回复 + 关键词过滤**：按关键词（支持**包含 / 正则**两种匹配方式）自动回复，支持**编辑**与附带**图片 / 视频等多媒体**；命中过滤词的消息可拦截、不转发。
+- ⏰ **定时消息管理**：在 Web 管理后台定时发送消息到群组或频道，支持文字 / 图片 / 视频 / 文件、内联按钮、按分钟设置发送间隔、一次性或重复发送，并可在每次发送前自动删除上一条，支持批量导出 / 导入配置。
 - ✏️ **可自定义启动语**：支持文本、内联按钮与**图片 / 视频等多媒体**封面。
 - ⛔ 封禁 / 解封、用户资料、统计。
 - 🎛️ **一站式控制面板**：拥有者 `/panel`（或 `/start`）即可直达自动回复、启动语、群发、安全过滤与 Topics 协作等常用功能，全程点按钮、无需记忆指令；用户 `/start` 自动显示自定义导航按钮，少打字、好上手。
@@ -150,6 +151,7 @@ CI 工作流见 `.github/workflows/ci.yml`，会在 push / PR 时自动运行 ru
 - `modules/private_chat_module.py` — 双向私聊（DM / Topics）。
 - `modules/customize_module.py` — 交互式自定义（启动语 / 按钮 / 多媒体 / 自动回复 / 强制订阅 / 广播）。
 - `modules/auto_reply_module.py` — 自动回复 + 关键词过滤。
+- `modules/scheduled_message_module.py` — 定时消息（定时发送到群组/频道，支持重复发送与自动删除上一条）。
 - `core/database.py` — 多租户 SQLite 数据层，所有数据按 `tenant_id` 隔离。
 
 ## 配置文件 `config.yaml`
@@ -169,6 +171,7 @@ tenant_modules:
   - modules.private_chat_module
   - modules.customize_module
   - modules.auto_reply_module
+  - modules.scheduled_message_module
 
 # 租户机器人提示文案（可选 brand 为品牌署名页脚，留空表示关闭）
 messages:

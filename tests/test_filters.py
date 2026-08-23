@@ -8,6 +8,8 @@ from telegram.ext import ApplicationHandlerStop
 from modules.auto_reply_module import (
     SK_ALPHABET_LATIN,
     SK_ANTIFLOOD,
+    SK_BLOCK_VIA_BOT,
+    SK_FILTER_AUTO_BAN,
     SK_FLOOD_MAX_MSGS,
     SK_FLOOD_WINDOW,
     AutoReplyModule,
@@ -258,3 +260,240 @@ async def test_auto_reply_sends_media_when_configured(db):
     assert msg.media_replies and msg.media_replies[0][0] == "photo"
     assert msg.media_replies[0][1] == "PIC1"
     assert msg.media_replies[0][2]["caption"] == "看图"
+
+
+# ── 过滤词：正则匹配 / 自动封禁 / 第三方机器人拦截 ─────────────
+
+@pytest.mark.asyncio
+async def test_filter_regex_match_blocks_message(db):
+    mod = make_module(db)
+    db.add_filter(1, r"PC\d+", "regex")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="注册就送 PC28 大礼包")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    assert msg.replies
+
+
+@pytest.mark.asyncio
+async def test_filter_regex_invalid_does_not_crash(db):
+    mod = make_module(db)
+    db.add_filter(1, "(", "regex")  # 非法正则
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="任意内容")
+    await mod.on_message(make_update(7, msg), ctx)
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_filter_contains_case_insensitive(db):
+    mod = make_module(db)
+    db.add_filter(1, "casino")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="欢迎来到 CASINO 娱乐城")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+
+
+@pytest.mark.asyncio
+async def test_filter_auto_ban_off_by_default(db):
+    mod = make_module(db)
+    db.add_filter(1, "违禁词")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="包含违禁词的消息")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    assert db.is_banned(1, 7) is False
+
+
+@pytest.mark.asyncio
+async def test_filter_auto_ban_when_enabled(db):
+    mod = make_module(db)
+    db.add_filter(1, "违禁词")
+    db.set_setting(1, SK_FILTER_AUTO_BAN, "1")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="包含违禁词的消息")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    assert db.is_banned(1, 7) is True
+
+
+@pytest.mark.asyncio
+async def test_filter_auto_ban_also_bans_via_bot(db):
+    mod = make_module(db)
+    db.add_filter(1, "违禁词")
+    db.set_setting(1, SK_FILTER_AUTO_BAN, "1")
+    ctx = make_ctx(FakeBot())
+    via_bot = types.SimpleNamespace(id=555, username="PostBot")
+    msg = FakeMessage(1, text="包含违禁词的消息", via_bot=via_bot)
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    assert db.is_banned(1, 7) is True
+    assert db.is_bot_banned(1, 555) is True
+
+
+@pytest.mark.asyncio
+async def test_block_via_bot_off_by_default(db):
+    mod = make_module(db)
+    ctx = make_ctx(FakeBot())
+    via_bot = types.SimpleNamespace(id=555, username="PostBot")
+    msg = FakeMessage(1, text="正常消息", via_bot=via_bot)
+    # 默认关闭 → 不拦截，正常继续走后续流程（不抛异常）。
+    await mod.on_message(make_update(7, msg), ctx)
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_block_via_bot_when_enabled(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_BLOCK_VIA_BOT, "1")
+    ctx = make_ctx(FakeBot())
+    via_bot = types.SimpleNamespace(id=555, username="PostBot")
+    msg = FakeMessage(1, text="正常消息", via_bot=via_bot)
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    # 静默拦截，不提示用户，避免其得知被拦截。
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_block_via_bot_does_not_affect_direct_messages(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_BLOCK_VIA_BOT, "1")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="正常消息")  # 非经由第三方机器人
+    await mod.on_message(make_update(7, msg), ctx)
+    assert not msg.replies
+
+
+@pytest.mark.asyncio
+async def test_cmd_filter_auto_ban_toggle(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args("on")
+    msg = FakeMessage(1)
+    await mod.cmd_filter_auto_ban(make_update(99, msg), ctx)
+    assert db.get_bool_setting(1, SK_FILTER_AUTO_BAN, False) is True
+
+
+@pytest.mark.asyncio
+async def test_cmd_block_via_bot_toggle(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args("on")
+    msg = FakeMessage(1)
+    await mod.cmd_block_via_bot(make_update(99, msg), ctx)
+    assert db.get_bool_setting(1, SK_BLOCK_VIA_BOT, False) is True
+
+
+@pytest.mark.asyncio
+async def test_filter_add_regex_command(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args()
+    msg = FakeMessage(1, text="/filter_add regex:PC\\d+")
+    await mod.filter_add(make_update(99, msg), ctx)
+    rows = db.get_filters(1)
+    assert rows and rows[0]["match_type"] == "regex" and rows[0]["keyword"] == "PC\\d+"
+
+
+@pytest.mark.asyncio
+async def test_filter_add_rejects_invalid_regex(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args()
+    msg = FakeMessage(1, text="/filter_add regex:(")
+    await mod.filter_add(make_update(99, msg), ctx)
+    assert not db.get_filters(1)
+    assert msg.replies
+
+
+# ── 拦截日志：命中各类拦截规则时应写入日志 ─────────────────────
+
+@pytest.mark.asyncio
+async def test_filter_hit_writes_intercept_log(db):
+    mod = make_module(db)
+    db.add_filter(1, "违禁词")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="包含违禁词的消息")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    logs = db.get_intercept_logs(1)
+    assert len(logs) == 1
+    assert logs[0]["reason"] == "filter"
+    assert logs[0]["rule"] == "违禁词"
+    assert logs[0]["user_id"] == 7
+    assert logs[0]["auto_banned"] == 0
+
+
+@pytest.mark.asyncio
+async def test_filter_regex_hit_writes_intercept_log(db):
+    mod = make_module(db)
+    db.add_filter(1, r"PC\d+", "regex")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="注册就送 PC28 大礼包")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    logs = db.get_intercept_logs(1)
+    assert logs[0]["reason"] == "filter"
+    assert logs[0]["rule"] == r"PC\d+"
+    assert "PC28" in logs[0]["message_summary"]
+
+
+@pytest.mark.asyncio
+async def test_filter_auto_ban_hit_marks_log_auto_banned(db):
+    mod = make_module(db)
+    db.add_filter(1, "违禁词")
+    db.set_setting(1, SK_FILTER_AUTO_BAN, "1")
+    ctx = make_ctx(FakeBot())
+    via_bot = types.SimpleNamespace(id=555, username="PostBot")
+    msg = FakeMessage(1, text="包含违禁词的消息", via_bot=via_bot)
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    logs = db.get_intercept_logs(1)
+    assert logs[0]["auto_banned"] == 1
+    assert logs[0]["via_bot_id"] == 555
+    assert logs[0]["via_bot_username"] == "PostBot"
+
+
+@pytest.mark.asyncio
+async def test_block_via_bot_hit_writes_intercept_log(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_BLOCK_VIA_BOT, "1")
+    ctx = make_ctx(FakeBot())
+    via_bot = types.SimpleNamespace(id=555, username="PostBot")
+    msg = FakeMessage(1, text="正常消息", via_bot=via_bot)
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    logs = db.get_intercept_logs(1)
+    assert logs[0]["reason"] == "block_via_bot"
+    assert logs[0]["via_bot_username"] == "PostBot"
+
+
+@pytest.mark.asyncio
+async def test_antiflood_hit_writes_intercept_log(db):
+    mod = make_module(db)
+    ctx = make_ctx(FakeBot())
+    with pytest.raises(ApplicationHandlerStop):
+        for i in range(6):
+            await mod.on_message(make_update(7, FakeMessage(i, text="hi")), ctx)
+    logs = db.get_intercept_logs(1)
+    assert logs and logs[0]["reason"] == "antiflood"
+
+
+@pytest.mark.asyncio
+async def test_alphabet_latin_hit_writes_intercept_log(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_ANTIFLOOD, "0")
+    db.set_setting(1, SK_ALPHABET_LATIN, "1")
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="hello world")
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_message(make_update(7, msg), ctx)
+    logs = db.get_intercept_logs(1)
+    assert logs and logs[0]["reason"] == "alphabet_latin"
+
+
+@pytest.mark.asyncio
+async def test_no_intercept_log_when_message_not_blocked(db):
+    mod = make_module(db)
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(1, text="正常的消息内容")
+    await mod.on_message(make_update(7, msg), ctx)
+    assert db.get_intercept_logs(1) == []

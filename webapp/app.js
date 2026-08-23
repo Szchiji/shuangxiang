@@ -96,6 +96,8 @@ function initTabs() {
       if (btn.dataset.tab === 'banned')     loadBanned();
       if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
       if (btn.dataset.tab === 'force-sub')  loadForceSub();
+      if (btn.dataset.tab === 'logs')       loadInterceptLogs();
+      if (btn.dataset.tab === 'scheduled')  loadScheduledMessages();
     });
   });
 }
@@ -280,6 +282,8 @@ async function loadSettings() {
   _welcomeBuilder.loadText(data.welcome_btns_text || '');
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
+  document.getElementById('filter-auto-ban').checked = !!data.filter_auto_ban;
+  document.getElementById('block-via-bot').checked   = !!data.block_via_bot;
   document.getElementById('flood-max-msgs').value   = data.flood_max_msgs ?? 5;
   document.getElementById('flood-window').value     = data.flood_window ?? 5;
   if (data.bot_name) {
@@ -313,6 +317,8 @@ document.getElementById('save-security-settings').addEventListener('click', asyn
   await saveSettingsPartial({
     antiflood:         document.getElementById('antiflood').checked,
     alphabet_latin:    document.getElementById('alphabet-latin').checked,
+    filter_auto_ban:   document.getElementById('filter-auto-ban').checked,
+    block_via_bot:     document.getElementById('block-via-bot').checked,
     flood_max_msgs:    floodMaxMsgs,
     flood_window:      floodWindow,
   }, 'settings-msg', '✅ 安全设置已保存');
@@ -762,6 +768,311 @@ async function unban(uid) {
 
 document.getElementById('banned-search').addEventListener('input', renderBanned);
 
+// ── Intercept Logs ────────────────────────────────────────────────────────────
+
+const _logReasonLabels = {
+  antiflood:       '🛡 防刷屏',
+  alphabet_latin:  '🔤 英文拦截',
+  filter:          '🚫 过滤词',
+  block_via_bot:   '🤖 第三方机器人',
+};
+
+function renderInterceptLogs(rows) {
+  const list = document.getElementById('logs-list');
+  if (!rows.length) {
+    list.innerHTML = '<p class="empty-state">暂无拦截日志。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  rows.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const who = r.full_name || (r.username ? '@' + r.username : '') || String(r.user_id ?? '—');
+    const reasonLabel = _logReasonLabels[r.reason] || r.reason;
+    const ruleText = r.rule ? `规则：${esc(r.rule)}　` : '';
+    const viaBotText = r.via_bot_id
+      ? `来源机器人：${esc(r.via_bot_username ? '@' + r.via_bot_username : String(r.via_bot_id))}　`
+      : '';
+    const banText = r.auto_banned ? '<span class="ban-status">已自动封禁</span>' : '';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">${reasonLabel} · 👤 ${esc(who)}</div>
+        <small>${ruleText}${viaBotText}${formatDateTime(r.created_at)}</small>
+        <div>${esc(summarizeText(r.message_summary))}</div>
+        ${banText}
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+async function loadInterceptLogs() {
+  const list = document.getElementById('logs-list');
+  document.getElementById('logs-msg').textContent = '';
+  document.getElementById('logs-msg').className = 'msg';
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/intercept_logs');
+  if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
+  renderInterceptLogs(Array.isArray(data) ? data : []);
+}
+
+// ── Scheduled Messages ──────────────────────────────────────────────────────
+
+let _smBuilder;
+let _smEditId = null;
+let _smCache = [];
+let _smSelected = new Set();
+
+const _smMsgTypeLabels = { text: '文字', photo: '图片', video: '视频', document: '文件' };
+const _smTargetTypeLabels = { group: '群组', channel: '频道' };
+
+function showSmListView() {
+  show('sm-list-view');
+  show('sm-table-card');
+  hide('sm-editor-view');
+}
+
+function showSmEditorView() {
+  hide('sm-table-card');
+  show('sm-editor-view');
+}
+
+function toggleSmMediaRow() {
+  const type = document.getElementById('sm-msg-type').value;
+  if (type === 'text') hide('sm-media-row');
+  else show('sm-media-row');
+}
+document.getElementById('sm-msg-type').addEventListener('change', toggleSmMediaRow);
+
+function resetSmForm() {
+  _smEditId = null;
+  document.getElementById('sm-edit-id').value = '';
+  document.getElementById('sm-form-title').textContent = '＋ 新增消息';
+  document.getElementById('sm-submit').textContent = '＋ 添加';
+  document.getElementById('sm-target-type').value = 'group';
+  document.getElementById('sm-target-chat-id').value = '';
+  document.getElementById('sm-target-name').value = '';
+  document.getElementById('sm-msg-type').value = 'text';
+  document.getElementById('sm-content').value = '';
+  document.getElementById('sm-media-id').value = '';
+  document.getElementById('sm-interval').value = 60;
+  document.getElementById('sm-start-at').value = '';
+  document.getElementById('sm-repeat').checked = true;
+  document.getElementById('sm-delete-previous').checked = false;
+  document.getElementById('sm-remark').value = '';
+  _smBuilder.loadText('');
+  toggleSmMediaRow();
+  document.getElementById('sm-form-msg').textContent = '';
+  document.getElementById('sm-form-msg').className = 'msg';
+}
+
+function startCreateSm() {
+  resetSmForm();
+  showSmEditorView();
+  document.getElementById('sm-editor-view').scrollIntoView({ behavior: 'smooth' });
+}
+
+function startEditSm(r) {
+  resetSmForm();
+  _smEditId = r.id;
+  document.getElementById('sm-edit-id').value = r.id;
+  document.getElementById('sm-form-title').textContent = '✏️ 编辑消息 #' + r.id;
+  document.getElementById('sm-submit').textContent = '💾 保存修改';
+  document.getElementById('sm-target-type').value = r.target_type || 'group';
+  document.getElementById('sm-target-chat-id').value = r.target_chat_id || '';
+  document.getElementById('sm-target-name').value = r.target_name || '';
+  document.getElementById('sm-msg-type').value = r.msg_type || 'text';
+  document.getElementById('sm-content').value = r.content || '';
+  document.getElementById('sm-media-id').value = r.media_id || '';
+  document.getElementById('sm-interval').value = r.interval_minutes || 60;
+  document.getElementById('sm-start-at').value = r.start_at ? String(r.start_at).replace(' ', 'T').slice(0, 16) : '';
+  document.getElementById('sm-repeat').checked = !!r.repeat;
+  document.getElementById('sm-delete-previous').checked = !!r.delete_previous;
+  document.getElementById('sm-remark').value = r.remark || '';
+  _smBuilder.loadText(r.buttons_text || '');
+  toggleSmMediaRow();
+  showSmEditorView();
+  document.getElementById('sm-editor-view').scrollIntoView({ behavior: 'smooth' });
+}
+
+function renderScheduledMessages() {
+  const tbody = document.getElementById('sm-table-body');
+  const query = document.getElementById('sm-search').value.trim().toLowerCase();
+  const rows = _smCache.filter(r => !query || String(r.remark || '').toLowerCase().includes(query));
+
+  document.getElementById('sm-select-all').checked = false;
+  _smSelected.forEach(id => { if (!rows.some(r => r.id === id)) _smSelected.delete(id); });
+  updateSmBulkBar();
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state">${
+      _smCache.length ? '没有匹配的定时消息。' : '暂无定时消息。'
+    }</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = '';
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="checkbox" class="sm-row-check" ${_smSelected.has(r.id) ? 'checked' : ''}></td>
+      <td>${r.id}</td>
+      <td><span class="sm-badge sm-badge-${esc(r.msg_type)}">${esc(_smMsgTypeLabels[r.msg_type] || r.msg_type)}</span></td>
+      <td>
+        <span class="sm-target-type">${esc(_smTargetTypeLabels[r.target_type] || r.target_type)}</span>
+        <div class="sm-target-name">${esc(r.target_name || r.target_chat_id)}</div>
+      </td>
+      <td>${r.interval_minutes}分钟</td>
+      <td>${r.start_at ? esc(formatDateTime(r.start_at)) : '-'}</td>
+      <td><span class="sm-status ${r.enabled ? 'on' : 'off'}">${r.enabled ? '启用' : '停用'}</span></td>
+      <td class="sm-actions">
+        <button class="btn-icon edit" title="编辑">✏️</button>
+        <button class="btn-icon toggle" title="启用/停用">${r.enabled ? '⏸' : '▶️'}</button>
+        <button class="btn-icon danger" title="删除">🗑</button>
+      </td>`;
+    tr.querySelector('.sm-row-check').addEventListener('change', (e) => {
+      if (e.target.checked) _smSelected.add(r.id); else _smSelected.delete(r.id);
+      updateSmBulkBar();
+    });
+    tr.querySelector('.btn-icon.edit').addEventListener('click', () => startEditSm(r));
+    tr.querySelector('.btn-icon.danger').addEventListener('click', () => deleteSm(r.id));
+    tr.querySelector('.btn-icon.toggle').addEventListener('click', () => toggleSm(r.id, !r.enabled));
+    tbody.appendChild(tr);
+  });
+}
+
+function updateSmBulkBar() {
+  const bar = document.getElementById('sm-bulk-bar');
+  if (_smSelected.size > 0) {
+    document.getElementById('sm-selected-count').textContent = `已选 ${_smSelected.size} 项`;
+    show('sm-bulk-bar');
+  } else {
+    hide('sm-bulk-bar');
+  }
+}
+
+async function loadScheduledMessages() {
+  showSmListView();
+  const tbody = document.getElementById('sm-table-body');
+  tbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载中…</td></tr>';
+  const data = await api('GET', '/scheduled_messages');
+  if (data.error) {
+    tbody.innerHTML = `<tr><td colspan="8" class="msg fail">加载失败：${esc(data.error)}</td></tr>`;
+    return;
+  }
+  _smCache = Array.isArray(data) ? data : [];
+  renderScheduledMessages();
+}
+
+async function deleteSm(id) {
+  if (!window.confirm('确定要删除这条定时消息吗？')) return;
+  await api('DELETE', '/scheduled_messages/' + id);
+  _smSelected.delete(id);
+  if (_smEditId === id) resetSmForm();
+  loadScheduledMessages();
+}
+
+async function toggleSm(id, enabled) {
+  await api('POST', `/scheduled_messages/${id}/toggle`, { enabled });
+  loadScheduledMessages();
+}
+
+document.getElementById('sm-select-all').addEventListener('change', (e) => {
+  document.querySelectorAll('#sm-table-body .sm-row-check').forEach(cb => {
+    cb.checked = e.target.checked;
+    cb.dispatchEvent(new Event('change'));
+  });
+});
+
+document.getElementById('sm-bulk-delete').addEventListener('click', async () => {
+  if (!_smSelected.size) return;
+  if (!window.confirm(`确定要删除已选的 ${_smSelected.size} 条定时消息吗？`)) return;
+  await api('POST', '/scheduled_messages/bulk_delete', { ids: [..._smSelected] });
+  _smSelected.clear();
+  loadScheduledMessages();
+});
+
+document.getElementById('sm-search-btn').addEventListener('click', renderScheduledMessages);
+document.getElementById('sm-search').addEventListener('input', renderScheduledMessages);
+document.getElementById('sm-search-clear').addEventListener('click', () => {
+  document.getElementById('sm-search').value = '';
+  renderScheduledMessages();
+});
+
+document.getElementById('sm-start-create').addEventListener('click', startCreateSm);
+document.getElementById('sm-back').addEventListener('click', () => { resetSmForm(); showSmListView(); });
+document.getElementById('sm-cancel').addEventListener('click', () => { resetSmForm(); showSmListView(); });
+
+document.getElementById('sm-submit').addEventListener('click', async () => {
+  const msgEl = document.getElementById('sm-form-msg');
+  const payload = {
+    target_type:      document.getElementById('sm-target-type').value,
+    target_chat_id:   document.getElementById('sm-target-chat-id').value.trim(),
+    target_name:      document.getElementById('sm-target-name').value.trim(),
+    msg_type:         document.getElementById('sm-msg-type').value,
+    content:          document.getElementById('sm-content').value.trim(),
+    media_id:         document.getElementById('sm-media-id').value.trim(),
+    buttons_text:     _smBuilder.getText(),
+    interval_minutes: parseInt(document.getElementById('sm-interval').value, 10),
+    start_at:         document.getElementById('sm-start-at').value,
+    repeat:           document.getElementById('sm-repeat').checked,
+    delete_previous:  document.getElementById('sm-delete-previous').checked,
+    remark:           document.getElementById('sm-remark').value.trim(),
+  };
+  if (!payload.target_chat_id) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '目标标识不能为空';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = _smEditId !== null
+    ? await api('PUT', '/scheduled_messages/' + _smEditId, payload)
+    : await api('POST', '/scheduled_messages', payload);
+  if (res.ok || res.id) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = _smEditId !== null ? '✅ 已保存修改' : '✅ 已添加';
+    resetSmForm();
+    showSmListView();
+    loadScheduledMessages();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '失败');
+  }
+});
+
+document.getElementById('sm-export').addEventListener('click', async () => {
+  const data = await api('GET', '/scheduled_messages/export');
+  if (data.error) { alert('导出失败：' + data.error); return; }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'scheduled_messages.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('sm-import').addEventListener('click', () => {
+  document.getElementById('sm-import-file').click();
+});
+
+document.getElementById('sm-import-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let parsed;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch (_) {
+    alert('导入失败：不是有效的 JSON 文件');
+    return;
+  }
+  const res = await api('POST', '/scheduled_messages/import', parsed);
+  if (res.error) { alert('导入失败：' + res.error); return; }
+  alert(`导入完成：成功 ${res.imported} 条${res.errors && res.errors.length ? `，失败 ${res.errors.length} 条` : ''}`);
+  loadScheduledMessages();
+});
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 async function loadStats() {
@@ -800,6 +1111,10 @@ _arBuilder = initButtonBuilder(
 _bcBuilder = initButtonBuilder(
   document.getElementById('bc-buttons-builder'),
   'bc-buttons-add-row'
+);
+_smBuilder = initButtonBuilder(
+  document.getElementById('sm-buttons-builder'),
+  'sm-buttons-add-row'
 );
 
 initSidebar();

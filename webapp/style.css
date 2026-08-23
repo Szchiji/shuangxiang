@@ -516,6 +516,57 @@ body {
 
 .hint-text { font-size: 13px; color: var(--hint); margin-bottom: 12px; }
 
+/* ── Scheduled messages ──────────────────────────────────────────────── */
+.sm-hero {
+  background: linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 70%, #6366f1));
+  color: #fff;
+}
+.sm-hero-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.sm-hero-desc  { font-size: 13px; opacity: .92; margin-bottom: 14px; }
+.sm-hero-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-sm-action {
+  border: none; border-radius: 10px; padding: 10px 14px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  transition: transform .12s ease, opacity .12s ease;
+}
+.btn-sm-action:hover { transform: translateY(-1px); opacity: .92; }
+.btn-sm-export { background: var(--success); color: #fff; }
+.btn-sm-import { background: #38bdf8; color: #fff; }
+.btn-sm-add    { background: #fff; color: var(--text); }
+
+.sm-table-wrap { overflow-x: auto; }
+.sm-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+.sm-table th, .sm-table td {
+  padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border);
+}
+.sm-table th { color: var(--hint); font-weight: 600; font-size: 12px; }
+.sm-table td { white-space: normal; word-break: break-all; }
+
+.sm-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 6px;
+  font-size: 12px; font-weight: 700; color: #fff; background: var(--hint);
+}
+.sm-badge-text     { background: #64748b; }
+.sm-badge-photo    { background: var(--success); }
+.sm-badge-video    { background: #f59e0b; }
+.sm-badge-document { background: #8b5cf6; }
+
+.sm-target-type { font-size: 11px; background: var(--bg); color: var(--hint); border-radius: 6px; padding: 1px 6px; }
+.sm-target-name { font-size: 12px; margin-top: 2px; }
+
+.sm-status { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+.sm-status.on  { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
+.sm-status.off { color: var(--hint);    background: var(--bg); }
+
+.sm-actions { display: flex; gap: 4px; }
+
+.sm-bulk-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 13px; color: var(--hint);
+}
+
 /* ── Loading ─────────────────────────────────────────────────────────── */
 #loading {
   display: flex;

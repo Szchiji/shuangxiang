@@ -26,6 +26,8 @@ from modules.auto_reply_module import (
     _FLOOD_WINDOW_DEFAULT,
     SK_ALPHABET_LATIN,
     SK_ANTIFLOOD,
+    SK_BLOCK_VIA_BOT,
+    SK_FILTER_AUTO_BAN,
     SK_FLOOD_MAX_MSGS,
     SK_FLOOD_WINDOW,
     clamp_flood_limit,
@@ -49,6 +51,10 @@ _INIT_DATA_MAX_AGE = 3600  # 1 hour
 
 # Allowed values for auto-reply match_type.
 _VALID_MATCH_TYPES = frozenset({"contains", "exact", "startswith", "regex"})
+
+# Allowed values for scheduled-message target_type / msg_type.
+_VALID_TARGET_TYPES = frozenset({"group", "channel"})
+_VALID_SCHEDULED_MSG_TYPES = frozenset({"text", "photo", "video", "document"})
 
 
 # ── Telegram initData validation ─────────────────────────────────────────────
@@ -179,6 +185,25 @@ def _default_join_url(chat) -> str:
     return ""
 
 
+def _normalize_start_at(raw) -> str | None:
+    """把前端传入的开始时间（如 datetime-local 的 ``YYYY-MM-DDTHH:MM``）规范化为
+    ``YYYY-MM-DD HH:MM:SS``；空值返回 None（表示立即生效）。"""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    s = s.replace("T", " ")
+    if len(s) == 16:  # YYYY-MM-DD HH:MM
+        s += ":00"
+    try:
+        from datetime import datetime as _dt
+        _dt.strptime(s, "%Y-%m-%d %H:%M:%S")
+    except ValueError as e:
+        raise ValueError("start_at invalid") from e
+    return s
+
+
 def _force_sub_rows_to_text(raw) -> str:
     if not raw:
         return ""
@@ -290,6 +315,8 @@ async def _get_settings(request: web.Request):
         "force_sub_msg":       db.get_setting(tid, SK_FORCE_SUB_MSG, "") or "",
         "antiflood":           db.get_bool_setting(tid, SK_ANTIFLOOD, True),
         "alphabet_latin":      db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
+        "filter_auto_ban":     db.get_bool_setting(tid, SK_FILTER_AUTO_BAN, False),
+        "block_via_bot":       db.get_bool_setting(tid, SK_BLOCK_VIA_BOT, False),
         "flood_max_msgs":      db.get_int_setting(tid, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT),
         "flood_window":        db.get_int_setting(tid, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT)),
         "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
@@ -334,7 +361,8 @@ async def _post_settings(request: web.Request):
         if fsub_msg is None:
             return web.json_response({"error": "force_sub_msg invalid (max 500 chars)"}, status=400)
         db.set_setting(tid, SK_FORCE_SUB_MSG, fsub_msg)
-    for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
+    for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON,
+                SK_FILTER_AUTO_BAN, SK_BLOCK_VIA_BOT):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
     if SK_FLOOD_MAX_MSGS in body or SK_FLOOD_WINDOW in body:
@@ -430,6 +458,199 @@ async def _delete_auto_reply(request: web.Request):
     return web.json_response({"ok": True})
 
 
+# ── 定时消息 ──────────────────────────────────────────────────────────────────
+
+def _scheduled_message_to_json(r) -> dict:
+    return {
+        **dict(r),
+        "buttons_text": _button_rows_to_text(r["buttons"] or ""),
+    }
+
+
+def _parse_scheduled_message_body(body: dict):
+    """校验并规范化定时消息表单，返回 kwargs 供 add/update_scheduled_message 使用。
+
+    校验失败抛出 ``ValueError``。
+    """
+    target_type = str(body.get("target_type", "group"))
+    if target_type not in _VALID_TARGET_TYPES:
+        raise ValueError(f"target_type must be one of {sorted(_VALID_TARGET_TYPES)}")
+    target_chat_id = _normalize_chat(str(body.get("target_chat_id", "")))
+    if target_chat_id is None:
+        raise ValueError("target_chat_id required")
+    target_name = _clean_text(body.get("target_name", ""), max_len=200) or ""
+
+    msg_type = str(body.get("msg_type", "text"))
+    if msg_type not in _VALID_SCHEDULED_MSG_TYPES:
+        raise ValueError(f"msg_type must be one of {sorted(_VALID_SCHEDULED_MSG_TYPES)}")
+    content = _clean_text(body.get("content", ""), max_len=4000) or ""
+    media_id = _clean_text(body.get("media_id", ""), max_len=500) or ""
+    if msg_type == "text" and not content:
+        raise ValueError("content required for text messages")
+    if msg_type in ("photo", "video", "document") and not media_id:
+        raise ValueError("media_id required for photo/video/document messages")
+
+    remark = _clean_text(body.get("remark", ""), max_len=200) or ""
+    buttons_json = _normalize_button_text(body.get("buttons_text", ""), max_len=2000)
+
+    try:
+        interval_minutes = int(body.get("interval_minutes", 60))
+    except (TypeError, ValueError):
+        raise ValueError("interval_minutes must be an integer") from None
+    if interval_minutes < 1:
+        raise ValueError("interval_minutes must be >= 1")
+
+    repeat = 1 if body.get("repeat", True) else 0
+    delete_previous = 1 if body.get("delete_previous", False) else 0
+    start_at = _normalize_start_at(body.get("start_at"))
+    next_run_at = start_at  # 留空表示立即生效（下次轮询即发送）
+
+    return {
+        "target_type":      target_type,
+        "target_chat_id":   target_chat_id,
+        "target_name":      target_name,
+        "msg_type":         msg_type,
+        "content":          content,
+        "media_id":         media_id,
+        "buttons":          buttons_json,
+        "remark":           remark,
+        "interval_minutes": interval_minutes,
+        "repeat":           repeat,
+        "delete_previous":  delete_previous,
+        "start_at":         start_at,
+        "next_run_at":      next_run_at,
+    }
+
+
+async def _get_scheduled_messages(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_scheduled_messages(tenant["id"])
+    return web.json_response([_scheduled_message_to_json(r) for r in rows])
+
+
+async def _post_scheduled_message(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        fields = _parse_scheduled_message_body(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    sid = Database().add_scheduled_message(tenant["id"], **fields)
+    return web.json_response({"id": sid})
+
+
+async def _put_scheduled_message(request: web.Request):
+    tenant = _auth(request)
+    try:
+        sid = int(request.match_info["sid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    if Database().get_scheduled_message(tenant["id"], sid) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        fields = _parse_scheduled_message_body(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    Database().update_scheduled_message(tenant["id"], sid, **fields)
+    return web.json_response({"ok": True})
+
+
+async def _delete_scheduled_message(request: web.Request):
+    tenant = _auth(request)
+    try:
+        sid = int(request.match_info["sid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    Database().delete_scheduled_message(tenant["id"], sid)
+    return web.json_response({"ok": True})
+
+
+async def _post_scheduled_messages_bulk_delete(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    ids = body.get("ids", [])
+    if not isinstance(ids, list):
+        return web.json_response({"error": "ids must be a list"}, status=400)
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        return web.json_response({"error": "ids must be integers"}, status=400)
+    deleted = Database().delete_scheduled_messages(tenant["id"], ids)
+    return web.json_response({"ok": True, "deleted": deleted})
+
+
+async def _post_scheduled_message_toggle(request: web.Request):
+    tenant = _auth(request)
+    try:
+        sid = int(request.match_info["sid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    if Database().get_scheduled_message(tenant["id"], sid) is None:
+        return web.json_response({"error": "not found"}, status=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    Database().set_scheduled_message_enabled(
+        tenant["id"], sid, bool(body.get("enabled", True)))
+    return web.json_response({"ok": True})
+
+
+async def _get_scheduled_messages_export(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_scheduled_messages(tenant["id"])
+    items = []
+    for r in rows:
+        d = dict(r)
+        d.pop("id", None)
+        d.pop("tenant_id", None)
+        d.pop("last_message_id", None)
+        d.pop("last_sent_at", None)
+        d.pop("next_run_at", None)
+        d.pop("created_at", None)
+        items.append(d)
+    return web.json_response(
+        {"items": items},
+        headers={"Content-Disposition":
+                 'attachment; filename="scheduled_messages.json"'})
+
+
+async def _post_scheduled_messages_import(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    items = body.get("items", body if isinstance(body, list) else None)
+    if not isinstance(items, list):
+        return web.json_response({"error": "items must be a list"}, status=400)
+    db = Database()
+    imported = 0
+    errors = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            errors.append(f"#{idx}: invalid item")
+            continue
+        try:
+            fields = _parse_scheduled_message_body(item)
+        except ValueError as e:
+            errors.append(f"#{idx}: {e}")
+            continue
+        db.add_scheduled_message(tenant["id"], **fields)
+        imported += 1
+    return web.json_response({"ok": True, "imported": imported, "errors": errors})
+
+
 async def _get_banned(request: web.Request):
     tenant = _auth(request)
     rows = Database().get_banned_tenant_users(tenant["id"])
@@ -441,6 +662,12 @@ async def _get_banned(request: web.Request):
         }
         for r in rows
     ])
+
+
+async def _get_intercept_logs(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_intercept_logs(tenant["id"], limit=200)
+    return web.json_response([dict(r) for r in rows])
 
 
 async def _do_broadcast(
@@ -587,10 +814,28 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/auto_replies/{rid}", _delete_auto_reply)
     app.router.add_get(
         "/api/{tenant_id}/banned",             _get_banned)
+    app.router.add_get(
+        "/api/{tenant_id}/intercept_logs",     _get_intercept_logs)
     app.router.add_post(
         "/api/{tenant_id}/unban/{uid}",        _post_unban)
     app.router.add_post(
         "/api/{tenant_id}/broadcast",          _post_broadcast)
+    app.router.add_get(
+        "/api/{tenant_id}/scheduled_messages",              _get_scheduled_messages)
+    app.router.add_post(
+        "/api/{tenant_id}/scheduled_messages",              _post_scheduled_message)
+    app.router.add_get(
+        "/api/{tenant_id}/scheduled_messages/export",       _get_scheduled_messages_export)
+    app.router.add_post(
+        "/api/{tenant_id}/scheduled_messages/import",       _post_scheduled_messages_import)
+    app.router.add_post(
+        "/api/{tenant_id}/scheduled_messages/bulk_delete",  _post_scheduled_messages_bulk_delete)
+    app.router.add_put(
+        "/api/{tenant_id}/scheduled_messages/{sid}",        _put_scheduled_message)
+    app.router.add_delete(
+        "/api/{tenant_id}/scheduled_messages/{sid}",        _delete_scheduled_message)
+    app.router.add_post(
+        "/api/{tenant_id}/scheduled_messages/{sid}/toggle", _post_scheduled_message_toggle)
 
     return app
 
