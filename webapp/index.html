@@ -76,6 +76,14 @@
                 <label class="switch"><input type="checkbox" id="alphabet-latin"><span class="slider"></span></label>
               </div>
             </div>
+            <label class="field-label">刷屏判定阈值（窗口秒数内最多消息条数）
+              <div class="inline-fields">
+                <input type="number" id="flood-max-msgs" min="1" max="50">
+                <span>条 / </span>
+                <input type="number" id="flood-window" min="1" max="60">
+                <span>秒</span>
+              </div>
+            </label>
             <button id="save-security-settings" class="btn-primary">💾 保存安全设置</button>
             <div id="settings-msg" class="msg"></div>
           </div>

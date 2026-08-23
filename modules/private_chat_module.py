@@ -76,7 +76,9 @@ class PrivateChatModule(BaseModule):
         self.sent_ack = (msgs.get("sent_ack")
                          or "✅ 已发送成功，管理员会尽快回复你。")
         self._ack_delete_delay = 5.0
-        self.banned   = msgs.get("banned", "⛔ 你已被封禁，无法发送消息。")
+        self.bot_forward_blocked = msgs.get(
+            "bot_forward_blocked",
+            "⛔ 暂不支持转发其他机器人的消息，请直接发送文字或原始内容。")
         # 可配置品牌署名页脚（默认关闭，尊重租户；设置后追加到用户欢迎语末尾）
         self.brand    = (msgs.get("brand") or "").strip()
         # 拥有者首次进入时的「下一步」上手清单
@@ -184,6 +186,9 @@ class PrivateChatModule(BaseModule):
                     parse_mode="Markdown",
                     reply_markup=self._panel_markup())
         else:
+            if self.db.is_banned(self.tenant_id, user.id):
+                # 被封禁用户静默失效：不回复欢迎语，无法使用机器人。
+                return
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)
             welcome = self.db.get_setting(
@@ -419,6 +424,7 @@ class PrivateChatModule(BaseModule):
                 body=(
                     "*自动回复*：/ar_add 关键词 | 回复　/ar_list　/ar_del\n"
                     "*关键词过滤*：/filter_add 词　/filter_list　/filter_del\n"
+                    "*防刷屏*：/antiflood on｜off　/flood_limit 条数 秒数\n"
                     "*用户*：回复消息后 /ban /unban /info"))
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=back)
         elif action == "bans":
@@ -502,7 +508,12 @@ class PrivateChatModule(BaseModule):
         self.db.upsert_tenant_user(self.tenant_id, user.id,
                                    user.username or "", user.full_name)
         if self.db.is_banned(self.tenant_id, user.id):
-            await msg.reply_text(self.banned)
+            # 被封禁用户静默失效：不回复任何提示，避免其得知封禁状态。
+            return
+
+        # 拒绝接收转发自其他机器人的消息，避免被用于中转/滥用。
+        if self._is_forwarded_from_bot(msg):
+            await msg.reply_text(self.bot_forward_blocked)
             return
 
         # 相册（媒体组）：聚合后整体转发，避免逐张拆散。
@@ -646,6 +657,15 @@ class PrivateChatModule(BaseModule):
                     chat_id=group, message_thread_id=thread_id,
                     text=f"🆕 新会话\n\n{self._user_label(user)}", parse_mode="HTML")
             return thread_id
+
+    @staticmethod
+    def _is_forwarded_from_bot(msg) -> bool:
+        """判断消息是否为「转发自其他机器人」的消息。"""
+        origin = getattr(msg, "forward_origin", None)
+        if origin is None:
+            return False
+        sender_user = getattr(origin, "sender_user", None)
+        return bool(sender_user is not None and getattr(sender_user, "is_bot", False))
 
     @staticmethod
     def _forward_origin_label(msg) -> str | None:

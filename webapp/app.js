@@ -280,6 +280,8 @@ async function loadSettings() {
   _welcomeBuilder.loadText(data.welcome_btns_text || '');
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
+  document.getElementById('flood-max-msgs').value   = data.flood_max_msgs ?? 5;
+  document.getElementById('flood-window').value     = data.flood_window ?? 5;
   if (data.bot_name) {
     document.getElementById('bot-name').textContent = '🤖 ' + data.bot_name;
   }
@@ -300,9 +302,19 @@ document.getElementById('save-welcome-buttons').addEventListener('click', async 
 });
 
 document.getElementById('save-security-settings').addEventListener('click', async () => {
+  const floodMaxMsgs = parseInt(document.getElementById('flood-max-msgs').value, 10);
+  const floodWindow  = parseInt(document.getElementById('flood-window').value, 10);
+  if (Number.isNaN(floodMaxMsgs) || Number.isNaN(floodWindow)) {
+    const msgEl = document.getElementById('settings-msg');
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 刷屏阈值必须为数字';
+    return;
+  }
   await saveSettingsPartial({
     antiflood:         document.getElementById('antiflood').checked,
     alphabet_latin:    document.getElementById('alphabet-latin').checked,
+    flood_max_msgs:    floodMaxMsgs,
+    flood_window:      floodWindow,
   }, 'settings-msg', '✅ 安全设置已保存');
 });
 

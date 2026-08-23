@@ -109,6 +109,8 @@ async def test_get_settings_ok(aiohttp_client, app, db, tenant_id, init_data_hea
     data = await resp.json()
     assert "welcome_text" in data
     assert "antiflood" in data
+    assert data["flood_max_msgs"] == 5
+    assert data["flood_window"] == 5
 
 
 @pytest.mark.asyncio
@@ -137,6 +139,54 @@ async def test_post_settings_ok(aiohttp_client, app, db, tenant_id, init_data_he
     # Verify it was stored
     assert db.get_setting(tenant_id, "welcome_text") == "Hello!"
     assert db.get_bool_setting(tenant_id, "antiflood", True) is False
+
+
+@pytest.mark.asyncio
+async def test_post_settings_supports_flood_limit(aiohttp_client, app, db, tenant_id,
+                                                    init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"flood_max_msgs": 10, "flood_window": 20},
+    )
+    assert resp.status == 200
+    assert db.get_int_setting(tenant_id, "flood_max_msgs", 0) == 10
+    assert db.get_int_setting(tenant_id, "flood_window", 0) == 20
+    # 读取时也应返回自定义值
+    resp2 = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data2 = await resp2.json()
+    assert data2["flood_max_msgs"] == 10
+    assert data2["flood_window"] == 20
+
+
+@pytest.mark.asyncio
+async def test_post_settings_clamps_flood_limit(aiohttp_client, app, db, tenant_id,
+                                                 init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"flood_max_msgs": 9999, "flood_window": -5},
+    )
+    assert resp.status == 200
+    assert db.get_int_setting(tenant_id, "flood_max_msgs", 0) == 50
+    assert db.get_int_setting(tenant_id, "flood_window", 0) == 1
+
+
+@pytest.mark.asyncio
+async def test_post_settings_rejects_invalid_flood_limit(aiohttp_client, app, db, tenant_id,
+                                                           init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"flood_max_msgs": "abc"},
+    )
+    assert resp.status == 400
 
 
 @pytest.mark.asyncio

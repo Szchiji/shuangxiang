@@ -21,7 +21,15 @@ import aiohttp as _aiohttp
 from aiohttp import web
 
 from core.database import Database
-from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD
+from modules.auto_reply_module import (
+    _FLOOD_MAX_MSGS_DEFAULT,
+    _FLOOD_WINDOW_DEFAULT,
+    SK_ALPHABET_LATIN,
+    SK_ANTIFLOOD,
+    SK_FLOOD_MAX_MSGS,
+    SK_FLOOD_WINDOW,
+    clamp_flood_limit,
+)
 from modules.customize_module import (
     SK_FORCE_SUB,
     SK_FORCE_SUB_MSG,
@@ -282,6 +290,8 @@ async def _get_settings(request: web.Request):
         "force_sub_msg":       db.get_setting(tid, SK_FORCE_SUB_MSG, "") or "",
         "antiflood":           db.get_bool_setting(tid, SK_ANTIFLOOD, True),
         "alphabet_latin":      db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
+        "flood_max_msgs":      db.get_int_setting(tid, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT),
+        "flood_window":        db.get_int_setting(tid, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT)),
         "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
         "manage_group":        db.get_manage_group(tid),
         "bot_username":        tenant["bot_username"] or "",
@@ -327,6 +337,19 @@ async def _post_settings(request: web.Request):
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
+    if SK_FLOOD_MAX_MSGS in body or SK_FLOOD_WINDOW in body:
+        try:
+            raw_n = int(body.get(
+                SK_FLOOD_MAX_MSGS,
+                db.get_int_setting(tid, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT)))
+            raw_w = int(body.get(
+                SK_FLOOD_WINDOW,
+                db.get_int_setting(tid, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT))))
+        except (TypeError, ValueError):
+            return web.json_response({"error": "flood limit must be integers"}, status=400)
+        n, w = clamp_flood_limit(raw_n, raw_w)
+        db.set_setting(tid, SK_FLOOD_MAX_MSGS, n)
+        db.set_setting(tid, SK_FLOOD_WINDOW, w)
     return web.json_response({"ok": True})
 
 

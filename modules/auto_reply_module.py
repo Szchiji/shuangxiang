@@ -36,12 +36,18 @@ from modules.customize_module import reply_with_optional_media, rows_to_keyboard
 logger = logging.getLogger("shuangxiang.auto_reply")
 
 # 设置键
-SK_ANTIFLOOD      = "antiflood"        # 防刷屏开关，默认开启
-SK_ALPHABET_LATIN = "alphabet_latin"   # 屏蔽拉丁字母，默认关闭
+SK_ANTIFLOOD        = "antiflood"        # 防刷屏开关，默认开启
+SK_ALPHABET_LATIN   = "alphabet_latin"   # 屏蔽拉丁字母，默认关闭
+SK_FLOOD_MAX_MSGS   = "flood_max_msgs"   # 防刷屏：窗口内最多消息数，可自定义
+SK_FLOOD_WINDOW     = "flood_window"     # 防刷屏：窗口秒数，可自定义
 
-# 防刷屏阈值：窗口内消息条数上限
-_FLOOD_WINDOW   = 5.0   # 秒
-_FLOOD_MAX_MSGS = 5     # 窗口内最多消息数
+# 防刷屏阈值默认值（管理员可在后台自定义，见 SK_FLOOD_MAX_MSGS / SK_FLOOD_WINDOW）
+_FLOOD_WINDOW_DEFAULT   = 5.0   # 秒
+_FLOOD_MAX_MSGS_DEFAULT = 5     # 窗口内最多消息数
+
+# 自定义阈值的合法范围，防止管理员误配置导致过滤器失效或过于灵敏
+_FLOOD_WINDOW_MIN, _FLOOD_WINDOW_MAX     = 1, 60
+_FLOOD_MAX_MSGS_MIN, _FLOOD_MAX_MSGS_MAX = 1, 50
 
 # 拉丁字母（英语等使用的基本/扩展拉丁字母）
 _LATIN_RE = re.compile(r"[A-Za-z\u00C0-\u024F]")
@@ -52,10 +58,17 @@ def match_type_of(row) -> str:
     return (row["match_type"] if "match_type" in row.keys() else "") or "contains"
 
 
+def clamp_flood_limit(max_msgs: int, window: int) -> tuple[int, int]:
+    """将自定义的刷屏阈值限制在合法范围内，避免误配置。"""
+    max_msgs = max(_FLOOD_MAX_MSGS_MIN, min(_FLOOD_MAX_MSGS_MAX, max_msgs))
+    window = max(_FLOOD_WINDOW_MIN, min(_FLOOD_WINDOW_MAX, window))
+    return max_msgs, window
+
+
 class AutoReplyModule(BaseModule):
 
-    # 每隔多少秒清理一次过期的防刷屏条目（与 _FLOOD_WINDOW 相同量级即可）
-    _FLOOD_CLEANUP_INTERVAL = _FLOOD_WINDOW * 10
+    # 每隔多少秒清理一次过期的防刷屏条目（与窗口量级相同即可，取默认窗口的 10 倍）
+    _FLOOD_CLEANUP_INTERVAL = _FLOOD_WINDOW_DEFAULT * 10
 
     def setup(self, app: Application) -> None:
         self.db        = Database()
@@ -65,6 +78,9 @@ class AutoReplyModule(BaseModule):
         self._flood: dict[int, list[float]] = {}
         # 上次清理过期条目的时间（单调时钟），用于定期触发 _cleanup_flood
         self._flood_last_cleanup: float = 0.0
+        # 相册（媒体组）去重缓存：user_id -> (media_group_id, 判定结果, 时间戳)，
+        # 避免同一相册的多条消息被逐条计入刷屏计数
+        self._flood_group_cache: dict[int, tuple[str, bool, float]] = {}
 
         app.add_handler(CommandHandler("ar_add", self.ar_add))
         app.add_handler(CommandHandler("ar_list", self.ar_list))
@@ -73,6 +89,7 @@ class AutoReplyModule(BaseModule):
         app.add_handler(CommandHandler("filter_list", self.filter_list))
         app.add_handler(CommandHandler("filter_del", self.filter_del))
         app.add_handler(CommandHandler("antiflood", self.cmd_antiflood))
+        app.add_handler(CommandHandler("flood_limit", self.cmd_flood_limit))
         app.add_handler(CommandHandler("alphabet_latin", self.cmd_alphabet_latin))
 
         # 在强制订阅拦截(group=-1)之后、双向转发(group=5)之前执行。
@@ -183,6 +200,33 @@ class AutoReplyModule(BaseModule):
         await update.message.reply_text(
             f"防刷屏过滤器当前：{'开启' if cur else '关闭'}。\n用法：/antiflood on｜off")
 
+    async def cmd_flood_limit(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """查看或设置防刷屏阈值：多少秒内最多允许多少条消息。"""
+        if not self._admin(update):
+            return
+        cur_n = self.db.get_int_setting(
+            self.tenant_id, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT)
+        cur_w = self.db.get_int_setting(
+            self.tenant_id, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT))
+        if not ctx.args:
+            await update.message.reply_text(
+                f"当前防刷屏阈值：{cur_w} 秒内最多 {cur_n} 条消息。\n"
+                f"用法：/flood_limit <条数> <秒数>，例如：/flood_limit 5 5\n"
+                f"（条数范围 {_FLOOD_MAX_MSGS_MIN}-{_FLOOD_MAX_MSGS_MAX}，"
+                f"秒数范围 {_FLOOD_WINDOW_MIN}-{_FLOOD_WINDOW_MAX}）")
+            return
+        if len(ctx.args) != 2:
+            await update.message.reply_text("用法：/flood_limit <条数> <秒数>，例如：/flood_limit 5 5")
+            return
+        try:
+            n, w = clamp_flood_limit(int(ctx.args[0]), int(ctx.args[1]))
+        except ValueError:
+            await update.message.reply_text("用法：/flood_limit <条数> <秒数>，例如：/flood_limit 5 5")
+            return
+        self.db.set_setting(self.tenant_id, SK_FLOOD_MAX_MSGS, n)
+        self.db.set_setting(self.tenant_id, SK_FLOOD_WINDOW, w)
+        await update.message.reply_text(f"✅ 已设置防刷屏阈值：{w} 秒内最多 {n} 条消息。")
+
     async def cmd_alphabet_latin(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._admin(update):
             return
@@ -199,21 +243,46 @@ class AutoReplyModule(BaseModule):
 
     # ── 防刷屏检测 ──────────────────────────────────────────
 
-    def _is_flooding(self, user_id: int, now: float | None = None) -> bool:
+    def _flood_limit(self) -> tuple[int, float]:
+        """读取该租户当前生效的防刷屏阈值（可在后台自定义，否则用默认值）。"""
+        n = self.db.get_int_setting(
+            self.tenant_id, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT)
+        w = self.db.get_int_setting(
+            self.tenant_id, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT))
+        return clamp_flood_limit(n, w)
+
+    def _is_flooding(self, user_id: int, media_group_id: str | None = None,
+                      now: float | None = None) -> bool:
         """记录一次消息，并判断是否超过窗口内的频率阈值。
 
         过期用户条目在窗口结束后即时清除，避免长时间运行后内存无限增长。
+
+        同一相册（媒体组）会拆分成多条 Update 逐一到达，若逐条计数，
+        发送稍大的相册就会导致后面的图片/视频被误判为刷屏而拦截
+        （例如管理员总是只收到前 5 张）。因此同一 media_group_id 只按
+        一条消息计数，并复用首条消息的判定结果。
         """
         now = time.monotonic() if now is None else now
-        bucket = [t for t in self._flood.get(user_id, []) if now - t < _FLOOD_WINDOW]
+        max_msgs, window = self._flood_limit()
+        group_cache = self._flood_group_cache
+        if media_group_id is not None:
+            cached = group_cache.get(user_id)
+            if (cached is not None and cached[0] == media_group_id
+                    and now - cached[2] < window):
+                return cached[1]
+        bucket = [t for t in self._flood.get(user_id, []) if now - t < window]
         bucket.append(now)
         self._flood[user_id] = bucket
-        return len(bucket) > _FLOOD_MAX_MSGS
+        flooding = len(bucket) > max_msgs
+        if media_group_id is not None:
+            group_cache[user_id] = (media_group_id, flooding, now)
+        return flooding
 
     def _cleanup_flood(self, now: float) -> None:
         """删除 _flood 中所有时间戳均已过期的用户条目，释放内存。"""
+        _, window = self._flood_limit()
         stale = [uid for uid, ts in self._flood.items()
-                 if not any(now - t < _FLOOD_WINDOW for t in ts)]
+                 if not any(now - t < window for t in ts)]
         for uid in stale:
             del self._flood[uid]
 
@@ -231,7 +300,8 @@ class AutoReplyModule(BaseModule):
             if now - self._flood_last_cleanup >= self._FLOOD_CLEANUP_INTERVAL:
                 self._cleanup_flood(now)
                 self._flood_last_cleanup = now
-            if self._is_flooding(update.effective_user.id, now):
+            mgid = getattr(msg, "media_group_id", None)
+            if self._is_flooding(update.effective_user.id, mgid, now):
                 raise ApplicationHandlerStop
 
         text = msg.text or msg.caption or ""

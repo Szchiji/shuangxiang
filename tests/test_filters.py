@@ -1,9 +1,18 @@
 """防刷屏与字母表（拉丁）过滤器测试。"""
 
+import types
+
 import pytest
 from telegram.ext import ApplicationHandlerStop
 
-from modules.auto_reply_module import SK_ALPHABET_LATIN, SK_ANTIFLOOD, AutoReplyModule
+from modules.auto_reply_module import (
+    SK_ALPHABET_LATIN,
+    SK_ANTIFLOOD,
+    SK_FLOOD_MAX_MSGS,
+    SK_FLOOD_WINDOW,
+    AutoReplyModule,
+    clamp_flood_limit,
+)
 from tests.conftest import FakeBot, FakeMessage, make_ctx
 
 
@@ -14,14 +23,21 @@ def make_module(db, admin_id=99):
     mod.admin_id = admin_id
     mod._flood = {}
     mod._flood_last_cleanup = 0.0
+    mod._flood_group_cache = {}
     return mod
 
 
 def make_update(user_id, msg):
-    import types
     return types.SimpleNamespace(
         message=msg,
         effective_user=types.SimpleNamespace(id=user_id))
+
+
+def make_ctx_with_args(*args):
+    ctx = make_ctx(FakeBot())
+    ctx.args = list(args)
+    return ctx
+
 
 
 def test_antiflood_blocks_after_threshold(db):
@@ -51,6 +67,81 @@ async def test_on_message_antiflood_stop(db):
     with pytest.raises(ApplicationHandlerStop):
         for _ in range(6):
             await mod.on_message(upd, ctx)
+
+
+def test_antiflood_album_counts_as_one_message(db):
+    mod = make_module(db)
+    t = 100.0
+    # 相册（同一 media_group_id）拆成 8 条 Update 逐一到达，
+    # 但应作为一条消息计数，不应因条数多而被误判为刷屏。
+    results = [mod._is_flooding(1, media_group_id="G1", now=t + i * 0.1)
+               for i in range(8)]
+    assert results == [False] * 8
+
+
+@pytest.mark.asyncio
+async def test_on_message_album_not_blocked_by_antiflood(db):
+    mod = make_module(db)
+    ctx = make_ctx(FakeBot())
+    # 同一相册的 8 张图片应全部通过，不被防刷屏拦截（不抛出异常）。
+    for i in range(8):
+        msg = FakeMessage(i, caption=None, media_group_id="G1")
+        await mod.on_message(make_update(7, msg), ctx)
+
+
+def test_clamp_flood_limit_bounds():
+    assert clamp_flood_limit(0, 0) == (1, 1)
+    assert clamp_flood_limit(999, 999) == (50, 60)
+    assert clamp_flood_limit(10, 20) == (10, 20)
+
+
+def test_custom_flood_limit_applies_to_is_flooding(db):
+    mod = make_module(db)
+    db.set_setting(1, SK_FLOOD_MAX_MSGS, 3)
+    db.set_setting(1, SK_FLOOD_WINDOW, 5)
+    t = 100.0
+    # 自定义阈值为 3 条/5 秒；第 4 条应被判定为刷屏
+    results = [mod._is_flooding(1, now=t + i * 0.1) for i in range(4)]
+    assert results == [False, False, False, True]
+
+
+@pytest.mark.asyncio
+async def test_cmd_flood_limit_shows_current_value(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args()
+    msg = FakeMessage(1)
+    await mod.cmd_flood_limit(make_update(99, msg), ctx)
+    assert msg.replies and "5" in msg.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_flood_limit_sets_and_clamps(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args("999", "999")
+    msg = FakeMessage(1)
+    await mod.cmd_flood_limit(make_update(99, msg), ctx)
+    assert db.get_int_setting(1, SK_FLOOD_MAX_MSGS, 0) == 50
+    assert db.get_int_setting(1, SK_FLOOD_WINDOW, 0) == 60
+
+
+@pytest.mark.asyncio
+async def test_cmd_flood_limit_rejects_invalid_args(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args("abc", "5")
+    msg = FakeMessage(1)
+    await mod.cmd_flood_limit(make_update(99, msg), ctx)
+    assert db.get_setting(1, SK_FLOOD_MAX_MSGS) is None
+    assert msg.replies
+
+
+@pytest.mark.asyncio
+async def test_cmd_flood_limit_admin_only(db):
+    mod = make_module(db)
+    ctx = make_ctx_with_args("3", "5")
+    msg = FakeMessage(1)
+    await mod.cmd_flood_limit(make_update(7, msg), ctx)  # 非管理员
+    assert not msg.replies
+    assert db.get_setting(1, SK_FLOOD_MAX_MSGS) is None
 
 
 @pytest.mark.asyncio
