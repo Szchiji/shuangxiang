@@ -407,6 +407,64 @@ async def test_missing_tenant_id(aiohttp_client, app, db, init_data_header):
     assert resp.status in (400, 403, 404)
 
 
+# ── 拦截日志 / 自动封禁 / 第三方机器人拦截开关 ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_get_settings_includes_new_toggles_default_off(aiohttp_client, app, db, tenant_id,
+                                                              init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await resp.json()
+    # 保守默认值：不应影响现有普通用户。
+    assert data["filter_auto_ban"] is False
+    assert data["block_via_bot"] is False
+
+
+@pytest.mark.asyncio
+async def test_post_settings_supports_new_toggles(aiohttp_client, app, db, tenant_id,
+                                                   init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"filter_auto_ban": True, "block_via_bot": True},
+    )
+    assert resp.status == 200
+    assert db.get_bool_setting(tenant_id, "filter_auto_ban", False) is True
+    assert db.get_bool_setting(tenant_id, "block_via_bot", False) is True
+
+
+@pytest.mark.asyncio
+async def test_get_intercept_logs_ok(aiohttp_client, app, db, tenant_id, init_data_header):
+    db.add_intercept_log(
+        tenant_id, "filter", user_id=55, rule="违禁词",
+        message_summary="包含违禁词的消息")
+    client = await aiohttp_client(app)
+    resp = await client.get(
+        f"/api/{tenant_id}/intercept_logs",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    logs = await resp.json()
+    assert len(logs) == 1
+    assert logs[0]["reason"] == "filter"
+    assert logs[0]["rule"] == "违禁词"
+
+
+@pytest.mark.asyncio
+async def test_get_intercept_logs_wrong_user(aiohttp_client, app, db, tenant_id):
+    bad_init_data = _make_init_data(999)
+    client = await aiohttp_client(app)
+    resp = await client.get(
+        f"/api/{tenant_id}/intercept_logs",
+        headers={"X-Init-Data": bad_init_data},
+    )
+    assert resp.status == 403
+
+
 # ── PrivateChatModule cmd_start with webapp ───────────────────────────────────
 
 @pytest.mark.asyncio

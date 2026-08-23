@@ -96,6 +96,7 @@ function initTabs() {
       if (btn.dataset.tab === 'banned')     loadBanned();
       if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
       if (btn.dataset.tab === 'force-sub')  loadForceSub();
+      if (btn.dataset.tab === 'logs')       loadInterceptLogs();
     });
   });
 }
@@ -280,6 +281,8 @@ async function loadSettings() {
   _welcomeBuilder.loadText(data.welcome_btns_text || '');
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
+  document.getElementById('filter-auto-ban').checked = !!data.filter_auto_ban;
+  document.getElementById('block-via-bot').checked   = !!data.block_via_bot;
   document.getElementById('flood-max-msgs').value   = data.flood_max_msgs ?? 5;
   document.getElementById('flood-window').value     = data.flood_window ?? 5;
   if (data.bot_name) {
@@ -313,6 +316,8 @@ document.getElementById('save-security-settings').addEventListener('click', asyn
   await saveSettingsPartial({
     antiflood:         document.getElementById('antiflood').checked,
     alphabet_latin:    document.getElementById('alphabet-latin').checked,
+    filter_auto_ban:   document.getElementById('filter-auto-ban').checked,
+    block_via_bot:     document.getElementById('block-via-bot').checked,
     flood_max_msgs:    floodMaxMsgs,
     flood_window:      floodWindow,
   }, 'settings-msg', '✅ 安全设置已保存');
@@ -761,6 +766,53 @@ async function unban(uid) {
 }
 
 document.getElementById('banned-search').addEventListener('input', renderBanned);
+
+// ── Intercept Logs ────────────────────────────────────────────────────────────
+
+const _logReasonLabels = {
+  antiflood:       '🛡 防刷屏',
+  alphabet_latin:  '🔤 英文拦截',
+  filter:          '🚫 过滤词',
+  block_via_bot:   '🤖 第三方机器人',
+};
+
+function renderInterceptLogs(rows) {
+  const list = document.getElementById('logs-list');
+  if (!rows.length) {
+    list.innerHTML = '<p class="empty-state">暂无拦截日志。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  rows.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const who = r.full_name || (r.username ? '@' + r.username : '') || String(r.user_id ?? '—');
+    const reasonLabel = _logReasonLabels[r.reason] || r.reason;
+    const ruleText = r.rule ? `规则：${esc(r.rule)}　` : '';
+    const viaBotText = r.via_bot_id
+      ? `来源机器人：${esc(r.via_bot_username ? '@' + r.via_bot_username : String(r.via_bot_id))}　`
+      : '';
+    const banText = r.auto_banned ? '<span class="ban-status">已自动封禁</span>' : '';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">${reasonLabel} · 👤 ${esc(who)}</div>
+        <small>${ruleText}${viaBotText}${formatDateTime(r.created_at)}</small>
+        <div>${esc(summarizeText(r.message_summary))}</div>
+        ${banText}
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+async function loadInterceptLogs() {
+  const list = document.getElementById('logs-list');
+  document.getElementById('logs-msg').textContent = '';
+  document.getElementById('logs-msg').className = 'msg';
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/intercept_logs');
+  if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
+  renderInterceptLogs(Array.isArray(data) ? data : []);
+}
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 

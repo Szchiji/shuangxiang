@@ -146,6 +146,20 @@ class Database:
                     banned_at  TEXT DEFAULT (datetime('now')),
                     PRIMARY KEY (tenant_id, bot_id)
                 );
+                CREATE TABLE IF NOT EXISTS intercept_logs (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id        INTEGER NOT NULL,
+                    user_id          INTEGER,
+                    username         TEXT,
+                    full_name        TEXT,
+                    reason           TEXT NOT NULL,
+                    rule             TEXT DEFAULT '',
+                    message_summary  TEXT DEFAULT '',
+                    via_bot_id       INTEGER,
+                    via_bot_username TEXT DEFAULT '',
+                    auto_banned      INTEGER DEFAULT 0,
+                    created_at       TEXT DEFAULT (datetime('now'))
+                );
             """)
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
 
@@ -171,6 +185,8 @@ class Database:
                         ON topic_map(tenant_id, user_id);
                     CREATE INDEX IF NOT EXISTS idx_message_map_tid
                         ON message_map(tenant_id);
+                    CREATE INDEX IF NOT EXISTS idx_intercept_logs_tid
+                        ON intercept_logs(tenant_id, id);
                 """)
         except sqlite3.Error as e:
             logger.warning("创建索引失败（不影响运行）: %s", e)
@@ -410,7 +426,7 @@ class Database:
         with self._conn() as c:
             for tbl in ("tenants", "tenant_settings", "tenant_users", "message_map",
                         "topic_map", "auto_replies", "filters", "tenant_kv",
-                        "banned_bots"):
+                        "banned_bots", "intercept_logs"):
                 col = "id" if tbl == "tenants" else "tenant_id"
                 c.execute(f"DELETE FROM {tbl} WHERE {col}=?", (tid,))
 
@@ -514,6 +530,38 @@ class Database:
             return c.execute(
                 "SELECT * FROM banned_bots WHERE tenant_id=? "
                 "ORDER BY banned_at DESC LIMIT ?",
+                (tenant_id, limit)).fetchall()
+
+    # ── 拦截日志（防刷屏 / 过滤词 / 第三方机器人拦截等）───────
+
+    # 单租户最多保留的日志条数，防止长期运行下无限增长。
+    _INTERCEPT_LOG_MAX_PER_TENANT = 2000
+
+    def add_intercept_log(self, tenant_id, reason, *, user_id=None, username="",
+                          full_name="", rule="", message_summary="",
+                          via_bot_id=None, via_bot_username="", auto_banned=False):
+        """记录一条拦截日志，供管理员在 Web 后台排查、判断词库是否需要调整。"""
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO intercept_logs
+                       (tenant_id, user_id, username, full_name, reason, rule,
+                        message_summary, via_bot_id, via_bot_username, auto_banned)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (tenant_id, user_id, username, full_name, reason, rule,
+                 message_summary, via_bot_id, via_bot_username,
+                 int(bool(auto_banned))))
+            # 超过上限时清理该租户最旧的记录，避免表无限增长。
+            c.execute(
+                """DELETE FROM intercept_logs WHERE tenant_id=? AND id NOT IN (
+                       SELECT id FROM intercept_logs WHERE tenant_id=?
+                       ORDER BY id DESC LIMIT ?)""",
+                (tenant_id, tenant_id, self._INTERCEPT_LOG_MAX_PER_TENANT))
+
+    def get_intercept_logs(self, tenant_id, limit=50):
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM intercept_logs WHERE tenant_id=? "
+                "ORDER BY id DESC LIMIT ?",
                 (tenant_id, limit)).fetchall()
 
     def get_tenant_user_count(self, tenant_id):

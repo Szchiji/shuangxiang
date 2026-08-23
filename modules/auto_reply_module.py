@@ -351,6 +351,8 @@ class AutoReplyModule(BaseModule):
         if msg is None or self._admin(update):
             return
 
+        text = msg.text or msg.caption or ""
+
         # 0) 防刷屏（默认开启，可关闭）
         if self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True):
             now = time.monotonic()
@@ -360,6 +362,7 @@ class AutoReplyModule(BaseModule):
                 self._flood_last_cleanup = now
             mgid = getattr(msg, "media_group_id", None)
             if self._is_flooding(update.effective_user.id, mgid, now):
+                self._log_intercept(update, "antiflood", text=text)
                 raise ApplicationHandlerStop
 
         # 0.5) 拦截「经由第三方机器人（如群发器）转发」的消息（默认关闭，可开启）。
@@ -367,15 +370,16 @@ class AutoReplyModule(BaseModule):
         via_bot = getattr(msg, "via_bot", None)
         if via_bot is not None and self.db.get_bool_setting(
                 self.tenant_id, SK_BLOCK_VIA_BOT, False):
+            self._log_intercept(update, "block_via_bot", text=text, via_bot=via_bot)
             raise ApplicationHandlerStop
 
-        text = msg.text or msg.caption or ""
         if not text:
             return
 
         # 1) 字母表过滤：屏蔽含拉丁字母（英文等）的消息（默认关闭）
         if self.db.get_bool_setting(self.tenant_id, SK_ALPHABET_LATIN, False):
             if _LATIN_RE.search(text):
+                self._log_intercept(update, "alphabet_latin", text=text, via_bot=via_bot)
                 await msg.reply_text("⚠️ 不支持包含英文/拉丁字母的消息。")
                 raise ApplicationHandlerStop
 
@@ -384,11 +388,16 @@ class AutoReplyModule(BaseModule):
         for f in self.db.get_filters(self.tenant_id):
             if self._filter_matches(f, text, text_lower):
                 # 命中过滤词自动封禁（默认关闭）：同时封禁其借助的群发器机器人。
-                if self.db.get_bool_setting(self.tenant_id, SK_FILTER_AUTO_BAN, False):
+                auto_banned = self.db.get_bool_setting(
+                    self.tenant_id, SK_FILTER_AUTO_BAN, False)
+                if auto_banned:
                     self.db.ban_user(self.tenant_id, update.effective_user.id)
                     if via_bot is not None:
                         self.db.ban_bot(
                             self.tenant_id, via_bot.id, via_bot.username or "")
+                self._log_intercept(
+                    update, "filter", rule=f["keyword"], text=text,
+                    via_bot=via_bot, auto_banned=auto_banned)
                 await msg.reply_text("⚠️ 您的消息包含不被允许的内容，未发送。")
                 raise ApplicationHandlerStop
 
@@ -402,6 +411,29 @@ class AutoReplyModule(BaseModule):
                 # 自动回复命中即视为已处理：不再把关键词消息转发给租户机器人（管理员），
                 # 也不向其发送任何提示。
                 raise ApplicationHandlerStop
+
+    # 拦截日志中消息摘要的最大长度，避免超长内容占用过多存储。
+    _LOG_SUMMARY_MAX_LEN = 200
+
+    def _log_intercept(self, update: Update, reason: str, *, rule: str = "",
+                       text: str = "", via_bot=None, auto_banned: bool = False) -> None:
+        """写入一条拦截日志，供管理员在 Web 后台排查、判断词库是否需要调整。"""
+        user = update.effective_user
+        try:
+            self.db.add_intercept_log(
+                self.tenant_id, reason,
+                user_id=getattr(user, "id", None),
+                username=getattr(user, "username", "") or "",
+                full_name=getattr(user, "full_name", "") or "",
+                rule=rule,
+                message_summary=text[: self._LOG_SUMMARY_MAX_LEN],
+                via_bot_id=getattr(via_bot, "id", None) if via_bot else None,
+                via_bot_username=getattr(via_bot, "username", "") or "" if via_bot else "",
+                auto_banned=auto_banned,
+            )
+        except Exception:
+            # 日志写入失败不应影响正常的拦截流程。
+            logger.exception("写入拦截日志失败")
 
     @staticmethod
     def _filter_matches(row, text: str, text_lower: str) -> bool:

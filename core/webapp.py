@@ -26,6 +26,8 @@ from modules.auto_reply_module import (
     _FLOOD_WINDOW_DEFAULT,
     SK_ALPHABET_LATIN,
     SK_ANTIFLOOD,
+    SK_BLOCK_VIA_BOT,
+    SK_FILTER_AUTO_BAN,
     SK_FLOOD_MAX_MSGS,
     SK_FLOOD_WINDOW,
     clamp_flood_limit,
@@ -290,6 +292,8 @@ async def _get_settings(request: web.Request):
         "force_sub_msg":       db.get_setting(tid, SK_FORCE_SUB_MSG, "") or "",
         "antiflood":           db.get_bool_setting(tid, SK_ANTIFLOOD, True),
         "alphabet_latin":      db.get_bool_setting(tid, SK_ALPHABET_LATIN, False),
+        "filter_auto_ban":     db.get_bool_setting(tid, SK_FILTER_AUTO_BAN, False),
+        "block_via_bot":       db.get_bool_setting(tid, SK_BLOCK_VIA_BOT, False),
         "flood_max_msgs":      db.get_int_setting(tid, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT),
         "flood_window":        db.get_int_setting(tid, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT)),
         "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
@@ -334,7 +338,8 @@ async def _post_settings(request: web.Request):
         if fsub_msg is None:
             return web.json_response({"error": "force_sub_msg invalid (max 500 chars)"}, status=400)
         db.set_setting(tid, SK_FORCE_SUB_MSG, fsub_msg)
-    for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON):
+    for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON,
+                SK_FILTER_AUTO_BAN, SK_BLOCK_VIA_BOT):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
     if SK_FLOOD_MAX_MSGS in body or SK_FLOOD_WINDOW in body:
@@ -441,6 +446,12 @@ async def _get_banned(request: web.Request):
         }
         for r in rows
     ])
+
+
+async def _get_intercept_logs(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_intercept_logs(tenant["id"], limit=200)
+    return web.json_response([dict(r) for r in rows])
 
 
 async def _do_broadcast(
@@ -587,6 +598,8 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/auto_replies/{rid}", _delete_auto_reply)
     app.router.add_get(
         "/api/{tenant_id}/banned",             _get_banned)
+    app.router.add_get(
+        "/api/{tenant_id}/intercept_logs",     _get_intercept_logs)
     app.router.add_post(
         "/api/{tenant_id}/unban/{uid}",        _post_unban)
     app.router.add_post(

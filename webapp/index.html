@@ -34,6 +34,9 @@
           <button class="nav-item" data-tab="banned">
             <span class="nav-icon">⛔</span><span class="nav-label">封禁管理</span>
           </button>
+          <button class="nav-item" data-tab="logs">
+            <span class="nav-icon">📋</span><span class="nav-label">拦截日志</span>
+          </button>
           <button class="nav-item" data-tab="stats">
             <span class="nav-icon">📊</span><span class="nav-label">数据统计</span>
           </button>
@@ -74,6 +77,14 @@
               <div class="toggle-row">
                 <span>🔤 拦截英文消息</span>
                 <label class="switch"><input type="checkbox" id="alphabet-latin"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <span>🚫 命中过滤词自动封禁</span>
+                <label class="switch"><input type="checkbox" id="filter-auto-ban"><span class="slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <span>🤖 拦截第三方机器人转发消息</span>
+                <label class="switch"><input type="checkbox" id="block-via-bot"><span class="slider"></span></label>
               </div>
             </div>
             <label class="field-label">刷屏判定阈值（窗口秒数内最多消息条数）
@@ -235,6 +246,16 @@
         <section id="tab-stats" class="tab">
           <div class="page-header"><h2>📊 数据统计</h2></div>
           <div id="stats-content"></div>
+        </section>
+
+        <!-- Intercept Logs -->
+        <section id="tab-logs" class="tab">
+          <div class="page-header"><h2>📋 拦截日志</h2></div>
+          <div class="card">
+            <p class="hint-text">记录被过滤词 / 防刷屏 / 第三方机器人拦截等安全策略拦截的消息，便于判断词库是否需要调整。</p>
+            <div id="logs-msg" class="msg"></div>
+          </div>
+          <div id="logs-list"></div>
         </section>
 
       </main>
