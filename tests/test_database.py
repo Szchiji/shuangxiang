@@ -98,8 +98,8 @@ def test_intercept_logs_most_recent_first(db):
     assert rows[1]["message_summary"] == "first"
 
 
-def test_intercept_logs_capped_per_tenant(db):
-    db._INTERCEPT_LOG_MAX_PER_TENANT = 5
+def test_intercept_logs_capped_per_tenant(db, monkeypatch):
+    monkeypatch.setattr(db, "_INTERCEPT_LOG_MAX_PER_TENANT", 5)
     for i in range(10):
         db.add_intercept_log(1, "antiflood", user_id=1, message_summary=str(i))
     rows = db.get_intercept_logs(1, limit=100)

@@ -550,12 +550,17 @@ class Database:
                 (tenant_id, user_id, username, full_name, reason, rule,
                  message_summary, via_bot_id, via_bot_username,
                  int(bool(auto_banned))))
-            # 超过上限时清理该租户最旧的记录，避免表无限增长。
-            c.execute(
-                """DELETE FROM intercept_logs WHERE tenant_id=? AND id NOT IN (
-                       SELECT id FROM intercept_logs WHERE tenant_id=?
-                       ORDER BY id DESC LIMIT ?)""",
-                (tenant_id, tenant_id, self._INTERCEPT_LOG_MAX_PER_TENANT))
+            # 仅当超过上限时才清理该租户最旧的记录（索引扫描 COUNT(*) 很快），
+            # 避免每次写入都执行一次全表范围的 DELETE。
+            count = c.execute(
+                "SELECT COUNT(*) FROM intercept_logs WHERE tenant_id=?",
+                (tenant_id,)).fetchone()[0]
+            if count > self._INTERCEPT_LOG_MAX_PER_TENANT:
+                c.execute(
+                    """DELETE FROM intercept_logs WHERE tenant_id=? AND id NOT IN (
+                           SELECT id FROM intercept_logs WHERE tenant_id=?
+                           ORDER BY id DESC LIMIT ?)""",
+                    (tenant_id, tenant_id, self._INTERCEPT_LOG_MAX_PER_TENANT))
 
     def get_intercept_logs(self, tenant_id, limit=50):
         with self._conn() as c:
