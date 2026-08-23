@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>机器人管理后台</title>
+  <script>(function(){var t=localStorage.getItem('bh_theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
   <link rel="stylesheet" href="/static/style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
@@ -16,8 +17,12 @@
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
           <span id="bot-name" class="sidebar-title">🤖 管理后台</span>
-          <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="收起侧栏">&#9776;</button>
+          <div class="sidebar-header-actions">
+            <button id="theme-toggle" class="sidebar-toggle-btn" aria-label="切换主题" title="切换深浅色主题">&#9788;</button>
+            <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="收起侧栏">&#9776;</button>
+          </div>
         </div>
+        <div class="sidebar-heading">功能导航</div>
         <nav class="sidebar-nav">
           <button class="nav-item active" data-tab="settings">
             <span class="nav-icon">⚙️</span><span class="nav-label">基本设置</span>

@@ -73,6 +73,25 @@ async function saveSettingsPartial(payload, msgId, successText) {
   return false;
 }
 
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('theme-toggle');
+  if (btn) btn.innerHTML = theme === 'dark' ? '&#9789;' : '&#9788;';
+}
+
+function initTheme() {
+  const saved = localStorage.getItem('bh_theme') || 'light';
+  applyTheme(saved);
+  const toggleBtn = document.getElementById('theme-toggle');
+  toggleBtn?.addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('bh_theme', next);
+    applyTheme(next);
+  });
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 function initSidebar() {
@@ -1117,6 +1136,7 @@ _smBuilder = initButtonBuilder(
   'sm-buttons-add-row'
 );
 
+initTheme();
 initSidebar();
 initTabs();
 loadSettings();
