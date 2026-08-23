@@ -240,3 +240,19 @@ async def test_incoming_user_blocks_bot_forwarded_message(db):
     # 消息未被转发给管理员
     assert ctx.bot.of("forward_message") == []
     assert ctx.bot.of("copy_message") == []
+
+
+@pytest.mark.asyncio
+async def test_incoming_user_banned_is_silently_ignored(db):
+    mod = make_module(db, manage_group=None)
+    db.upsert_tenant_user(mod.tenant_id, USER.id, USER.username, USER.full_name)
+    db.ban_user(mod.tenant_id, USER.id)
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(91, text="你好")
+    update = types.SimpleNamespace(message=msg, effective_user=USER)
+    await mod._incoming_user(update, ctx)
+    # 被封禁用户不应收到任何回复
+    assert msg.replies == []
+    # 消息未被转发给管理员
+    assert ctx.bot.of("forward_message") == []
+    assert ctx.bot.of("copy_message") == []

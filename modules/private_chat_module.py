@@ -76,7 +76,6 @@ class PrivateChatModule(BaseModule):
         self.sent_ack = (msgs.get("sent_ack")
                          or "✅ 已发送成功，管理员会尽快回复你。")
         self._ack_delete_delay = 5.0
-        self.banned   = msgs.get("banned", "⛔ 你已被封禁，无法发送消息。")
         self.bot_forward_blocked = msgs.get(
             "bot_forward_blocked",
             "⛔ 暂不支持转发其他机器人的消息，请直接发送文字或原始内容。")
@@ -187,6 +186,9 @@ class PrivateChatModule(BaseModule):
                     parse_mode="Markdown",
                     reply_markup=self._panel_markup())
         else:
+            if self.db.is_banned(self.tenant_id, user.id):
+                # 被封禁用户静默失效：不回复欢迎语，无法使用机器人。
+                return
             self.db.upsert_tenant_user(self.tenant_id, user.id,
                                        user.username or "", user.full_name)
             welcome = self.db.get_setting(
@@ -506,7 +508,7 @@ class PrivateChatModule(BaseModule):
         self.db.upsert_tenant_user(self.tenant_id, user.id,
                                    user.username or "", user.full_name)
         if self.db.is_banned(self.tenant_id, user.id):
-            await msg.reply_text(self.banned)
+            # 被封禁用户静默失效：不回复任何提示，避免其得知封禁状态。
             return
 
         # 拒绝接收转发自其他机器人的消息，避免被用于中转/滥用。

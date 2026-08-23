@@ -171,6 +171,16 @@ async def test_cmd_start_falls_back_to_default_welcome(db):
 
 
 @pytest.mark.asyncio
+async def test_cmd_start_banned_user_is_silently_ignored(db):
+    pc = _make_pc(db)
+    db.upsert_tenant_user(pc.tenant_id, 7, "u", "U")
+    db.ban_user(pc.tenant_id, 7)
+    msg = FakeMessage()
+    await pc.cmd_start(make_update(7, msg), None)
+    assert msg.replies == []
+
+
+@pytest.mark.asyncio
 async def test_cmd_start_sends_welcome_media(db):
     from modules.customize_module import SK_WELCOME_MEDIA_ID, SK_WELCOME_MEDIA_TYPE
     pc = _make_pc(db)
