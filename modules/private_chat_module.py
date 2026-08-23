@@ -511,14 +511,31 @@ class PrivateChatModule(BaseModule):
             return
 
         group = self._manage_group()
-        try:
+
+        async def _do_forward():
             if group is not None:
                 await self._forward_to_topic(ctx, group, user, msg)
             else:
                 await self._forward_to_dm(ctx, user, msg)
+
+        # 与相册转发保持一致：单条消息转发失败（如触发限流）时重试一次，
+        # 仍失败则通知管理员，避免消息在批量发送时被悄悄「吞掉」。
+        try:
+            await _do_forward()
         except TelegramError as e:
-            logger.warning("转发失败: %s", e)
-            return
+            logger.warning("转发失败，2 秒后重试: %s", e)
+            await asyncio.sleep(2)
+            try:
+                await _do_forward()
+            except TelegramError as e2:
+                logger.warning("转发重试仍失败: %s", e2)
+                try:
+                    await ctx.bot.send_message(
+                        chat_id=self.admin_id,
+                        text=f"⚠️ 消息转发失败（已重试）：{e2}")
+                except TelegramError:
+                    pass
+                return
         await self._notify_sent(ctx, msg)
 
     # ── 相册（媒体组）聚合 ───────────────────────────────────
