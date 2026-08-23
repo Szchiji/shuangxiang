@@ -3,17 +3,21 @@
 import types
 
 import pytest
+from telegram.error import TelegramError
 
 from modules.scheduled_message_module import ScheduledMessageModule, build_markup
 
 
 class _FakeBot:
-    def __init__(self):
+    def __init__(self, fail_send=False):
         self.sent = []
         self.deleted = []
         self._mid = 100
+        self.fail_send = fail_send
 
     async def send_message(self, **kw):
+        if self.fail_send:
+            raise TelegramError("boom")
         self.sent.append(("text", kw))
         self._mid += 1
         return types.SimpleNamespace(message_id=self._mid)
@@ -118,3 +122,50 @@ async def test_tick_deletes_previous_message_when_configured(db):
 
     assert bot.deleted == [{"chat_id": "-1", "message_id": 555}]
     assert len(bot.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_tick_does_not_disable_once_only_message_on_send_failure(db):
+    tenant_id = db.add_tenant(
+        token="test_token4:XYZ", owner_user_id=4, bot_id=4,
+        bot_username="testbot4", bot_name="Test Bot 4")
+    sid = db.add_scheduled_message(
+        tenant_id, target_type="group", target_chat_id=-1,
+        content="once", interval_minutes=10, repeat=0)
+
+    mod = _make_module({"tenant_id": tenant_id})
+    mod.db = db
+    bot = _FakeBot(fail_send=True)
+    app = types.SimpleNamespace(bot=bot)
+
+    await mod._tick(app)
+
+    assert bot.sent == []
+    row = db.get_scheduled_message(tenant_id, sid)
+    # Failed send must not permanently disable a one-time task; it stays
+    # enabled and due so it can be retried on the next poll.
+    assert row["enabled"] == 1
+    assert row["last_message_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_tick_reschedules_repeat_message_on_send_failure(db):
+    tenant_id = db.add_tenant(
+        token="test_token5:XYZ", owner_user_id=5, bot_id=5,
+        bot_username="testbot5", bot_name="Test Bot 5")
+    sid = db.add_scheduled_message(
+        tenant_id, target_type="group", target_chat_id=-1,
+        content="repeat", interval_minutes=10, repeat=1)
+
+    mod = _make_module({"tenant_id": tenant_id})
+    mod.db = db
+    bot = _FakeBot(fail_send=True)
+    app = types.SimpleNamespace(bot=bot)
+
+    await mod._tick(app)
+
+    row = db.get_scheduled_message(tenant_id, sid)
+    assert row["enabled"] == 1
+    assert row["last_message_id"] is None
+    # Rescheduled into the future to avoid hammering retries every poll.
+    assert row["next_run_at"] is not None

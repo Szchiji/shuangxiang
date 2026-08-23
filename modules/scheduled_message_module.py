@@ -88,9 +88,21 @@ class ScheduledMessageModule(BaseModule):
                 "[租户#%s] 发送定时消息(#%s)失败: %s", self.tenant_id, row["id"], e)
 
         with_repeat = bool(row["repeat"])
+        if sent is None:
+            # 发送失败：不更新 last_message_id，且不将一次性任务标记为已完成，
+            # 以便下次轮询重试；仅在需要重复发送时按间隔顺延下一次时间。
+            if with_repeat:
+                self.db.mark_scheduled_message_sent(
+                    self.tenant_id, row["id"],
+                    message_id=row["last_message_id"],
+                    next_run_at=self._compute_next_run(row),
+                    disable_if_once=False,
+                )
+            return
+
         self.db.mark_scheduled_message_sent(
             self.tenant_id, row["id"],
-            message_id=sent.message_id if sent else row["last_message_id"],
+            message_id=sent.message_id,
             next_run_at=self._compute_next_run(row) if with_repeat else None,
             disable_if_once=not with_repeat,
         )

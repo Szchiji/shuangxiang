@@ -926,7 +926,7 @@ function renderScheduledMessages() {
       <td><span class="sm-status ${r.enabled ? 'on' : 'off'}">${r.enabled ? '启用' : '停用'}</span></td>
       <td class="sm-actions">
         <button class="btn-icon edit" title="编辑">✏️</button>
-        <button class="btn-icon" title="启用/停用">${r.enabled ? '⏸' : '▶️'}</button>
+        <button class="btn-icon toggle" title="启用/停用">${r.enabled ? '⏸' : '▶️'}</button>
         <button class="btn-icon danger" title="删除">🗑</button>
       </td>`;
     tr.querySelector('.sm-row-check').addEventListener('change', (e) => {
@@ -935,7 +935,7 @@ function renderScheduledMessages() {
     });
     tr.querySelector('.btn-icon.edit').addEventListener('click', () => startEditSm(r));
     tr.querySelector('.btn-icon.danger').addEventListener('click', () => deleteSm(r.id));
-    tr.querySelectorAll('.btn-icon')[1].addEventListener('click', () => toggleSm(r.id, !r.enabled));
+    tr.querySelector('.btn-icon.toggle').addEventListener('click', () => toggleSm(r.id, !r.enabled));
     tbody.appendChild(tr);
   });
 }
