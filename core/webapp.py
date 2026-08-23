@@ -22,12 +22,12 @@ from aiohttp import web
 
 from core.database import Database
 from modules.auto_reply_module import (
+    _FLOOD_MAX_MSGS_DEFAULT,
+    _FLOOD_WINDOW_DEFAULT,
     SK_ALPHABET_LATIN,
     SK_ANTIFLOOD,
     SK_FLOOD_MAX_MSGS,
     SK_FLOOD_WINDOW,
-    _FLOOD_MAX_MSGS_DEFAULT,
-    _FLOOD_WINDOW_DEFAULT,
     clamp_flood_limit,
 )
 from modules.customize_module import (
