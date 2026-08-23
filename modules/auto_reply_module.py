@@ -2,9 +2,14 @@
 
 拥有者可配置：
   • 自动回复：命中关键词时机器人自动回复，并拦截该消息（不再转发给管理员、不发送任何提示）。
-  • 关键词过滤：用户消息含违禁词时拦截并提示。
+  • 关键词过滤：用户消息含违禁词时拦截并提示；新租户默认预置一份常见博彩/广告过滤词
+    （见 core.database.DEFAULT_FILTER_KEYWORDS），支持正则（/filter_add regex:<正则>）。
   • 防刷屏过滤器：限制单用户短时间内的消息频率（默认开启，可关闭）。
   • 字母表过滤器：可屏蔽包含特定文字（如拉丁字母 / 英文）的消息（默认关闭）。
+  • 第三方机器人转发拦截：可选择拦截「经由其他机器人（如群发器）转发」的全部消息，
+    从源头阻断借道群发机器人批量投放广告（默认关闭，见 SK_BLOCK_VIA_BOT）。
+  • 命中过滤词自动封禁：命中违禁词时可选择自动封禁该用户及其借助的群发器机器人，
+    无需管理员手动 /ban（默认关闭，见 SK_FILTER_AUTO_BAN）。
 
 该模块的消息处理器注册在 group=0：在强制订阅拦截(group=-1)之后、
 双向中转(group=5)之前执行；命中拦截时通过 ApplicationHandlerStop 阻止后续转发。
@@ -40,6 +45,8 @@ SK_ANTIFLOOD        = "antiflood"        # 防刷屏开关，默认开启
 SK_ALPHABET_LATIN   = "alphabet_latin"   # 屏蔽拉丁字母，默认关闭
 SK_FLOOD_MAX_MSGS   = "flood_max_msgs"   # 防刷屏：窗口内最多消息数，可自定义
 SK_FLOOD_WINDOW     = "flood_window"     # 防刷屏：窗口秒数，可自定义
+SK_FILTER_AUTO_BAN  = "filter_auto_ban"  # 命中过滤词自动封禁用户（及来源机器人），默认关闭
+SK_BLOCK_VIA_BOT    = "block_via_bot"    # 拦截「经由第三方机器人转发」的消息，默认关闭
 
 # 防刷屏阈值默认值（管理员可在后台自定义，见 SK_FLOOD_MAX_MSGS / SK_FLOOD_WINDOW）
 _FLOOD_WINDOW_DEFAULT   = 5.0   # 秒
@@ -91,6 +98,8 @@ class AutoReplyModule(BaseModule):
         app.add_handler(CommandHandler("antiflood", self.cmd_antiflood))
         app.add_handler(CommandHandler("flood_limit", self.cmd_flood_limit))
         app.add_handler(CommandHandler("alphabet_latin", self.cmd_alphabet_latin))
+        app.add_handler(CommandHandler("filter_auto_ban", self.cmd_filter_auto_ban))
+        app.add_handler(CommandHandler("block_via_bot", self.cmd_block_via_bot))
 
         # 在强制订阅拦截(group=-1)之后、双向转发(group=5)之前执行。
         # 必须与 customize 的 on_guard(group=-1) 处于*不同* group，否则会被其抢占。
@@ -154,9 +163,23 @@ class AutoReplyModule(BaseModule):
             return
         word = update.message.text.partition(" ")[2].strip()
         if not word:
-            await update.message.reply_text("用法：/filter_add <违禁词>")
+            await update.message.reply_text(
+                "用法：/filter_add <违禁词>\n"
+                "支持正则：/filter_add regex:<正则表达式>（覆盖变体广告文案时使用）")
             return
-        self.db.add_filter(self.tenant_id, word)
+        match_type = "contains"
+        if word.lower().startswith("regex:"):
+            word = word[len("regex:"):].strip()
+            match_type = "regex"
+            if not word:
+                await update.message.reply_text("⚠️ 正则表达式不能为空。")
+                return
+            try:
+                re.compile(word)
+            except re.error as e:
+                await update.message.reply_text(f"⚠️ 正则表达式无效：{e}")
+                return
+        self.db.add_filter(self.tenant_id, word, match_type)
         await update.message.reply_text(f"✅ 已添加过滤词：{word}")
 
     async def filter_list(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -168,7 +191,9 @@ class AutoReplyModule(BaseModule):
             return
         await update.message.reply_text(
             "🚫 过滤词：\n"
-            + "\n".join(f"{i}. {r['keyword']}" for i, r in enumerate(rows, 1))
+            + "\n".join(
+                f"{i}. {'[正则] ' if match_type_of(r) == 'regex' else ''}{r['keyword']}"
+                for i, r in enumerate(rows, 1))
             + "\n\n删除：/filter_del 序号")
 
     async def filter_del(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -241,6 +266,39 @@ class AutoReplyModule(BaseModule):
         await update.message.reply_text(
             f"拉丁字母屏蔽当前：{'开启' if cur else '关闭'}。\n用法：/alphabet_latin on｜off")
 
+    async def cmd_filter_auto_ban(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """命中过滤词是否自动封禁该用户（及其借助的群发器机器人）。默认关闭。"""
+        if not self._admin(update):
+            return
+        arg = (ctx.args[0].lower() if ctx.args else "")
+        if arg in ("on", "off"):
+            self.db.set_setting(self.tenant_id, SK_FILTER_AUTO_BAN,
+                                "1" if arg == "on" else "0")
+            await update.message.reply_text(
+                f"✅ 命中过滤词自动封禁已{'开启' if arg == 'on' else '关闭'}。")
+            return
+        cur = self.db.get_bool_setting(self.tenant_id, SK_FILTER_AUTO_BAN, False)
+        await update.message.reply_text(
+            f"命中过滤词自动封禁当前：{'开启' if cur else '关闭'}。\n"
+            f"用法：/filter_auto_ban on｜off")
+
+    async def cmd_block_via_bot(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """是否拦截「经由第三方机器人（如群发器）转发」的全部消息。默认关闭。"""
+        if not self._admin(update):
+            return
+        arg = (ctx.args[0].lower() if ctx.args else "")
+        if arg in ("on", "off"):
+            self.db.set_setting(self.tenant_id, SK_BLOCK_VIA_BOT,
+                                "1" if arg == "on" else "0")
+            await update.message.reply_text(
+                f"✅ 第三方机器人转发消息拦截已{'开启' if arg == 'on' else '关闭'}。")
+            return
+        cur = self.db.get_bool_setting(self.tenant_id, SK_BLOCK_VIA_BOT, False)
+        await update.message.reply_text(
+            f"第三方机器人转发消息拦截当前：{'开启' if cur else '关闭'}。\n"
+            f"用法：/block_via_bot on｜off\n"
+            f"开启后，任何「通过其他机器人」转发来的消息将被直接拦截，不再送达管理员。")
+
     # ── 防刷屏检测 ──────────────────────────────────────────
 
     def _flood_limit(self) -> tuple[int, float]:
@@ -304,6 +362,13 @@ class AutoReplyModule(BaseModule):
             if self._is_flooding(update.effective_user.id, mgid, now):
                 raise ApplicationHandlerStop
 
+        # 0.5) 拦截「经由第三方机器人（如群发器）转发」的消息（默认关闭，可开启）。
+        # 用于从源头阻止借助群发/推广机器人批量投放广告，无需等待管理员逐个 /ban。
+        via_bot = getattr(msg, "via_bot", None)
+        if via_bot is not None and self.db.get_bool_setting(
+                self.tenant_id, SK_BLOCK_VIA_BOT, False):
+            raise ApplicationHandlerStop
+
         text = msg.text or msg.caption or ""
         if not text:
             return
@@ -314,11 +379,16 @@ class AutoReplyModule(BaseModule):
                 await msg.reply_text("⚠️ 不支持包含英文/拉丁字母的消息。")
                 raise ApplicationHandlerStop
 
-        # 2) 过滤违禁词 → 拦截（支持大小写不敏感匹配）
+        # 2) 过滤违禁词 → 拦截（支持大小写不敏感子串匹配 / 正则）
         text_lower = text.lower()
         for f in self.db.get_filters(self.tenant_id):
-            kw = f["keyword"]
-            if kw.lower() in text_lower:
+            if self._filter_matches(f, text, text_lower):
+                # 命中过滤词自动封禁（默认关闭）：同时封禁其借助的群发器机器人。
+                if self.db.get_bool_setting(self.tenant_id, SK_FILTER_AUTO_BAN, False):
+                    self.db.ban_user(self.tenant_id, update.effective_user.id)
+                    if via_bot is not None:
+                        self.db.ban_bot(
+                            self.tenant_id, via_bot.id, via_bot.username or "")
                 await msg.reply_text("⚠️ 您的消息包含不被允许的内容，未发送。")
                 raise ApplicationHandlerStop
 
@@ -332,6 +402,22 @@ class AutoReplyModule(BaseModule):
                 # 自动回复命中即视为已处理：不再把关键词消息转发给租户机器人（管理员），
                 # 也不向其发送任何提示。
                 raise ApplicationHandlerStop
+
+    @staticmethod
+    def _filter_matches(row, text: str, text_lower: str) -> bool:
+        """判断一条过滤词是否命中。
+
+        match_type='regex' → 把 keyword 当作正则（不区分大小写），命中消息中任意位置即可；
+        其它（默认 'contains'）→ 大小写不敏感子串包含匹配。无效正则视为不命中。
+        """
+        keyword = row["keyword"]
+        match_type = match_type_of(row)
+        if match_type == "regex":
+            try:
+                return re.search(keyword, text, re.IGNORECASE) is not None
+            except re.error:
+                return False
+        return keyword.lower() in text_lower
 
     @staticmethod
     def _matches(row, text: str) -> bool:

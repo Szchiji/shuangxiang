@@ -5,6 +5,17 @@ import threading
 
 logger = logging.getLogger("shuangxiang.db")
 
+# 新建/存量租户默认预置的过滤词（常见博彩/广告推广用语），降低管理员从零维护词库的成本。
+# 均为 contains（大小写不敏感子串）匹配，管理员可用 /filter_del 按需删除。
+DEFAULT_FILTER_KEYWORDS = [
+    "菠菜", "博彩", "赌场", "老虎机", "PC28", "北京28", "幸运28",
+    "彩票", "德州扑克", "百家乐", "首充", "首存", "反水", "返水",
+    "上分", "包赢", "代理加盟", "招代理",
+]
+
+# 标记某租户是否已完成默认过滤词预置（防止重复插入 / 用户删除后被再次插入）。
+_SK_DEFAULT_FILTERS_SEEDED = "default_filters_seeded"
+
 
 class Database:
     """SQLite 单例。承载多租户机器人平台的全部数据。
@@ -31,6 +42,7 @@ class Database:
                 cls._instance._init_db()
                 cls._instance._migrate()
                 cls._instance._init_indexes()
+                cls._instance._seed_default_filters_for_all_tenants()
         return cls._instance
 
     def _conn(self) -> sqlite3.Connection:
@@ -116,9 +128,10 @@ class Database:
                     updated_at TEXT DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS filters (
-                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                    tenant_id INTEGER NOT NULL,
-                    keyword   TEXT NOT NULL
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id  INTEGER NOT NULL,
+                    keyword    TEXT NOT NULL,
+                    match_type TEXT DEFAULT 'contains'
                 );
                 CREATE TABLE IF NOT EXISTS tenant_kv (
                     tenant_id INTEGER NOT NULL,
@@ -197,6 +210,10 @@ class Database:
                 # 来源机器人，供 /ban 时一并封禁该群发器机器人使用。
                 ("last_via_bot_id", "INTEGER"),
                 ("last_via_bot_username", "TEXT"),
+            ],
+            "filters": [
+                # 支持正则匹配（同 auto_replies.match_type），覆盖变体广告文案。
+                ("match_type", "TEXT DEFAULT 'contains'"),
             ],
         }
         with self._conn() as c:
@@ -277,6 +294,30 @@ class Database:
         finally:
             conn.close()
 
+    def _seed_default_filters_for_all_tenants(self) -> None:
+        """为尚未预置过默认过滤词的租户（新建或存量）一次性插入默认词库。
+
+        通过 tenant_kv 标记位保证幂等：已标记的租户不再重复插入，
+        即使管理员后续手动删除了某个默认词，也不会被再次插入回来。
+        """
+        try:
+            with self._conn() as c:
+                tids = [r["id"] for r in c.execute("SELECT id FROM tenants").fetchall()]
+            for tid in tids:
+                self._seed_default_filters(tid)
+        except sqlite3.Error as e:
+            logger.warning("预置默认过滤词失败（不影响运行）: %s", e)
+
+    def _seed_default_filters(self, tenant_id) -> None:
+        """为单个租户预置默认过滤词（幂等，见 _seed_default_filters_for_all_tenants）。"""
+        if self.get_bool_setting(tenant_id, _SK_DEFAULT_FILTERS_SEEDED, False):
+            return
+        with self._conn() as c:
+            c.executemany(
+                "INSERT INTO filters(tenant_id, keyword, match_type) VALUES(?,?,?)",
+                [(tenant_id, kw, "contains") for kw in DEFAULT_FILTER_KEYWORDS])
+        self.set_setting(tenant_id, _SK_DEFAULT_FILTERS_SEEDED, "1")
+
     # ── 通用租户键值设置（用于过滤器开关等）─────────────────
 
     def set_setting(self, tenant_id, key, value):
@@ -334,10 +375,13 @@ class Database:
     def add_tenant(self, token, owner_user_id, bot_id=None,
                    bot_username="", bot_name="") -> int:
         with self._conn() as c:
-            return c.execute(
+            tid = c.execute(
                 """INSERT INTO tenants(token,bot_id,bot_username,bot_name,owner_user_id)
                    VALUES(?,?,?,?,?)""",
                 (token, bot_id, bot_username, bot_name, owner_user_id)).lastrowid
+        # 新租户立即预置默认过滤词，无需等待下次进程重启。
+        self._seed_default_filters(tid)
+        return tid
 
     def get_tenant(self, tid):
         with self._conn() as c:
@@ -405,9 +449,13 @@ class Database:
                 (tenant_id, uid)).fetchone()
 
     def ban_user(self, tenant_id, uid):
+        """封禁指定用户；若尚未建档（如命中过滤词自动封禁时的首条消息），退化为插入一行，
+        避免 UPDATE 因用户不存在而静默无效。"""
         with self._conn() as c:
             c.execute(
-                "UPDATE tenant_users SET is_banned=1 WHERE tenant_id=? AND user_id=?",
+                """INSERT INTO tenant_users(tenant_id, user_id, is_banned)
+                   VALUES(?,?,1)
+                   ON CONFLICT(tenant_id, user_id) DO UPDATE SET is_banned=1""",
                 (tenant_id, uid))
 
     def unban_user(self, tenant_id, uid):
@@ -582,11 +630,11 @@ class Database:
             c.execute("DELETE FROM auto_replies WHERE tenant_id=? AND id=?",
                       (tenant_id, rid))
 
-    def add_filter(self, tenant_id, keyword):
+    def add_filter(self, tenant_id, keyword, match_type="contains"):
         with self._conn() as c:
             return c.execute(
-                "INSERT INTO filters(tenant_id,keyword) VALUES(?,?)",
-                (tenant_id, keyword)).lastrowid
+                "INSERT INTO filters(tenant_id,keyword,match_type) VALUES(?,?,?)",
+                (tenant_id, keyword, match_type)).lastrowid
 
     def get_filters(self, tenant_id):
         with self._conn() as c:
