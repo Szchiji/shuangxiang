@@ -70,7 +70,7 @@ class FakeBot:
 
 class FakeMessage:
     def __init__(self, message_id, text=None, caption=None, media_group_id=None,
-                 chat_id=7, reply_to_message=None, forward_origin=None):
+                 chat_id=7, reply_to_message=None, forward_origin=None, via_bot=None):
         self.message_id = message_id
         self.text = text
         self.caption = caption
@@ -78,6 +78,7 @@ class FakeMessage:
         self.chat_id = chat_id
         self.reply_to_message = reply_to_message
         self.forward_origin = forward_origin
+        self.via_bot = via_bot
         self.replies = []
         self.media_replies = []
 
