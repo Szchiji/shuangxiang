@@ -465,6 +465,168 @@ async def test_get_intercept_logs_wrong_user(aiohttp_client, app, db, tenant_id)
     assert resp.status == 403
 
 
+# ── Scheduled messages ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_scheduled_messages_crud(aiohttp_client, app, db, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    # Create
+    resp = await client.post(
+        f"/api/{tenant_id}/scheduled_messages",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "target_type": "group",
+            "target_chat_id": "-1001234567890",
+            "target_name": "测试群",
+            "msg_type": "text",
+            "content": "hello",
+            "interval_minutes": 30,
+            "buttons_text": "官网 - https://example.com",
+            "remark": "备注A",
+        },
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    sid = data["id"]
+    assert sid
+
+    # List
+    resp = await client.get(
+        f"/api/{tenant_id}/scheduled_messages",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    items = await resp.json()
+    row = next(r for r in items if r["id"] == sid)
+    assert row["content"] == "hello"
+    assert row["buttons_text"] == "官网 - https://example.com"
+    assert row["remark"] == "备注A"
+
+    # Update
+    resp = await client.put(
+        f"/api/{tenant_id}/scheduled_messages/{sid}",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "target_type": "channel",
+            "target_chat_id": "@mychannel",
+            "msg_type": "text",
+            "content": "updated",
+            "interval_minutes": 45,
+        },
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    row = db.get_scheduled_message(tenant_id, sid)
+    assert row["target_type"] == "channel"
+    assert row["content"] == "updated"
+
+    # Toggle
+    resp = await client.post(
+        f"/api/{tenant_id}/scheduled_messages/{sid}/toggle",
+        headers={"X-Init-Data": init_data_header},
+        json={"enabled": False},
+    )
+    assert resp.status == 200
+    assert db.get_scheduled_message(tenant_id, sid)["enabled"] == 0
+
+    # Delete
+    resp = await client.delete(
+        f"/api/{tenant_id}/scheduled_messages/{sid}",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    assert db.get_scheduled_message(tenant_id, sid) is None
+
+
+@pytest.mark.asyncio
+async def test_scheduled_messages_reject_missing_content(aiohttp_client, app, tenant_id,
+                                                          init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/scheduled_messages",
+        headers={"X-Init-Data": init_data_header},
+        json={"target_type": "group", "target_chat_id": "-1001", "msg_type": "text"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_scheduled_messages_reject_missing_target(aiohttp_client, app, tenant_id,
+                                                         init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/scheduled_messages",
+        headers={"X-Init-Data": init_data_header},
+        json={"target_type": "group", "target_chat_id": "", "content": "hi"},
+    )
+    assert resp.status == 400
+
+
+@pytest.mark.asyncio
+async def test_scheduled_messages_bulk_delete(aiohttp_client, app, db, tenant_id,
+                                              init_data_header):
+    ids = [
+        db.add_scheduled_message(tenant_id, target_type="group", target_chat_id=-1,
+                                 content=str(i))
+        for i in range(3)
+    ]
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/scheduled_messages/bulk_delete",
+        headers={"X-Init-Data": init_data_header},
+        json={"ids": ids[:2]},
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["deleted"] == 2
+    assert len(db.get_scheduled_messages(tenant_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduled_messages_export_import(aiohttp_client, app, db, tenant_id,
+                                                 init_data_header):
+    db.add_scheduled_message(
+        tenant_id, target_type="group", target_chat_id=-1001,
+        target_name="群A", content="hi", interval_minutes=15)
+    client = await aiohttp_client(app)
+
+    resp = await client.get(
+        f"/api/{tenant_id}/scheduled_messages/export",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    exported = await resp.json()
+    assert len(exported["items"]) == 1
+    assert "id" not in exported["items"][0]
+
+    # Import into a fresh tenant to verify round-trip
+    other_tenant_id = db.add_tenant(
+        token="other_token:XYZ", owner_user_id=77, bot_id=1000,
+        bot_username="otherbot", bot_name="Other Bot")
+    other_init_data = _make_init_data(77, token="other_token:XYZ")
+    resp = await client.post(
+        f"/api/{other_tenant_id}/scheduled_messages/import",
+        headers={"X-Init-Data": other_init_data},
+        json=exported,
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["imported"] == 1
+    assert len(db.get_scheduled_messages(other_tenant_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduled_messages_wrong_user(aiohttp_client, app, tenant_id):
+    bad_init_data = _make_init_data(999)
+    client = await aiohttp_client(app)
+    resp = await client.get(
+        f"/api/{tenant_id}/scheduled_messages",
+        headers={"X-Init-Data": bad_init_data},
+    )
+    assert resp.status == 403
+
+
 # ── PrivateChatModule cmd_start with webapp ───────────────────────────────────
 
 @pytest.mark.asyncio

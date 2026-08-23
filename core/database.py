@@ -28,6 +28,7 @@ class Database:
       • message_map    —— 「管理员侧消息 → 原始用户」映射
       • topic_map      —— 「论坛话题(thread) ↔ 用户」映射
       • auto_replies / filters        —— 自动回复 / 关键词过滤
+      • scheduled_messages            —— 定时消息（定时发送到群组/频道）
     """
 
     _instance = None
@@ -160,6 +161,27 @@ class Database:
                     auto_banned      INTEGER DEFAULT 0,
                     created_at       TEXT DEFAULT (datetime('now'))
                 );
+                CREATE TABLE IF NOT EXISTS scheduled_messages (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id        INTEGER NOT NULL,
+                    target_type      TEXT NOT NULL DEFAULT 'group',
+                    target_chat_id   TEXT NOT NULL,
+                    target_name      TEXT DEFAULT '',
+                    msg_type         TEXT NOT NULL DEFAULT 'text',
+                    content          TEXT DEFAULT '',
+                    media_id         TEXT DEFAULT '',
+                    buttons          TEXT DEFAULT '',
+                    remark           TEXT DEFAULT '',
+                    interval_minutes INTEGER NOT NULL DEFAULT 60,
+                    repeat           INTEGER NOT NULL DEFAULT 1,
+                    delete_previous  INTEGER NOT NULL DEFAULT 0,
+                    enabled          INTEGER NOT NULL DEFAULT 1,
+                    start_at         TEXT,
+                    next_run_at      TEXT,
+                    last_message_id  INTEGER,
+                    last_sent_at     TEXT,
+                    created_at       TEXT DEFAULT (datetime('now'))
+                );
             """)
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
 
@@ -187,6 +209,10 @@ class Database:
                         ON message_map(tenant_id);
                     CREATE INDEX IF NOT EXISTS idx_intercept_logs_tid
                         ON intercept_logs(tenant_id, id);
+                    CREATE INDEX IF NOT EXISTS idx_scheduled_messages_tid
+                        ON scheduled_messages(tenant_id, id);
+                    CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due
+                        ON scheduled_messages(tenant_id, enabled, next_run_at);
                 """)
         except sqlite3.Error as e:
             logger.warning("创建索引失败（不影响运行）: %s", e)
@@ -426,7 +452,7 @@ class Database:
         with self._conn() as c:
             for tbl in ("tenants", "tenant_settings", "tenant_users", "message_map",
                         "topic_map", "auto_replies", "filters", "tenant_kv",
-                        "banned_bots", "intercept_logs"):
+                        "banned_bots", "intercept_logs", "scheduled_messages"):
                 col = "id" if tbl == "tenants" else "tenant_id"
                 c.execute(f"DELETE FROM {tbl} WHERE {col}=?", (tid,))
 
@@ -682,6 +708,104 @@ class Database:
         with self._conn() as c:
             c.execute("DELETE FROM auto_replies WHERE tenant_id=? AND id=?",
                       (tenant_id, rid))
+
+    # ── 定时消息 ─────────────────────────────────────────────
+
+    def add_scheduled_message(self, tenant_id, *, target_type, target_chat_id,
+                              target_name="", msg_type="text", content="",
+                              media_id="", buttons="", remark="",
+                              interval_minutes=60, repeat=1, delete_previous=0,
+                              enabled=1, start_at=None, next_run_at=None):
+        with self._conn() as c:
+            return c.execute(
+                """INSERT INTO scheduled_messages
+                       (tenant_id, target_type, target_chat_id, target_name,
+                        msg_type, content, media_id, buttons, remark,
+                        interval_minutes, repeat, delete_previous, enabled,
+                        start_at, next_run_at)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (tenant_id, target_type, str(target_chat_id), target_name,
+                 msg_type, content, media_id, buttons, remark,
+                 interval_minutes, repeat, delete_previous, enabled,
+                 start_at, next_run_at)).lastrowid
+
+    def update_scheduled_message(self, tenant_id, sid, *, target_type, target_chat_id,
+                                 target_name="", msg_type="text", content="",
+                                 media_id="", buttons="", remark="",
+                                 interval_minutes=60, repeat=1, delete_previous=0,
+                                 start_at=None, next_run_at=None):
+        with self._conn() as c:
+            c.execute(
+                """UPDATE scheduled_messages
+                       SET target_type=?, target_chat_id=?, target_name=?,
+                           msg_type=?, content=?, media_id=?, buttons=?, remark=?,
+                           interval_minutes=?, repeat=?, delete_previous=?,
+                           start_at=?, next_run_at=?
+                   WHERE tenant_id=? AND id=?""",
+                (target_type, str(target_chat_id), target_name, msg_type, content,
+                 media_id, buttons, remark, interval_minutes, repeat, delete_previous,
+                 start_at, next_run_at, tenant_id, sid))
+
+    def get_scheduled_messages(self, tenant_id):
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM scheduled_messages WHERE tenant_id=? ORDER BY id DESC",
+                (tenant_id,)).fetchall()
+
+    def get_scheduled_message(self, tenant_id, sid):
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM scheduled_messages WHERE tenant_id=? AND id=?",
+                (tenant_id, sid)).fetchone()
+
+    def delete_scheduled_message(self, tenant_id, sid):
+        with self._conn() as c:
+            c.execute("DELETE FROM scheduled_messages WHERE tenant_id=? AND id=?",
+                      (tenant_id, sid))
+
+    def delete_scheduled_messages(self, tenant_id, ids: list) -> int:
+        if not ids:
+            return 0
+        with self._conn() as c:
+            placeholders = ",".join("?" * len(ids))
+            cur = c.execute(
+                f"DELETE FROM scheduled_messages WHERE tenant_id=? AND id IN ({placeholders})",
+                (tenant_id, *ids))
+            return cur.rowcount
+
+    def set_scheduled_message_enabled(self, tenant_id, sid, enabled: bool):
+        with self._conn() as c:
+            c.execute(
+                "UPDATE scheduled_messages SET enabled=? WHERE tenant_id=? AND id=?",
+                (1 if enabled else 0, tenant_id, sid))
+
+    def get_due_scheduled_messages(self, tenant_id):
+        """返回已到期（next_run_at 为空或已过去）且启用的定时消息。"""
+        with self._conn() as c:
+            return c.execute(
+                """SELECT * FROM scheduled_messages
+                       WHERE tenant_id=? AND enabled=1
+                         AND (next_run_at IS NULL OR next_run_at <= datetime('now'))
+                   ORDER BY id""",
+                (tenant_id,)).fetchall()
+
+    def mark_scheduled_message_sent(self, tenant_id, sid, *, message_id,
+                                    next_run_at, disable_if_once=False):
+        with self._conn() as c:
+            if disable_if_once:
+                c.execute(
+                    """UPDATE scheduled_messages
+                           SET last_message_id=?, last_sent_at=datetime('now'),
+                               next_run_at=?, enabled=0
+                       WHERE tenant_id=? AND id=?""",
+                    (message_id, next_run_at, tenant_id, sid))
+            else:
+                c.execute(
+                    """UPDATE scheduled_messages
+                           SET last_message_id=?, last_sent_at=datetime('now'),
+                               next_run_at=?
+                       WHERE tenant_id=? AND id=?""",
+                    (message_id, next_run_at, tenant_id, sid))
 
     def add_filter(self, tenant_id, keyword, match_type="contains"):
         with self._conn() as c:

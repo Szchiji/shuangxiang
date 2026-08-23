@@ -31,6 +31,9 @@
           <button class="nav-item" data-tab="broadcast">
             <span class="nav-icon">📣</span><span class="nav-label">群发广告</span>
           </button>
+          <button class="nav-item" data-tab="scheduled">
+            <span class="nav-icon">⏰</span><span class="nav-label">定时消息</span>
+          </button>
           <button class="nav-item" data-tab="banned">
             <span class="nav-icon">⛔</span><span class="nav-label">封禁管理</span>
           </button>
@@ -227,6 +230,119 @@
             </div>
             <button id="bc-send" class="btn-primary">🚀 发送群发</button>
             <div id="bc-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Scheduled Messages -->
+        <section id="tab-scheduled" class="tab">
+          <div class="page-header"><h2>⏰ 定时消息管理</h2></div>
+
+          <div class="card sm-hero" id="sm-list-view">
+            <h3 class="sm-hero-title">⏰ 定时消息管理</h3>
+            <p class="sm-hero-desc">定时发送消息到群组或频道，支持重复发送和自动删除上一条</p>
+            <div class="sm-hero-actions">
+              <button id="sm-export" class="btn-sm-action btn-sm-export">⬇️ 导出</button>
+              <button id="sm-import" class="btn-sm-action btn-sm-import">⬆️ 导入</button>
+              <button id="sm-start-create" class="btn-sm-action btn-sm-add">＋ 新增消息</button>
+            </div>
+            <input type="file" id="sm-import-file" accept="application/json" style="display:none">
+          </div>
+
+          <div class="card">
+            <label class="field-label">🔍 搜索备注内容
+              <input type="text" id="sm-search" placeholder="搜索备注内容…">
+            </label>
+            <div class="form-actions">
+              <button id="sm-search-btn" class="btn-primary">🔍 搜索</button>
+              <button id="sm-search-clear" class="btn-ghost">✕ 清除</button>
+            </div>
+          </div>
+          <div id="sm-msg" class="msg"></div>
+
+          <div class="card" id="sm-table-card">
+            <div class="sm-table-wrap">
+              <table class="sm-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="sm-select-all"></th>
+                    <th>ID</th>
+                    <th>类型</th>
+                    <th>目标</th>
+                    <th>间隔</th>
+                    <th>开始</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="sm-table-body"></tbody>
+              </table>
+            </div>
+            <div class="sm-bulk-bar" id="sm-bulk-bar" style="display:none">
+              <span id="sm-selected-count">已选 0 项</span>
+              <button id="sm-bulk-delete" class="btn-ghost btn-sm">🗑 删除所选</button>
+            </div>
+          </div>
+
+          <div class="card sm-form" id="sm-editor-view" style="display:none">
+            <div class="subview-header">
+              <button id="sm-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
+            <h3 id="sm-form-title">＋ 新增消息</h3>
+            <input type="hidden" id="sm-edit-id" value="">
+            <label class="field-label">目标类型
+              <select id="sm-target-type">
+                <option value="group">群组</option>
+                <option value="channel">频道</option>
+              </select>
+            </label>
+            <label class="field-label">目标标识（-100 数字 ID 或 @用户名）
+              <input type="text" id="sm-target-chat-id" placeholder="-1001234567890 或 @mychannel">
+            </label>
+            <label class="field-label">目标名称（备注显示，可选）
+              <input type="text" id="sm-target-name" placeholder="默认聊天">
+            </label>
+            <label class="field-label">消息类型
+              <select id="sm-msg-type">
+                <option value="text">文字</option>
+                <option value="photo">图片</option>
+                <option value="video">视频</option>
+                <option value="document">文件</option>
+              </select>
+            </label>
+            <label class="field-label">消息内容 / 说明文字
+              <textarea id="sm-content" rows="4" placeholder="要发送的文字内容（图片/视频/文件时为说明文字）"></textarea>
+            </label>
+            <label class="field-label" id="sm-media-row" style="display:none">媒体 file_id / URL
+              <input type="text" id="sm-media-id" placeholder="图片/视频/文件的 file_id 或 URL">
+            </label>
+            <div class="field-label">内联按钮
+              <div id="sm-buttons-builder" class="btn-builder"></div>
+              <button class="btn-ghost btn-sm" id="sm-buttons-add-row">＋ 添加一行按钮</button>
+            </div>
+            <label class="field-label">发送间隔（分钟）
+              <input type="number" id="sm-interval" min="1" value="60">
+            </label>
+            <label class="field-label">开始时间（留空表示立即生效）
+              <input type="datetime-local" id="sm-start-at">
+            </label>
+            <div class="toggles">
+              <div class="toggle-row">
+                <span>🔁 重复发送</span>
+                <label class="switch"><input type="checkbox" id="sm-repeat" checked><span class="slider"></span></label>
+              </div>
+              <div class="toggle-row">
+                <span>🗑 发送新消息前自动删除上一条</span>
+                <label class="switch"><input type="checkbox" id="sm-delete-previous"><span class="slider"></span></label>
+              </div>
+            </div>
+            <label class="field-label">备注（用于搜索）
+              <input type="text" id="sm-remark" placeholder="备注内容，便于搜索">
+            </label>
+            <div class="form-actions">
+              <button id="sm-submit" class="btn-primary">＋ 添加</button>
+              <button id="sm-cancel" class="btn-ghost">取消</button>
+            </div>
+            <div id="sm-form-msg" class="msg"></div>
           </div>
         </section>
 

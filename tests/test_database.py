@@ -112,3 +112,85 @@ def test_delete_tenant_purges_intercept_logs(db):
     db.add_intercept_log(5, "antiflood", user_id=1)
     db.delete_tenant(5)
     assert db.get_intercept_logs(5) == []
+
+
+def test_scheduled_message_crud(db):
+    sid = db.add_scheduled_message(
+        1, target_type="group", target_chat_id=-100123, target_name="测试群",
+        msg_type="text", content="hello", interval_minutes=30, remark="备注A")
+    row = db.get_scheduled_message(1, sid)
+    assert row["target_chat_id"] == "-100123"
+    assert row["content"] == "hello"
+    assert row["enabled"] == 1
+
+    db.update_scheduled_message(
+        1, sid, target_type="channel", target_chat_id="@mychannel",
+        target_name="频道", msg_type="text", content="updated",
+        interval_minutes=60, remark="备注B")
+    row = db.get_scheduled_message(1, sid)
+    assert row["target_type"] == "channel"
+    assert row["target_chat_id"] == "@mychannel"
+    assert row["content"] == "updated"
+
+    db.set_scheduled_message_enabled(1, sid, False)
+    assert db.get_scheduled_message(1, sid)["enabled"] == 0
+
+    db.delete_scheduled_message(1, sid)
+    assert db.get_scheduled_message(1, sid) is None
+
+
+def test_scheduled_messages_isolated_by_tenant(db):
+    db.add_scheduled_message(1, target_type="group", target_chat_id=-1, content="a")
+    db.add_scheduled_message(2, target_type="group", target_chat_id=-2, content="b")
+    assert len(db.get_scheduled_messages(1)) == 1
+    assert len(db.get_scheduled_messages(2)) == 1
+
+
+def test_scheduled_messages_bulk_delete(db):
+    ids = [
+        db.add_scheduled_message(1, target_type="group", target_chat_id=-1, content=str(i))
+        for i in range(3)
+    ]
+    deleted = db.delete_scheduled_messages(1, ids[:2])
+    assert deleted == 2
+    remaining = db.get_scheduled_messages(1)
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == ids[2]
+
+
+def test_due_scheduled_messages_respects_next_run_at(db):
+    due_id = db.add_scheduled_message(
+        1, target_type="group", target_chat_id=-1, content="due")
+    future_id = db.add_scheduled_message(
+        1, target_type="group", target_chat_id=-1, content="future",
+        next_run_at="2999-01-01 00:00:00")
+    due = {r["id"] for r in db.get_due_scheduled_messages(1)}
+    assert due_id in due
+    assert future_id not in due
+
+    db.set_scheduled_message_enabled(1, due_id, False)
+    due = {r["id"] for r in db.get_due_scheduled_messages(1)}
+    assert due_id not in due
+
+
+def test_mark_scheduled_message_sent_updates_state(db):
+    sid = db.add_scheduled_message(
+        1, target_type="group", target_chat_id=-1, content="hi")
+    db.mark_scheduled_message_sent(
+        1, sid, message_id=42, next_run_at="2999-01-01 00:00:00")
+    row = db.get_scheduled_message(1, sid)
+    assert row["last_message_id"] == 42
+    assert row["next_run_at"] == "2999-01-01 00:00:00"
+    assert row["enabled"] == 1
+
+    db.mark_scheduled_message_sent(
+        1, sid, message_id=43, next_run_at=None, disable_if_once=True)
+    row = db.get_scheduled_message(1, sid)
+    assert row["enabled"] == 0
+    assert row["last_message_id"] == 43
+
+
+def test_delete_tenant_purges_scheduled_messages(db):
+    db.add_scheduled_message(6, target_type="group", target_chat_id=-1, content="x")
+    db.delete_tenant(6)
+    assert db.get_scheduled_messages(6) == []
