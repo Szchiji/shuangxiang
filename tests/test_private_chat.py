@@ -16,6 +16,7 @@ def make_module(db, manage_group=None, admin_id=99):
     mod.admin_id = admin_id
     mod.received = ""
     mod.sent_ack = "✅ 已发送成功，管理员会尽快回复你。"
+    mod.bot_forward_blocked = "⛔ 暂不支持转发其他机器人的消息，请直接发送文字或原始内容。"
     mod._ack_delete_delay = 0
     mod._albums = {}
     mod._album_delay = 0.05
@@ -210,3 +211,32 @@ def test_forward_origin_label_hidden_user(db):
     assert label == "隐藏用户"
     # 非转发消息返回 None
     assert mod._forward_origin_label(FakeMessage(2)) is None
+
+
+def test_is_forwarded_from_bot(db):
+    mod = make_module(db)
+    origin = types.SimpleNamespace(
+        sender_user=types.SimpleNamespace(full_name="AweBot", username="awe_bot", is_bot=True))
+    assert mod._is_forwarded_from_bot(FakeMessage(1, forward_origin=origin))
+    # 转发自普通用户（非机器人）不应被拦截
+    human_origin = types.SimpleNamespace(
+        sender_user=types.SimpleNamespace(full_name="Alice", username="a", is_bot=False))
+    assert not mod._is_forwarded_from_bot(FakeMessage(2, forward_origin=human_origin))
+    # 非转发消息不应被拦截
+    assert not mod._is_forwarded_from_bot(FakeMessage(3))
+
+
+@pytest.mark.asyncio
+async def test_incoming_user_blocks_bot_forwarded_message(db):
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    origin = types.SimpleNamespace(
+        sender_user=types.SimpleNamespace(full_name="AweBot", username="awe_bot", is_bot=True))
+    msg = FakeMessage(90, text="转发的机器人消息", forward_origin=origin)
+    update = types.SimpleNamespace(message=msg, effective_user=USER)
+    await mod._incoming_user(update, ctx)
+    # 用户收到拒收提示
+    assert any("暂不支持转发其他机器人的消息" in r for r in msg.replies)
+    # 消息未被转发给管理员
+    assert ctx.bot.of("forward_message") == []
+    assert ctx.bot.of("copy_message") == []
