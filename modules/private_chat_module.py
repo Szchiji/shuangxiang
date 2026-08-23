@@ -233,7 +233,17 @@ class PrivateChatModule(BaseModule):
             await update.message.reply_text("⚠️ 请「回复」某位用户的消息（或在其话题内），或使用 /ban <用户ID>。")
             return
         self.db.ban_user(self.tenant_id, target)
-        await update.message.reply_text(f"⛔ 已封禁用户 `{target}`", parse_mode="Markdown")
+        text = f"⛔ 已封禁用户 `{target}`"
+        # 若该用户曾借助某机器人（如群发器）发送消息，一并封禁该机器人，
+        # 避免其换个账号继续借道该机器人发送广告。
+        u = self.db.get_tenant_user(self.tenant_id, target)
+        bot_id = u["last_via_bot_id"] if u else None
+        if bot_id:
+            bot_username = u["last_via_bot_username"] or ""
+            self.db.ban_bot(self.tenant_id, bot_id, bot_username)
+            label = f"@{bot_username}" if bot_username else str(bot_id)
+            text += f"\n⛔ 已同时封禁群发器机器人 `{label}`"
+        await update.message.reply_text(text, parse_mode="Markdown")
 
     async def cmd_unban(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not self._is_admin(update.effective_user.id):
@@ -510,6 +520,16 @@ class PrivateChatModule(BaseModule):
         if self.db.is_banned(self.tenant_id, user.id):
             # 被封禁用户静默失效：不回复任何提示，避免其得知封禁状态。
             return
+
+        # 消息若「通过某机器人」（如群发/推广机器人）发出：若该机器人已被封禁，
+        # 无论发送者是谁都静默拦截，防止其借他人账号继续借道发送广告；否则
+        # 记录该来源机器人，供管理员 /ban 该用户时一并封禁该机器人。
+        via_bot = getattr(msg, "via_bot", None)
+        if via_bot is not None:
+            if self.db.is_bot_banned(self.tenant_id, via_bot.id):
+                return
+            self.db.set_user_via_bot(
+                self.tenant_id, user.id, via_bot.id, via_bot.username or "")
 
         # 拒绝接收转发自其他机器人的消息，避免被用于中转/滥用。
         if self._is_forwarded_from_bot(msg):

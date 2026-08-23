@@ -126,6 +126,13 @@ class Database:
                     value     TEXT,
                     PRIMARY KEY (tenant_id, key)
                 );
+                CREATE TABLE IF NOT EXISTS banned_bots (
+                    tenant_id  INTEGER NOT NULL,
+                    bot_id     INTEGER NOT NULL,
+                    username   TEXT,
+                    banned_at  TEXT DEFAULT (datetime('now')),
+                    PRIMARY KEY (tenant_id, bot_id)
+                );
             """)
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
 
@@ -184,6 +191,12 @@ class Database:
                 ("media_id", "TEXT DEFAULT ''"),
                 ("created_at", "TEXT DEFAULT NULL"),
                 ("updated_at", "TEXT DEFAULT NULL"),
+            ],
+            "tenant_users": [
+                # 记录该用户最近一次「通过某机器人（如群发器）」发来消息时的
+                # 来源机器人，供 /ban 时一并封禁该群发器机器人使用。
+                ("last_via_bot_id", "INTEGER"),
+                ("last_via_bot_username", "TEXT"),
             ],
         }
         with self._conn() as c:
@@ -352,7 +365,8 @@ class Database:
     def delete_tenant(self, tid):
         with self._conn() as c:
             for tbl in ("tenants", "tenant_settings", "tenant_users", "message_map",
-                        "topic_map", "auto_replies", "filters", "tenant_kv"):
+                        "topic_map", "auto_replies", "filters", "tenant_kv",
+                        "banned_bots"):
                 col = "id" if tbl == "tenants" else "tenant_id"
                 c.execute(f"DELETE FROM {tbl} WHERE {col}=?", (tid,))
 
@@ -405,6 +419,54 @@ class Database:
     def is_banned(self, tenant_id, uid):
         u = self.get_tenant_user(tenant_id, uid)
         return bool(u and u["is_banned"])
+
+    def set_user_via_bot(self, tenant_id, uid, bot_id, bot_username=""):
+        """记录用户最近一条消息是「通过某机器人」（如群发器）发出的。
+
+        用于 /ban 该用户时，一并封禁其借助的群发器机器人。若用户尚未在
+        tenant_users 中建档（理论上调用前应已 upsert），退化为插入一行，
+        避免因调用顺序问题导致记录静默丢失。
+        """
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO tenant_users(tenant_id, user_id, last_via_bot_id,
+                                             last_via_bot_username)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(tenant_id, user_id) DO UPDATE SET
+                   last_via_bot_id=excluded.last_via_bot_id,
+                   last_via_bot_username=excluded.last_via_bot_username""",
+                (tenant_id, uid, bot_id, bot_username))
+
+    # ── 群发器机器人封禁（按租户隔离）───────────────────────
+
+    def ban_bot(self, tenant_id, bot_id, bot_username=""):
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO banned_bots(tenant_id, bot_id, username)
+                   VALUES(?,?,?)
+                   ON CONFLICT(tenant_id, bot_id) DO UPDATE SET
+                   username=excluded.username""",
+                (tenant_id, bot_id, bot_username))
+
+    def unban_bot(self, tenant_id, bot_id):
+        with self._conn() as c:
+            c.execute(
+                "DELETE FROM banned_bots WHERE tenant_id=? AND bot_id=?",
+                (tenant_id, bot_id))
+
+    def is_bot_banned(self, tenant_id, bot_id):
+        with self._conn() as c:
+            r = c.execute(
+                "SELECT 1 FROM banned_bots WHERE tenant_id=? AND bot_id=?",
+                (tenant_id, bot_id)).fetchone()
+            return bool(r)
+
+    def get_banned_bots(self, tenant_id, limit=20):
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM banned_bots WHERE tenant_id=? "
+                "ORDER BY banned_at DESC LIMIT ?",
+                (tenant_id, limit)).fetchall()
 
     def get_tenant_user_count(self, tenant_id):
         with self._conn() as c:

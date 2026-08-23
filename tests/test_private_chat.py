@@ -256,3 +256,55 @@ async def test_incoming_user_banned_is_silently_ignored(db):
     # 消息未被转发给管理员
     assert ctx.bot.of("forward_message") == []
     assert ctx.bot.of("copy_message") == []
+
+
+VIA_BOT = types.SimpleNamespace(id=555, username="PostBot")
+
+
+@pytest.mark.asyncio
+async def test_incoming_user_records_via_bot(db):
+    """用户通过某机器人（如群发器）发来的消息应记录来源机器人。"""
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(100, text="广告内容", via_bot=VIA_BOT)
+    update = types.SimpleNamespace(message=msg, effective_user=USER)
+    await mod._incoming_user(update, ctx)
+    u = db.get_tenant_user(mod.tenant_id, USER.id)
+    assert u["last_via_bot_id"] == VIA_BOT.id
+    assert u["last_via_bot_username"] == VIA_BOT.username
+    # 机器人未被封禁，消息应正常转发
+    assert len(ctx.bot.of("forward_message")) == 1
+
+
+@pytest.mark.asyncio
+async def test_incoming_user_blocked_when_via_bot_banned(db):
+    """若该「群发器」机器人已被封禁，任何借道它的消息都应被静默拦截。"""
+    mod = make_module(db, manage_group=None)
+    db.ban_bot(mod.tenant_id, VIA_BOT.id, VIA_BOT.username)
+    ctx = make_ctx(FakeBot())
+    msg = FakeMessage(101, text="广告内容", via_bot=VIA_BOT)
+    update = types.SimpleNamespace(message=msg, effective_user=USER2)
+    await mod._incoming_user(update, ctx)
+    assert msg.replies == []
+    assert ctx.bot.of("forward_message") == []
+
+
+@pytest.mark.asyncio
+async def test_cmd_ban_also_bans_via_bot(db):
+    """/ban 用户时，若该用户最近借助某机器人发送消息，应一并封禁该机器人。"""
+    mod = make_module(db, manage_group=None)
+    ctx = make_ctx(FakeBot())
+    incoming = FakeMessage(102, text="广告内容", via_bot=VIA_BOT)
+    update_in = types.SimpleNamespace(message=incoming, effective_user=USER)
+    await mod._incoming_user(update_in, ctx)
+
+    reply_msg = FakeMessage(200, reply_to_message=FakeMessage(1001))
+    reply_msg.replies = []
+    ban_update = types.SimpleNamespace(
+        message=reply_msg, effective_user=types.SimpleNamespace(id=mod.admin_id))
+    ban_ctx = types.SimpleNamespace(bot=ctx.bot, args=[str(USER.id)])
+    await mod.cmd_ban(ban_update, ban_ctx)
+
+    assert db.is_banned(mod.tenant_id, USER.id)
+    assert db.is_bot_banned(mod.tenant_id, VIA_BOT.id)
+    assert any("已同时封禁群发器机器人" in r for r in reply_msg.replies)
