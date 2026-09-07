@@ -165,11 +165,29 @@
         <section id="tab-filters" class="tab">
           <div class="page-header">
             <h2>🚫 过滤词管理</h2>
-            <p class="page-desc">命中过滤词的用户消息将被拦截，不再转发给管理员。</p>
+            <p class="page-desc">命中过滤词的用户消息将被拦截，不再转发给管理员。下方可查看、编辑或删除已添加的词。</p>
           </div>
-          <div class="card" id="fl-add-card">
-            <h3 class="card-title">➕ 添加过滤词</h3>
-            <p class="hint-text">支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。</p>
+          <div class="card" id="fl-list-card">
+            <div class="section-toolbar section-toolbar-row">
+              <input type="text" id="fl-search" placeholder="搜索已添加的过滤词">
+              <select id="fl-filter-match">
+                <option value="">全部匹配方式</option>
+                <option value="contains">包含</option>
+                <option value="regex">正则</option>
+              </select>
+            </div>
+            <div class="section-toolbar" style="margin-top:8px">
+              <button id="fl-start-create" class="btn-primary section-toolbar-btn">➕ 添加过滤词</button>
+            </div>
+            <div id="fl-list"></div>
+          </div>
+          <div class="card" id="fl-editor-card" style="display:none">
+            <div class="subview-header">
+              <button id="fl-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
+            <h3 id="fl-form-title" class="card-title">➕ 添加过滤词</h3>
+            <p id="fl-form-hint" class="hint-text">支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。</p>
+            <input type="hidden" id="fl-edit-id" value="">
             <label class="field-label">过滤词
               <textarea id="fl-keyword" rows="3" placeholder="输入违禁词，多词请换行"></textarea>
             </label>
@@ -181,19 +199,9 @@
             </label>
             <div class="form-actions">
               <button id="fl-submit" class="btn-primary">➕ 添加</button>
+              <button id="fl-cancel" class="btn-ghost" style="display:none">取消</button>
             </div>
             <div id="fl-msg" class="msg"></div>
-          </div>
-          <div class="card">
-            <div class="section-toolbar section-toolbar-row">
-              <input type="text" id="fl-search" placeholder="搜索过滤词">
-              <select id="fl-filter-match">
-                <option value="">全部匹配方式</option>
-                <option value="contains">包含</option>
-                <option value="regex">正则</option>
-              </select>
-            </div>
-            <div id="fl-list"></div>
           </div>
         </section>
 

@@ -395,6 +395,37 @@ async def test_filters_crud(aiohttp_client, app, db, tenant_id, init_data_header
     assert resp.status == 200
     items = await resp.json()
     assert any(r["id"] == fid and r["keyword"] == "自定义违禁" for r in items)
+    # 列表必须可见且带 id，供后台编辑/删除
+    assert all("id" in r and "keyword" in r for r in items)
+    assert len(items) >= 1
+
+    resp = await client.put(
+        f"/api/{tenant_id}/filters/{fid}",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "已修改违禁", "match_type": "regex"},
+    )
+    assert resp.status == 200
+    updated = await resp.json()
+    assert updated.get("ok") is True
+    assert updated["keyword"] == "已修改违禁"
+    assert updated["match_type"] == "regex"
+    row = db.get_filter(tenant_id, fid)
+    assert row is not None and row["keyword"] == "已修改违禁"
+    assert row["match_type"] == "regex"
+
+    bad_put = await client.put(
+        f"/api/{tenant_id}/filters/{fid}",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "(", "match_type": "regex"},
+    )
+    assert bad_put.status == 400
+
+    missing = await client.put(
+        f"/api/{tenant_id}/filters/999999",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "x"},
+    )
+    assert missing.status == 404
 
     resp = await client.delete(
         f"/api/{tenant_id}/filters/{fid}",
@@ -403,7 +434,14 @@ async def test_filters_crud(aiohttp_client, app, db, tenant_id, init_data_header
     assert resp.status == 200
     assert (await resp.json())["ok"] is True
     remaining = {r["keyword"] for r in db.get_filters(tenant_id)}
+    assert "已修改违禁" not in remaining
     assert "自定义违禁" not in remaining
+
+    gone = await client.delete(
+        f"/api/{tenant_id}/filters/{fid}",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert gone.status == 404
 
 
 @pytest.mark.asyncio

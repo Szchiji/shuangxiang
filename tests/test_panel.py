@@ -171,12 +171,69 @@ async def test_non_admin_cannot_unban(db):
 # ── 过滤词管理：面板添加 ─────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_filters_view_lists_keywords_and_actions(db):
+    """过滤词列表应在正文展示已添加的词，并提供编辑/删除按钮。"""
+    mod = make_module(db)
+    fid = db.add_filter(1, "自定义违禁词")
+    q = FakeQuery(99, "pc:filters")
+    await mod.on_panel(make_cbk_update(q), None)
+    text, kwargs = q.edits[0]
+    assert "自定义违禁词" in text
+    assert "共" in text
+    cbs = _callbacks(kwargs["reply_markup"])
+    assert "pc:filter_add" in cbs
+    assert f"pc:filter_edit:{fid}" in cbs
+    assert any(c.startswith(f"pc:filter_del:{fid}") for c in cbs)
+
+
+@pytest.mark.asyncio
 async def test_filters_view_has_add_button(db):
     mod = make_module(db)
     q = FakeQuery(99, "pc:filters")
     await mod.on_panel(make_cbk_update(q), None)
     cbs = _callbacks(q.edits[0][1]["reply_markup"])
     assert "pc:filter_add" in cbs
+
+
+@pytest.mark.asyncio
+async def test_filter_edit_via_panel_wizard(db):
+    from telegram.ext import ApplicationHandlerStop
+
+    from modules.private_chat_module import _SK_FILTER_ADD
+    from tests.conftest import FakeMessage, make_ctx
+
+    mod = make_module(db)
+    fid = db.add_filter(1, "旧词")
+    ctx = make_ctx(None)
+    ctx.user_data = {}
+
+    q = FakeQuery(99, f"pc:filter_edit:{fid}")
+    await mod.on_panel(make_cbk_update(q), ctx)
+    assert ctx.user_data.get(_SK_FILTER_ADD, {}).get("edit_id") == fid
+
+    msg = FakeMessage(1, text="新词")
+    upd = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=99),
+        effective_message=msg,
+        message=msg,
+    )
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_filter_add_wizard(upd, ctx)
+    assert _SK_FILTER_ADD not in ctx.user_data
+    row = db.get_filter(1, fid)
+    assert row is not None and row["keyword"] == "新词"
+    assert any("已更新" in r for r in msg.replies)
+
+
+@pytest.mark.asyncio
+async def test_filter_delete_via_panel_refreshes_list(db):
+    mod = make_module(db)
+    fid = db.add_filter(1, "待删词")
+    q = FakeQuery(99, f"pc:filter_del:{fid}:0")
+    await mod.on_panel(make_cbk_update(q), None)
+    assert db.get_filter(1, fid) is None
+    text = q.edits[0][0]
+    assert "待删词" not in text
 
 
 @pytest.mark.asyncio
