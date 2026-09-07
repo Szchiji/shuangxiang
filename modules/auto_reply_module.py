@@ -107,7 +107,10 @@ class AutoReplyModule(BaseModule):
             filters.ChatType.PRIVATE & ~filters.COMMAND, self.on_message), group=0)
 
     def _admin(self, update: Update) -> bool:
-        return update.effective_user.id == self.admin_id
+        uid = update.effective_user.id
+        if uid == self.admin_id:
+            return True
+        return self.db.has_min_role(self.tenant_id, uid, "admin")
 
     # ── 拥有者配置 ──────────────────────────────────────────
 

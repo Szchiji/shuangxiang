@@ -42,11 +42,20 @@
           <button class="nav-item" data-tab="scheduled">
             <span class="nav-icon">⏰</span><span class="nav-label">定时消息</span>
           </button>
+          <button class="nav-item" data-tab="users">
+            <span class="nav-icon">👥</span><span class="nav-label">用户运营</span>
+          </button>
+          <button class="nav-item" data-tab="quick-replies">
+            <span class="nav-icon">⚡</span><span class="nav-label">快捷回复</span>
+          </button>
           <button class="nav-item" data-tab="banned">
             <span class="nav-icon">⛔</span><span class="nav-label">封禁管理</span>
           </button>
           <button class="nav-item" data-tab="logs">
             <span class="nav-icon">📋</span><span class="nav-label">拦截日志</span>
+          </button>
+          <button class="nav-item" data-tab="staff">
+            <span class="nav-icon">🧑‍💼</span><span class="nav-label">协作成员</span>
           </button>
           <button class="nav-item" data-tab="stats">
             <span class="nav-icon">📊</span><span class="nav-label">数据统计</span>
@@ -77,6 +86,49 @@
             </div>
             <button id="save-welcome-buttons" class="btn-primary">💾 保存欢迎按钮</button>
             <div id="welcome-buttons-msg" class="msg"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">欢迎语封面媒体</h3>
+            <p class="hint-text">向机器人私聊发送图片/视频，机器人会回传 <code>file_id</code>，粘贴到下方即可。也可填公开 URL。</p>
+            <label class="field-label">媒体类型
+              <select id="welcome-media-type">
+                <option value="">无（纯文本）</option>
+                <option value="photo">图片</option>
+                <option value="video">视频</option>
+                <option value="animation">动图</option>
+                <option value="document">文件</option>
+              </select>
+            </label>
+            <label class="field-label">媒体 file_id / URL
+              <input type="text" id="welcome-media-id" placeholder="file_id 或 https://...">
+            </label>
+            <div class="form-actions">
+              <button id="save-welcome-media" class="btn-primary">💾 保存封面</button>
+              <button id="clear-welcome-media" class="btn-ghost">清除封面</button>
+            </div>
+            <div id="welcome-media-msg" class="msg"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">协作模式（Topics）</h3>
+            <div id="topics-status" class="hint-text">加载中…</div>
+            <p class="hint-text" style="margin-top:8px">
+              把机器人加入开启「话题」的超级群，在群内发送 <code>/setgroup</code> 启用；
+              发送 <code>/unsetgroup</code> 恢复 DM 模式。
+            </p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">离开自动回复</h3>
+            <div class="toggles">
+              <div class="toggle-row">
+                <span>🌙 离开模式</span>
+                <label class="switch"><input type="checkbox" id="away-on"><span class="slider"></span></label>
+              </div>
+            </div>
+            <label class="field-label">离开提示文案
+              <textarea id="away-msg" rows="3" placeholder="管理员暂时不在，请稍后再联系…"></textarea>
+            </label>
+            <button id="save-away-settings" class="btn-primary">💾 保存离开设置</button>
+            <div id="away-msg-status" class="msg"></div>
           </div>
           <div class="card">
             <h3 class="card-title">安全开关</h3>
@@ -124,6 +176,9 @@
                 <option value="startswith">开头匹配</option>
                 <option value="regex">正则表达式</option>
               </select>
+              <button id="ar-export" class="btn-ghost section-toolbar-btn">⬇️ 导出</button>
+              <button id="ar-import" class="btn-ghost section-toolbar-btn">⬆️ 导入</button>
+              <input type="file" id="ar-import-file" accept="application/json" style="display:none">
               <button id="ar-start-create" class="btn-primary section-toolbar-btn">➕ 新增自动回复</button>
             </div>
             <div id="ar-list"></div>
@@ -148,6 +203,24 @@
                 <option value="startswith">开头匹配</option>
                 <option value="regex">正则表达式</option>
               </select>
+            </label>
+            <div class="toggles" style="margin-bottom:12px">
+              <div class="toggle-row">
+                <span>🛑 命中后拦截（不再转发给管理员）</span>
+                <label class="switch"><input type="checkbox" id="ar-stop"><span class="slider"></span></label>
+              </div>
+            </div>
+            <label class="field-label">附带媒体类型
+              <select id="ar-media-type">
+                <option value="">无</option>
+                <option value="photo">图片</option>
+                <option value="video">视频</option>
+                <option value="animation">动图</option>
+                <option value="document">文件</option>
+              </select>
+            </label>
+            <label class="field-label">媒体 file_id / URL
+              <input type="text" id="ar-media-id" placeholder="向机器人发媒体可获取 file_id">
             </label>
             <div class="field-label">内联按钮
               <div id="ar-buttons-builder" class="btn-builder"></div>
@@ -177,6 +250,9 @@
               </select>
             </div>
             <div class="section-toolbar" style="margin-top:8px">
+              <button id="fl-export" class="btn-ghost section-toolbar-btn">⬇️ 导出</button>
+              <button id="fl-import" class="btn-ghost section-toolbar-btn">⬆️ 导入</button>
+              <input type="file" id="fl-import-file" accept="application/json,.txt" style="display:none">
               <button id="fl-start-create" class="btn-primary section-toolbar-btn">➕ 添加过滤词</button>
             </div>
             <div id="fl-list"></div>
@@ -262,9 +338,10 @@
         <section id="tab-broadcast" class="tab">
           <div class="page-header"><h2>📣 群发广告</h2></div>
           <div class="card">
-            <p class="hint-text">向所有活跃用户群发消息，支持图片、内联按钮和静默推送。</p>
-            <label class="field-label">图片 URL（可选）
-              <input type="text" id="bc-photo" placeholder="https://... （留空则仅发文字）">
+            <p class="hint-text">向所有活跃用户群发消息，支持图片 URL / file_id、内联按钮和静默推送。</p>
+            <p class="hint-text" id="bc-estimate">预计触达：加载中…</p>
+            <label class="field-label">图片 URL 或 file_id（可选）
+              <input type="text" id="bc-photo" placeholder="https://... 或 file_id（留空则仅发文字）">
             </label>
             <label class="field-label">消息内容
               <textarea id="bc-text" rows="6"
@@ -281,6 +358,7 @@
               </div>
             </div>
             <button id="bc-send" class="btn-primary">🚀 发送群发</button>
+            <div id="bc-progress" class="hint-text" style="display:none;margin-top:8px"></div>
             <div id="bc-msg" class="msg"></div>
           </div>
         </section>
@@ -398,11 +476,108 @@
           </div>
         </section>
 
+        <!-- Users ops -->
+        <section id="tab-users" class="tab">
+          <div class="page-header"><h2>👥 用户运营</h2></div>
+          <div class="card">
+            <div class="section-toolbar">
+              <input type="text" id="ops-users-search" placeholder="搜索 ID / 用户名 / 备注 / 标签">
+              <select id="ops-session-filter">
+                <option value="">全部会话</option>
+                <option value="open">未处理</option>
+                <option value="pending">处理中</option>
+                <option value="resolved">已解决</option>
+              </select>
+              <button id="ops-users-refresh" class="btn-ghost section-toolbar-btn">🔄 刷新</button>
+            </div>
+            <div id="ops-users-summary" class="hint-text"></div>
+            <div id="ops-users-list"></div>
+            <div id="ops-users-msg" class="msg"></div>
+          </div>
+          <div class="card" id="ops-user-editor" style="display:none">
+            <h3 class="card-title">编辑用户 <span id="ops-edit-uid"></span></h3>
+            <label class="field-label">备注
+              <textarea id="ops-notes" rows="3" placeholder="内部备注"></textarea>
+            </label>
+            <label class="field-label">标签（逗号分隔）
+              <input type="text" id="ops-tags" placeholder="VIP, 已成交">
+            </label>
+            <label class="field-label">会话状态
+              <select id="ops-session-status">
+                <option value="open">未处理</option>
+                <option value="pending">处理中</option>
+                <option value="resolved">已解决</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button id="ops-save-user" class="btn-primary">💾 保存</button>
+              <button id="ops-close-editor" class="btn-ghost">关闭</button>
+            </div>
+            <div id="ops-edit-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Quick replies -->
+        <section id="tab-quick-replies" class="tab">
+          <div class="page-header"><h2>⚡ 快捷回复模板</h2></div>
+          <div class="card">
+            <p class="hint-text">手动点选发送的话术模板（与自动回复区分）。客服可在后台维护，Bot 侧 /info 等场景可配合使用。</p>
+            <label class="field-label">标题
+              <input type="text" id="qr-title" placeholder="例如：欢迎话术">
+            </label>
+            <label class="field-label">内容
+              <textarea id="qr-content" rows="4" placeholder="要发送的文本"></textarea>
+            </label>
+            <button id="qr-add" class="btn-primary">＋ 添加模板</button>
+            <div id="qr-msg" class="msg"></div>
+          </div>
+          <div id="qr-list"></div>
+        </section>
+
+        <!-- Staff -->
+        <section id="tab-staff" class="tab">
+          <div class="page-header"><h2>🧑‍💼 协作成员</h2></div>
+          <div class="card">
+            <p class="hint-text">owner 拥有全部权限；admin 可改配置；support 可回复/封禁/改备注。仅 owner 可增删成员。</p>
+            <label class="field-label">用户 ID
+              <input type="number" id="staff-uid" placeholder="Telegram 用户数字 ID">
+            </label>
+            <label class="field-label">角色
+              <select id="staff-role">
+                <option value="support">support（客服）</option>
+                <option value="admin">admin（管理员）</option>
+              </select>
+            </label>
+            <button id="staff-add" class="btn-primary">＋ 添加成员</button>
+            <div id="staff-msg" class="msg"></div>
+          </div>
+          <div id="staff-list"></div>
+          <div class="card" style="margin-top:12px">
+            <h3 class="card-title">操作审计</h3>
+            <div id="audit-list"></div>
+          </div>
+        </section>
+
         <!-- Banned -->
         <section id="tab-banned" class="tab">
           <div class="page-header"><h2>⛔ 封禁用户管理</h2></div>
           <div class="card">
-            <label class="field-label">搜索封禁用户
+            <h3 class="card-title">按用户 ID 封禁</h3>
+            <label class="field-label">用户 ID
+              <input type="number" id="ban-uid" placeholder="Telegram 用户数字 ID">
+            </label>
+            <button id="ban-submit" class="btn-primary">⛔ 封禁</button>
+            <div id="ban-msg" class="msg"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">最近用户（便于查找）</h3>
+            <label class="field-label">搜索用户
+              <input type="text" id="users-search" placeholder="用户 ID、用户名或昵称">
+            </label>
+            <div id="users-list"></div>
+          </div>
+          <div class="card">
+            <label class="field-label">搜索已封禁用户
               <input type="text" id="banned-search" placeholder="输入用户 ID、用户名或昵称">
             </label>
             <div id="banned-msg" class="msg"></div>
@@ -421,6 +596,17 @@
           <div class="page-header"><h2>📋 拦截日志</h2></div>
           <div class="card">
             <p class="hint-text">记录被过滤词 / 防刷屏 / 第三方机器人拦截等安全策略拦截的消息，便于判断词库是否需要调整。</p>
+            <div class="section-toolbar">
+              <select id="logs-reason">
+                <option value="">全部原因</option>
+                <option value="filter">过滤词</option>
+                <option value="antiflood">防刷屏</option>
+                <option value="alphabet_latin">英文拦截</option>
+                <option value="block_via_bot">第三方机器人</option>
+              </select>
+              <button id="logs-refresh" class="btn-ghost section-toolbar-btn">🔄 刷新</button>
+            </div>
+            <div id="logs-summary" class="hint-text"></div>
             <div id="logs-msg" class="msg"></div>
           </div>
           <div id="logs-list"></div>

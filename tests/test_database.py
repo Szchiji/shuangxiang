@@ -206,3 +206,89 @@ def test_delete_tenant_purges_scheduled_messages(db):
     db.add_scheduled_message(6, target_type="group", target_chat_id=-1, content="x")
     db.delete_tenant(6)
     assert db.get_scheduled_messages(6) == []
+
+
+def test_search_tenant_users_and_stats(db):
+    db.upsert_tenant_user(1, 10, "alice", "Alice A")
+    db.upsert_tenant_user(1, 11, "bob", "Bob B")
+    db.ban_user(1, 11)
+    db.add_intercept_log(1, "filter", user_id=10, rule="x")
+
+    rows = db.search_tenant_users(1, "ali")
+    assert any(r["user_id"] == 10 for r in rows)
+
+    by_id = db.search_tenant_users(1, "10")
+    assert any(r["user_id"] == 10 for r in by_id)
+
+    stats = db.get_tenant_user_count(1)
+    assert stats["total"] >= 2
+    assert stats["banned"] >= 1
+    assert "new_today" in stats
+    assert "intercept_by_reason" in stats
+    assert stats["filters"] >= 0
+
+
+def test_intercept_logs_reason_filter_and_pagination(db):
+    db.add_intercept_log(1, "filter", user_id=1)
+    db.add_intercept_log(1, "antiflood", user_id=2)
+    db.add_intercept_log(1, "filter", user_id=3)
+    rows = db.get_intercept_logs(1, reason="filter", limit=10)
+    assert all(r["reason"] == "filter" for r in rows)
+    assert db.count_intercept_logs(1, reason="filter") == 2
+    page = db.get_intercept_logs(1, limit=1, offset=0)
+    assert len(page) == 1
+
+
+def test_staff_roles_and_quick_replies(db):
+    tid = db.add_tenant("tok", owner_user_id=42, bot_id=1)
+    assert db.get_user_role(tid, 42) == "owner"
+    assert db.has_min_role(tid, 42, "admin")
+    db.upsert_staff(tid, 7, role="support", username="sup")
+    assert db.get_user_role(tid, 7) == "support"
+    assert db.has_min_role(tid, 7, "support")
+    assert not db.has_min_role(tid, 7, "admin")
+    db.upsert_staff(tid, 8, role="admin")
+    assert db.has_min_role(tid, 8, "admin")
+    items = db.list_staff(tid)
+    assert any(i["role"] == "owner" for i in items)
+    assert db.remove_staff(tid, 7)
+
+    qid = db.add_quick_reply(tid, "hi", "hello there")
+    rows = db.get_quick_replies(tid)
+    assert any(r["id"] == qid for r in rows)
+    assert db.update_quick_reply(tid, qid, "hi2", "hello2", 1)
+    assert db.delete_quick_reply(tid, qid)
+
+
+def test_user_profile_session_and_audit(db):
+    tid = db.add_tenant("tok2", owner_user_id=1, bot_id=2)
+    db.upsert_tenant_user(tid, 9, "u9", "U9")
+    db.update_tenant_user_profile(
+        tid, 9, notes="n1", tags="a, b", session_status="pending")
+    u = db.get_tenant_user(tid, 9)
+    assert u["notes"] == "n1"
+    assert "a" in u["tags"]
+    assert u["session_status"] == "pending"
+    db.touch_user_session_on_message(tid, 9)  # pending stays
+    assert db.get_tenant_user(tid, 9)["session_status"] == "pending"
+    db.update_tenant_user_profile(tid, 9, session_status="resolved")
+    db.touch_user_session_on_message(tid, 9)
+    assert db.get_tenant_user(tid, 9)["session_status"] == "open"
+    db.ban_user(tid, 9, reason="spam")
+    assert db.get_tenant_user(tid, 9)["ban_reason"] == "spam"
+    db.add_audit_log(tid, "ban", actor_id=1, detail="uid=9")
+    rows, total = db.get_audit_logs(tid)
+    assert total >= 1
+    assert rows[0]["action"] == "ban"
+
+
+def test_platform_tenant_list_and_health(db):
+    t1 = db.add_tenant("a:1", owner_user_id=1, bot_username="a")
+    t2 = db.add_tenant("b:2", owner_user_id=2, bot_username="b")
+    db.set_tenant_health(t1, last_error="fail")
+    db.set_tenant_health(t2, clear_error=True)
+    rows, total = db.list_platform_tenants()
+    assert total >= 2
+    stats = db.platform_stats()
+    assert stats["tenants_total"] >= 2
+    assert stats["tenants_unhealthy"] >= 1

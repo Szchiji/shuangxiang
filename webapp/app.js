@@ -120,13 +120,17 @@ function initTabs() {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-      if (btn.dataset.tab === 'stats')      loadStats();
-      if (btn.dataset.tab === 'banned')     loadBanned();
-      if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
-      if (btn.dataset.tab === 'filters')    loadFilters();
-      if (btn.dataset.tab === 'force-sub')  loadForceSub();
-      if (btn.dataset.tab === 'logs')       loadInterceptLogs();
-      if (btn.dataset.tab === 'scheduled')  loadScheduledMessages();
+      if (btn.dataset.tab === 'stats')         loadStats();
+      if (btn.dataset.tab === 'banned')        loadBanned();
+      if (btn.dataset.tab === 'auto-reply')    loadAutoReplies();
+      if (btn.dataset.tab === 'filters')       loadFilters();
+      if (btn.dataset.tab === 'force-sub')     loadForceSub();
+      if (btn.dataset.tab === 'logs')          loadInterceptLogs();
+      if (btn.dataset.tab === 'scheduled')     loadScheduledMessages();
+      if (btn.dataset.tab === 'broadcast')     loadBroadcastEstimate();
+      if (btn.dataset.tab === 'users')         loadOpsUsers();
+      if (btn.dataset.tab === 'quick-replies') loadQuickReplies();
+      if (btn.dataset.tab === 'staff')         { loadStaff(); loadAuditLogs(); }
     });
   });
 }
@@ -309,12 +313,22 @@ async function loadSettings() {
   if (data.error) { showError('无法加载设置：' + data.error); return; }
   document.getElementById('welcome-text').value = data.welcome_text || '';
   _welcomeBuilder.loadText(data.welcome_btns_text || '');
+  document.getElementById('welcome-media-type').value = data.welcome_media_type || '';
+  document.getElementById('welcome-media-id').value = data.welcome_media_id || '';
+  document.getElementById('away-on').checked = !!data.away_on;
+  document.getElementById('away-msg').value = data.away_msg || '';
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
   document.getElementById('filter-auto-ban').checked = !!data.filter_auto_ban;
   document.getElementById('block-via-bot').checked   = !!data.block_via_bot;
   document.getElementById('flood-max-msgs').value   = data.flood_max_msgs ?? 5;
   document.getElementById('flood-window').value     = data.flood_window ?? 5;
+  const topicsEl = document.getElementById('topics-status');
+  if (data.topics_enabled) {
+    topicsEl.innerHTML = `✅ 已启用 Topics 模式<br>管理群 ID：<code>${esc(String(data.manage_group))}</code>`;
+  } else {
+    topicsEl.textContent = '未启用（当前为 DM 私聊模式）';
+  }
   if (data.bot_name) {
     document.getElementById('bot-name').textContent = '🤖 ' + data.bot_name;
   }
@@ -334,6 +348,30 @@ document.getElementById('save-welcome-buttons').addEventListener('click', async 
   }, 'welcome-buttons-msg', '✅ 欢迎按钮已保存');
 });
 
+document.getElementById('save-welcome-media').addEventListener('click', async () => {
+  const mediaType = document.getElementById('welcome-media-type').value;
+  const mediaId = document.getElementById('welcome-media-id').value.trim();
+  if (mediaType && !mediaId) {
+    const msgEl = document.getElementById('welcome-media-msg');
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 请填写媒体 file_id 或 URL';
+    return;
+  }
+  await saveSettingsPartial({
+    welcome_media_type: mediaType,
+    welcome_media_id: mediaType ? mediaId : '',
+  }, 'welcome-media-msg', '✅ 欢迎语封面已保存');
+});
+
+document.getElementById('clear-welcome-media').addEventListener('click', async () => {
+  document.getElementById('welcome-media-type').value = '';
+  document.getElementById('welcome-media-id').value = '';
+  await saveSettingsPartial({
+    welcome_media_type: '',
+    welcome_media_id: '',
+  }, 'welcome-media-msg', '✅ 已清除封面');
+});
+
 document.getElementById('save-security-settings').addEventListener('click', async () => {
   const floodMaxMsgs = parseInt(document.getElementById('flood-max-msgs').value, 10);
   const floodWindow  = parseInt(document.getElementById('flood-window').value, 10);
@@ -351,6 +389,13 @@ document.getElementById('save-security-settings').addEventListener('click', asyn
     flood_max_msgs:    floodMaxMsgs,
     flood_window:      floodWindow,
   }, 'settings-msg', '✅ 安全设置已保存');
+});
+
+document.getElementById('save-away-settings').addEventListener('click', async () => {
+  await saveSettingsPartial({
+    away_on:  document.getElementById('away-on').checked,
+    away_msg: document.getElementById('away-msg').value,
+  }, 'away-msg-status', '✅ 离开设置已保存');
 });
 
 // ── Auto Replies ──────────────────────────────────────────────────────────────
@@ -378,6 +423,9 @@ function resetArForm() {
   document.getElementById('ar-keyword').value = '';
   document.getElementById('ar-reply').value   = '';
   document.getElementById('ar-match').value   = 'contains';
+  document.getElementById('ar-stop').checked  = false;
+  document.getElementById('ar-media-type').value = '';
+  document.getElementById('ar-media-id').value = '';
   _arBuilder.loadText('');
   document.getElementById('ar-msg').textContent = '';
   document.getElementById('ar-msg').className   = 'msg';
@@ -393,6 +441,9 @@ function startEditAr(r) {
   document.getElementById('ar-keyword').value = r.keyword || '';
   document.getElementById('ar-reply').value   = r.reply   || '';
   document.getElementById('ar-match').value   = r.match_type || 'contains';
+  document.getElementById('ar-stop').checked  = !!r.stop;
+  document.getElementById('ar-media-type').value = r.media_type || '';
+  document.getElementById('ar-media-id').value = r.media_id || '';
   _arBuilder.loadText(r.buttons_text || '');
   document.getElementById('ar-msg').textContent = '';
   document.getElementById('ar-msg').className = 'msg';
@@ -409,6 +460,9 @@ function startCreateAr() {
   document.getElementById('ar-keyword').value = '';
   document.getElementById('ar-reply').value = '';
   document.getElementById('ar-match').value = 'contains';
+  document.getElementById('ar-stop').checked = false;
+  document.getElementById('ar-media-type').value = '';
+  document.getElementById('ar-media-id').value = '';
   _arBuilder.loadText('');
   document.getElementById('ar-msg').textContent = '';
   document.getElementById('ar-msg').className = 'msg';
@@ -445,6 +499,8 @@ function renderAutoReplies() {
         <div class="ar-reply-preview">💬 ${esc(summarizeText(r.reply, 72))}</div>
         <div class="ar-meta">
           ${esc(matchLabel(r.match_type))}
+          ${r.stop ? '　🛑 拦截转发' : ''}
+          ${r.media_type ? `　🖼 ${esc(r.media_type)}` : ''}
           ${buttons ? '　🔘 有按钮' : ''}
           ${r.updated_at || r.created_at ? `　🕒 ${esc(formatDateTime(r.updated_at || r.created_at))}` : ''}
         </div>
@@ -485,19 +541,34 @@ document.getElementById('ar-submit').addEventListener('click', async () => {
   const keyword = document.getElementById('ar-keyword').value.trim();
   const reply   = document.getElementById('ar-reply').value.trim();
   const match   = document.getElementById('ar-match').value;
+  const stop    = document.getElementById('ar-stop').checked;
+  const mediaType = document.getElementById('ar-media-type').value;
+  const mediaId = document.getElementById('ar-media-id').value.trim();
   const buttons = _arBuilder.getText();
   if (!keyword || !reply) {
     msgEl.className = 'msg fail';
     msgEl.textContent = '关键词和回复内容不能为空';
     return;
   }
+  if (mediaType && !mediaId) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '已选媒体类型时请填写 file_id / URL';
+    return;
+  }
+  const payload = {
+    keyword,
+    reply,
+    match_type: match,
+    stop,
+    buttons_text: buttons,
+    media_type: mediaType,
+    media_id: mediaType ? mediaId : '',
+  };
   msgEl.className = 'msg';
   msgEl.textContent = '保存中…';
   let res;
   if (_arEditId !== null) {
-    res = await api('PUT', '/auto_replies/' + _arEditId, {
-      keyword, reply, match_type: match, buttons_text: buttons,
-    });
+    res = await api('PUT', '/auto_replies/' + _arEditId, payload);
     if (res.ok) {
       msgEl.className = 'msg ok';
       msgEl.textContent = '✅ 已保存修改';
@@ -508,9 +579,7 @@ document.getElementById('ar-submit').addEventListener('click', async () => {
       msgEl.textContent = '❌ ' + (res.error || '失败');
     }
   } else {
-    res = await api('POST', '/auto_replies', {
-      keyword, reply, match_type: match, buttons_text: buttons,
-    });
+    res = await api('POST', '/auto_replies', payload);
     if (res.id) {
       msgEl.className = 'msg ok';
       msgEl.textContent = '✅ 已添加';
@@ -528,6 +597,33 @@ document.getElementById('ar-back').addEventListener('click', resetArForm);
 document.getElementById('ar-start-create').addEventListener('click', startCreateAr);
 document.getElementById('ar-search').addEventListener('input', renderAutoReplies);
 document.getElementById('ar-filter-match').addEventListener('change', renderAutoReplies);
+
+document.getElementById('ar-export').addEventListener('click', async () => {
+  const data = await api('GET', '/auto_replies/export');
+  if (data.error) { alert('导出失败：' + data.error); return; }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'auto_replies.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('ar-import').addEventListener('click', () => {
+  document.getElementById('ar-import-file').click();
+});
+document.getElementById('ar-import-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let parsed;
+  try { parsed = JSON.parse(await file.text()); }
+  catch (_) { alert('导入失败：不是有效的 JSON'); return; }
+  const res = await api('POST', '/auto_replies/import', parsed);
+  if (res.error) { alert('导入失败：' + res.error); return; }
+  alert(`导入完成：成功 ${res.imported} 条${res.errors && res.errors.length ? `，失败 ${res.errors.length} 条` : ''}`);
+  loadAutoReplies();
+});
 
 // ── Filters ───────────────────────────────────────────────────────────────────
 
@@ -733,6 +829,41 @@ document.getElementById('fl-back').addEventListener('click', resetFlForm);
 document.getElementById('fl-search').addEventListener('input', renderFilters);
 document.getElementById('fl-filter-match').addEventListener('change', renderFilters);
 
+document.getElementById('fl-export').addEventListener('click', async () => {
+  const data = await api('GET', '/filters/export');
+  if (data.error) { alert('导出失败：' + data.error); return; }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'filters.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+document.getElementById('fl-import').addEventListener('click', () => {
+  document.getElementById('fl-import-file').click();
+});
+document.getElementById('fl-import-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let parsed;
+  const text = await file.text();
+  try {
+    parsed = JSON.parse(text);
+  } catch (_) {
+    // Plain text: one keyword per line
+    parsed = {
+      items: text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+        .map(keyword => ({ keyword, match_type: 'contains' })),
+    };
+  }
+  const res = await api('POST', '/filters/import', parsed);
+  if (res.error) { alert('导入失败：' + res.error); return; }
+  alert(`导入完成：成功 ${res.imported} 条${res.errors && res.errors.length ? `，失败 ${res.errors.length} 条` : ''}`);
+  loadFilters();
+});
+
 // ── Force Subscribe ───────────────────────────────────────────────────────────
 
 // In-memory channel list (loaded from server); mutated by add/remove, saved on change.
@@ -903,6 +1034,45 @@ document.getElementById('fsub-back-from-settings').addEventListener('click', () 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 
 let _bcBuilder;
+let _bcPollTimer = null;
+
+async function loadBroadcastEstimate() {
+  const el = document.getElementById('bc-estimate');
+  if (!el) return;
+  const data = await api('GET', '/broadcast/estimate');
+  if (data.error) {
+    el.textContent = '预计触达：—';
+    return;
+  }
+  el.textContent = `预计触达：${data.active_users ?? 0} 位活跃用户`;
+}
+
+async function pollBroadcastJob(jobId) {
+  const progressEl = document.getElementById('bc-progress');
+  const msgEl = document.getElementById('bc-msg');
+  show('bc-progress');
+  const tick = async () => {
+    const job = await api('GET', '/broadcast/' + jobId);
+    if (job.error) {
+      progressEl.textContent = '无法查询发送进度';
+      return;
+    }
+    const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
+    progressEl.textContent =
+      `进度 ${job.done}/${job.total}（${pct}%）· 成功 ${job.success} · 失败 ${job.failed}`
+      + (job.status === 'done' ? ' · 已完成' : ' · 发送中…');
+    if (job.status === 'done') {
+      msgEl.className = 'msg ok';
+      msgEl.textContent =
+        `✅ 群发完成：成功 ${job.success}，失败 ${job.failed}（共 ${job.total}）`;
+      tg?.HapticFeedback?.notificationOccurred('success');
+      loadBroadcastEstimate();
+      return;
+    }
+    _bcPollTimer = setTimeout(tick, 1200);
+  };
+  tick();
+}
 
 document.getElementById('bc-send').addEventListener('click', async () => {
   const msgEl = document.getElementById('bc-msg');
@@ -912,14 +1082,17 @@ document.getElementById('bc-send').addEventListener('click', async () => {
   const buttons = _bcBuilder.getText();
   if (!text && !photo) {
     msgEl.className = 'msg fail';
-    msgEl.textContent = '请填写消息内容或图片链接';
+    msgEl.textContent = '请填写消息内容或图片链接 / file_id';
     return;
   }
   if (!window.confirm('确定要向所有活跃用户群发这条消息吗？')) return;
+  if (_bcPollTimer) { clearTimeout(_bcPollTimer); _bcPollTimer = null; }
   const btn = document.getElementById('bc-send');
   btn.disabled = true;
   msgEl.className = 'msg';
-  msgEl.textContent = '发送中，请稍候…';
+  msgEl.textContent = '排队中…';
+  document.getElementById('bc-progress').textContent = '';
+  hide('bc-progress');
   const payload = { text, silent };
   if (photo) payload.photo = photo;
   if (buttons) payload.buttons = buttons;
@@ -927,8 +1100,9 @@ document.getElementById('bc-send').addEventListener('click', async () => {
   btn.disabled = false;
   if (res.ok) {
     msgEl.className = 'msg ok';
-    msgEl.textContent = `✅ 已排队发送给 ${res.queued} 位用户，发送将在后台完成。`;
-    tg?.HapticFeedback?.notificationOccurred('success');
+    msgEl.textContent = `✅ 已排队发送给 ${res.queued} 位用户`;
+    if (res.job_id) pollBroadcastJob(res.job_id);
+    else tg?.HapticFeedback?.notificationOccurred('success');
   } else {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ ' + (res.error || '发送失败');
@@ -938,6 +1112,7 @@ document.getElementById('bc-send').addEventListener('click', async () => {
 // ── Banned Users ──────────────────────────────────────────────────────────────
 
 let _bannedUsersCache = [];
+let _usersCache = [];
 
 function renderBanned() {
   const list = document.getElementById('banned-list');
@@ -972,6 +1147,55 @@ function renderBanned() {
   });
 }
 
+function renderUsers() {
+  const list = document.getElementById('users-list');
+  if (!_usersCache.length) {
+    list.innerHTML = '<p class="empty-state">暂无用户，或没有匹配结果。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  _usersCache.forEach(u => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const displayName = u.full_name
+      || (u.username ? '@' + u.username : '')
+      || String(u.user_id);
+    const status = u.is_banned
+      ? '<span class="ban-status">已封禁</span>'
+      : '<span class="ban-status" style="color:var(--ok,#16a34a)">正常</span>';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">👤 ${esc(displayName)}</div>
+        <small>${u.username ? '@' + esc(u.username) + ' · ' : ''}ID: ${esc(String(u.user_id))}
+          ${u.last_seen ? ' · 最近 ' + esc(formatDateTime(u.last_seen)) : ''}</small>
+        ${status}
+      </div>
+      ${u.is_banned
+        ? '<button class="btn-unban">✅ 解封</button>'
+        : '<button class="btn-ghost btn-sm btn-ban-one">⛔ 封禁</button>'}`;
+    if (u.is_banned) {
+      div.querySelector('.btn-unban').addEventListener('click', () => unban(u.user_id));
+    } else {
+      div.querySelector('.btn-ban-one').addEventListener('click', () => banUser(u.user_id));
+    }
+    list.appendChild(div);
+  });
+}
+
+async function loadUsers() {
+  const list = document.getElementById('users-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const q = document.getElementById('users-search').value.trim();
+  const path = '/users?limit=30' + (q ? '&q=' + encodeURIComponent(q) : '');
+  const data = await api('GET', path);
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  _usersCache = Array.isArray(data) ? data : (data.items || []);
+  renderUsers();
+}
+
 async function loadBanned() {
   const list = document.getElementById('banned-list');
   document.getElementById('banned-msg').textContent = '';
@@ -981,6 +1205,23 @@ async function loadBanned() {
   if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
   _bannedUsersCache = Array.isArray(data) ? data : [];
   renderBanned();
+  loadUsers();
+}
+
+async function banUser(uid) {
+  if (!window.confirm('确定要封禁用户 ' + uid + ' 吗？')) return;
+  const msgEl = document.getElementById('ban-msg') || document.getElementById('banned-msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = '处理中…';
+  const res = await api('POST', '/ban/' + uid);
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已封禁 ' + uid;
+    loadBanned();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '封禁失败');
+  }
 }
 
 async function unban(uid) {
@@ -1000,6 +1241,21 @@ async function unban(uid) {
 }
 
 document.getElementById('banned-search').addEventListener('input', renderBanned);
+document.getElementById('ban-submit').addEventListener('click', () => {
+  const uid = parseInt(document.getElementById('ban-uid').value, 10);
+  if (Number.isNaN(uid) || uid <= 0) {
+    const msgEl = document.getElementById('ban-msg');
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 请输入有效的用户 ID';
+    return;
+  }
+  banUser(uid);
+});
+let _usersSearchTimer = null;
+document.getElementById('users-search').addEventListener('input', () => {
+  if (_usersSearchTimer) clearTimeout(_usersSearchTimer);
+  _usersSearchTimer = setTimeout(loadUsers, 300);
+});
 
 // ── Intercept Logs ────────────────────────────────────────────────────────────
 
@@ -1027,13 +1283,19 @@ function renderInterceptLogs(rows) {
       ? `来源机器人：${esc(r.via_bot_username ? '@' + r.via_bot_username : String(r.via_bot_id))}　`
       : '';
     const banText = r.auto_banned ? '<span class="ban-status">已自动封禁</span>' : '';
+    const banBtn = (r.user_id && !r.auto_banned)
+      ? '<button class="btn-ghost btn-sm btn-ban-log">⛔ 封禁</button>'
+      : '';
     div.innerHTML = `
       <div class="ban-info">
         <div class="ban-name">${reasonLabel} · 👤 ${esc(who)}</div>
         <small>${ruleText}${viaBotText}${formatDateTime(r.created_at)}</small>
         <div>${esc(summarizeText(r.message_summary))}</div>
         ${banText}
-      </div>`;
+      </div>
+      ${banBtn}`;
+    const btn = div.querySelector('.btn-ban-log');
+    if (btn) btn.addEventListener('click', () => banUser(r.user_id));
     list.appendChild(div);
   });
 }
@@ -1043,10 +1305,19 @@ async function loadInterceptLogs() {
   document.getElementById('logs-msg').textContent = '';
   document.getElementById('logs-msg').className = 'msg';
   list.innerHTML = '<p class="empty-state">加载中…</p>';
-  const data = await api('GET', '/intercept_logs');
+  const reason = document.getElementById('logs-reason').value;
+  const qs = '?limit=100' + (reason ? '&reason=' + encodeURIComponent(reason) : '');
+  const data = await api('GET', '/intercept_logs' + qs);
   if (data.error) { list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`; return; }
-  renderInterceptLogs(Array.isArray(data) ? data : []);
+  const items = Array.isArray(data) ? data : (data.items || []);
+  const total = Array.isArray(data) ? items.length : (data.total ?? items.length);
+  document.getElementById('logs-summary').textContent =
+    reason ? `当前筛选共 ${total} 条` : `共 ${total} 条拦截记录`;
+  renderInterceptLogs(items);
 }
+
+document.getElementById('logs-reason').addEventListener('change', loadInterceptLogs);
+document.getElementById('logs-refresh').addEventListener('click', loadInterceptLogs);
 
 // ── Scheduled Messages ──────────────────────────────────────────────────────
 
@@ -1306,6 +1577,234 @@ document.getElementById('sm-import-file').addEventListener('change', async (e) =
   loadScheduledMessages();
 });
 
+// ── Users ops (notes / tags / session) ────────────────────────────────────────
+
+const _sessionLabels = { open: '未处理', pending: '处理中', resolved: '已解决' };
+let _opsUsersCache = [];
+let _opsEditUid = null;
+let _opsSearchTimer = null;
+
+function renderOpsUsers() {
+  const list = document.getElementById('ops-users-list');
+  if (!_opsUsersCache.length) {
+    list.innerHTML = '<p class="empty-state">暂无用户或无匹配结果。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  _opsUsersCache.forEach(u => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const name = u.full_name || (u.username ? '@' + u.username : String(u.user_id));
+    const tags = u.tags ? `<small>🏷 ${esc(u.tags)}</small>` : '';
+    const notes = u.notes ? `<div>${esc(summarizeText(u.notes, 60))}</div>` : '';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">👤 ${esc(name)} · ${_sessionLabels[u.session_status] || u.session_status || 'open'}</div>
+        <small>ID: ${esc(String(u.user_id))}${u.last_seen ? ' · ' + esc(formatDateTime(u.last_seen)) : ''}</small>
+        ${tags}${notes}
+      </div>
+      <button class="btn-ghost btn-sm ops-edit">编辑</button>`;
+    div.querySelector('.ops-edit').addEventListener('click', () => openOpsEditor(u));
+    list.appendChild(div);
+  });
+}
+
+function openOpsEditor(u) {
+  _opsEditUid = u.user_id;
+  document.getElementById('ops-edit-uid').textContent = '#' + u.user_id;
+  document.getElementById('ops-notes').value = u.notes || '';
+  document.getElementById('ops-tags').value = u.tags || '';
+  document.getElementById('ops-session-status').value = u.session_status || 'open';
+  document.getElementById('ops-edit-msg').textContent = '';
+  show('ops-user-editor');
+}
+
+async function loadOpsUsers() {
+  const list = document.getElementById('ops-users-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const q = document.getElementById('ops-users-search').value.trim();
+  const st = document.getElementById('ops-session-filter').value;
+  let path = '/users?limit=50';
+  if (q) path += '&q=' + encodeURIComponent(q);
+  if (st) path += '&session_status=' + encodeURIComponent(st);
+  const data = await api('GET', path);
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  _opsUsersCache = Array.isArray(data) ? data : (data.items || []);
+  const total = Array.isArray(data) ? _opsUsersCache.length : (data.total ?? _opsUsersCache.length);
+  document.getElementById('ops-users-summary').textContent = `共 ${total} 位用户`;
+  renderOpsUsers();
+}
+
+document.getElementById('ops-users-refresh').addEventListener('click', loadOpsUsers);
+document.getElementById('ops-session-filter').addEventListener('change', loadOpsUsers);
+document.getElementById('ops-users-search').addEventListener('input', () => {
+  if (_opsSearchTimer) clearTimeout(_opsSearchTimer);
+  _opsSearchTimer = setTimeout(loadOpsUsers, 300);
+});
+document.getElementById('ops-close-editor').addEventListener('click', () => {
+  hide('ops-user-editor');
+  _opsEditUid = null;
+});
+document.getElementById('ops-save-user').addEventListener('click', async () => {
+  if (!_opsEditUid) return;
+  const msgEl = document.getElementById('ops-edit-msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('PATCH', '/users/' + _opsEditUid, {
+    notes: document.getElementById('ops-notes').value,
+    tags: document.getElementById('ops-tags').value,
+    session_status: document.getElementById('ops-session-status').value,
+  });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已保存';
+    loadOpsUsers();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '保存失败');
+  }
+});
+
+// ── Quick replies ─────────────────────────────────────────────────────────────
+
+async function loadQuickReplies() {
+  const list = document.getElementById('qr-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/quick_replies');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  const rows = Array.isArray(data) ? data : [];
+  if (!rows.length) {
+    list.innerHTML = '<p class="empty-state">暂无快捷回复模板。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  rows.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">⚡ ${esc(r.title)}</div>
+        <div>${esc(summarizeText(r.content, 80))}</div>
+      </div>
+      <button class="btn-ghost btn-sm qr-del">🗑</button>`;
+    div.querySelector('.qr-del').addEventListener('click', async () => {
+      if (!window.confirm('删除该模板？')) return;
+      await api('DELETE', '/quick_replies/' + r.id);
+      loadQuickReplies();
+    });
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('qr-add').addEventListener('click', async () => {
+  const msgEl = document.getElementById('qr-msg');
+  const title = document.getElementById('qr-title').value.trim();
+  const content = document.getElementById('qr-content').value.trim();
+  if (!title || !content) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 标题与内容不能为空';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('POST', '/quick_replies', { title, content });
+  if (res.ok || res.id) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已添加';
+    document.getElementById('qr-title').value = '';
+    document.getElementById('qr-content').value = '';
+    loadQuickReplies();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '失败');
+  }
+});
+
+// ── Staff + audit ─────────────────────────────────────────────────────────────
+
+async function loadStaff() {
+  const list = document.getElementById('staff-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/staff');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  const items = data.items || [];
+  list.innerHTML = '';
+  items.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const label = s.full_name || s.username || String(s.user_id);
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">${esc(label)} · <code>${esc(s.role)}</code></div>
+        <small>ID: ${esc(String(s.user_id))}${s.is_owner ? ' · owner' : ''}</small>
+      </div>
+      ${s.is_owner ? '' : '<button class="btn-ghost btn-sm staff-del">移除</button>'}`;
+    const btn = div.querySelector('.staff-del');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        if (!window.confirm('移除该成员？')) return;
+        const res = await api('DELETE', '/staff/' + s.user_id);
+        if (res.error) alert(res.error);
+        loadStaff();
+      });
+    }
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('staff-add').addEventListener('click', async () => {
+  const msgEl = document.getElementById('staff-msg');
+  const uid = parseInt(document.getElementById('staff-uid').value, 10);
+  const role = document.getElementById('staff-role').value;
+  if (Number.isNaN(uid) || uid <= 0) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 请输入有效用户 ID';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('POST', '/staff', { user_id: uid, role });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已添加';
+    document.getElementById('staff-uid').value = '';
+    loadStaff();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '失败（需 owner 权限）');
+  }
+});
+
+async function loadAuditLogs() {
+  const list = document.getElementById('audit-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/audit_logs?limit=30');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">${esc(data.error)}</p>`;
+    return;
+  }
+  const items = data.items || [];
+  if (!items.length) {
+    list.innerHTML = '<p class="empty-state">暂无审计记录。</p>';
+    return;
+  }
+  list.innerHTML = items.map(r => `
+    <div class="ban-item"><div class="ban-info">
+      <div class="ban-name">${esc(r.action)}</div>
+      <small>操作者 ${esc(String(r.actor_id || '—'))} · ${esc(formatDateTime(r.created_at))}</small>
+      <div>${esc(r.detail || '')}</div>
+    </div></div>`).join('');
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 async function loadStats() {
@@ -1313,19 +1812,38 @@ async function loadStats() {
   el.innerHTML = '<p style="color:var(--hint);padding:4px">加载中…</p>';
   const s = await api('GET', '/stats');
   if (s.error) { el.innerHTML = `<p class="msg fail">加载失败：${esc(s.error)}</p>`; return; }
+  const reasonMap = s.intercept_by_reason || {};
+  const reasonCards = Object.keys(reasonMap).length
+    ? `<div class="card" style="margin-top:12px"><h3 class="card-title">近 7 天拦截原因</h3>
+        <div class="stats-grid">${
+          Object.entries(reasonMap).map(([k, v]) => `
+            <div class="stat-card">
+              <div class="stat-label">${esc(_logReasonLabels[k] || k)}</div>
+              <div class="stat-val">${v}</div>
+            </div>`).join('')
+        }</div></div>`
+    : '';
   el.innerHTML = `<div class="stats-grid">${
     [
-      ['👥 总用户',    s.total],
-      ['✅ 正常',      s.active],
-      ['⛔ 封禁',      s.banned],
-      ['📅 近7天活跃', s.active_7d],
-      ['🆕 近7天新增', s.new_7d],
+      ['👥 总用户',      s.total],
+      ['✅ 正常',        s.active],
+      ['⛔ 封禁',        s.banned],
+      ['🆕 今日新增',    s.new_today],
+      ['📅 今日活跃',    s.active_today],
+      ['💬 今日私聊',    s.messages_today],
+      ['💬 近7天私聊',   s.messages_7d],
+      ['📅 近7天活跃',   s.active_7d],
+      ['🆕 近7天新增',   s.new_7d],
+      ['🛡 今日拦截',    s.intercept_today],
+      ['🛡 近7天拦截',   s.intercept_7d],
+      ['💬 自动回复数',  s.auto_replies],
+      ['🚫 过滤词数',    s.filters],
     ].map(([label, val]) => `
       <div class="stat-card">
         <div class="stat-label">${label}</div>
         <div class="stat-val">${val ?? '—'}</div>
       </div>`).join('')
-  }</div>`;
+  }</div>${reasonCards}`;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

@@ -66,7 +66,11 @@ async def main():
             from core.webapp import start_webapp
             host = os.getenv("WEBAPP_HOST") or webapp_cfg.get("host", "0.0.0.0")
             port = int(os.getenv("WEBAPP_PORT") or webapp_cfg.get("port", 8080))
-            webapp_runner = await start_webapp(host, port)
+            webapp_runner = await start_webapp(
+                host, port,
+                platform_token=config.get("bot", {}).get("token"),
+                platform_admin_id=config.get("bot", {}).get("admin_id"),
+            )
         async with bot.app:
             await bot.app.initialize()
             await bot.app.start()

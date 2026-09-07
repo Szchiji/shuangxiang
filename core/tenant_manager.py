@@ -64,8 +64,16 @@ class TenantManager:
             await app.updater.start_polling(drop_pending_updates=True)
         except TelegramError as e:
             logger.error("[租户#%s] 启动失败: %s", tid, e)
+            try:
+                self.db.set_tenant_health(tid, last_error=str(e)[:500])
+            except Exception:
+                pass
             return False
         self.bots[tid] = app
+        try:
+            self.db.set_tenant_health(tid, clear_error=True)
+        except Exception:
+            pass
         logger.info("[租户#%s] 机器人已启动 (@%s)", tid, tenant["bot_username"])
         self._supervise_polling(tid)
         await self._clear_tenant_commands(app.bot, tenant["owner_user_id"])
@@ -103,12 +111,18 @@ class TenantManager:
                 "[租户#%s] Token 已失效（可能被 BotFather 撤销），已停用该机器人。", tid)
             try:
                 self.db.deactivate_tenant(tid)
+                self.db.set_tenant_health(
+                    tid, last_error="InvalidToken: token revoked or invalid")
             except Exception as e:
                 logger.warning("[租户#%s] 停用失败: %s", tid, e)
             await self.stop_tenant(tid)
         else:
             logger.error(
                 "[租户#%s] 轮询循环异常退出: %s", tid, exc, exc_info=exc)
+            try:
+                self.db.set_tenant_health(tid, last_error=str(exc)[:500])
+            except Exception:
+                pass
 
     @staticmethod
     async def _clear_tenant_commands(bot, owner_user_id: int) -> None:
