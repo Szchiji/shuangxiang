@@ -170,7 +170,10 @@ class CustomizeModule(BaseModule):
         app.add_handler(CallbackQueryHandler(self.on_guard_cb), group=-1)
 
     def _admin(self, uid: int) -> bool:
-        return uid == self.admin_id
+        """配置类操作：owner 或 staff.admin 及以上。"""
+        if uid == self.admin_id:
+            return True
+        return self.db.has_min_role(self.tenant_id, uid, "admin")
 
     # ── 设置面板 ────────────────────────────────────────────
 

@@ -918,7 +918,8 @@ async def test_ban_and_users_search(aiohttp_client, app, db, tenant_id, init_dat
         headers={"X-Init-Data": init_data_header},
     )
     assert users.status == 200
-    rows = await users.json()
+    payload = await users.json()
+    rows = payload["items"] if isinstance(payload, dict) else payload
     assert any(u["user_id"] == 101 and u["is_banned"] for u in rows)
 
 
@@ -1009,3 +1010,210 @@ async def test_stats_extended_fields(aiohttp_client, app, db, tenant_id, init_da
     for key in ("total", "new_today", "intercept_today", "auto_replies", "filters",
                 "messages_today", "intercept_by_reason"):
         assert key in data
+
+
+# ── P1/P2: staff, quick replies, user profile, away, platform ────────────────
+
+
+@pytest.mark.asyncio
+async def test_staff_member_can_access_and_owner_manages(
+        aiohttp_client, app, db, tenant_id, init_data_header):
+    db.upsert_staff(tenant_id, 88, role="support")
+    support_init = _make_init_data(88)
+    client = await aiohttp_client(app)
+
+    # support can read settings
+    resp = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": support_init},
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["auth_role"] == "support"
+
+    # support cannot change settings
+    bad = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": support_init},
+        json={"away_on": True, "away_msg": "busy"},
+    )
+    assert bad.status == 403
+
+    # owner can change away
+    ok = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"away_on": True, "away_msg": "稍后回复"},
+    )
+    assert ok.status == 200
+    assert db.get_bool_setting(tenant_id, "away_on", False) is True
+
+    # owner adds admin staff
+    add = await client.post(
+        f"/api/{tenant_id}/staff",
+        headers={"X-Init-Data": init_data_header},
+        json={"user_id": 77, "role": "admin"},
+    )
+    assert add.status == 200
+    staff = await client.get(
+        f"/api/{tenant_id}/staff",
+        headers={"X-Init-Data": init_data_header},
+    )
+    items = (await staff.json())["items"]
+    assert any(s["user_id"] == 77 and s["role"] == "admin" for s in items)
+
+    # support cannot manage staff
+    denied = await client.post(
+        f"/api/{tenant_id}/staff",
+        headers={"X-Init-Data": support_init},
+        json={"user_id": 99, "role": "support"},
+    )
+    assert denied.status == 403
+
+
+@pytest.mark.asyncio
+async def test_user_profile_and_quick_replies(
+        aiohttp_client, app, db, tenant_id, init_data_header):
+    db.upsert_tenant_user(tenant_id, 501, "vipuser", "VIP User")
+    client = await aiohttp_client(app)
+
+    patch = await client.patch(
+        f"/api/{tenant_id}/users/501",
+        headers={"X-Init-Data": init_data_header},
+        json={"notes": "重点客户", "tags": "VIP, 已成交", "session_status": "pending"},
+    )
+    assert patch.status == 200
+    body = await patch.json()
+    assert body["user"]["notes"] == "重点客户"
+    assert "VIP" in body["user"]["tags"]
+    assert body["user"]["session_status"] == "pending"
+
+    detail = await client.get(
+        f"/api/{tenant_id}/users/501",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert detail.status == 200
+    assert (await detail.json())["session_status"] == "pending"
+
+    # session filter
+    filtered = await client.get(
+        f"/api/{tenant_id}/users?session_status=pending",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert filtered.status == 200
+    items = (await filtered.json())["items"]
+    assert any(u["user_id"] == 501 for u in items)
+
+    qr = await client.post(
+        f"/api/{tenant_id}/quick_replies",
+        headers={"X-Init-Data": init_data_header},
+        json={"title": "问候", "content": "您好，请问有什么可以帮您？"},
+    )
+    assert qr.status == 201
+    qid = (await qr.json())["id"]
+    listed = await client.get(
+        f"/api/{tenant_id}/quick_replies",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert any(r["id"] == qid for r in await listed.json())
+    deleted = await client.delete(
+        f"/api/{tenant_id}/quick_replies/{qid}",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert deleted.status == 200
+
+
+@pytest.mark.asyncio
+async def test_platform_api(aiohttp_client, db):
+    platform_token = "platform_token:AAA"
+    platform_admin = 1
+    app = create_app(platform_token=platform_token, platform_admin_id=platform_admin)
+    # create a tenant
+    db.add_tenant("t_token:BBB", owner_user_id=9, bot_username="tbot", bot_name="T")
+    db.set_tenant_health(1, last_error="boom") if db.get_tenant(1) else None
+    tid = db.add_tenant("t2:CCC", owner_user_id=10, bot_username="t2", bot_name="T2")
+    db.set_tenant_health(tid, last_error="token fail")
+
+    client = await aiohttp_client(app)
+    init_data = _make_init_data(platform_admin, token=platform_token)
+    stats = await client.get(
+        "/api/platform/stats",
+        headers={"X-Init-Data": init_data},
+    )
+    assert stats.status == 200
+    s = await stats.json()
+    assert s["tenants_total"] >= 1
+
+    listed = await client.get(
+        "/api/platform/tenants",
+        headers={"X-Init-Data": init_data},
+    )
+    assert listed.status == 200
+    payload = await listed.json()
+    assert payload["total"] >= 1
+
+    # wrong user
+    bad = await client.get(
+        "/api/platform/stats",
+        headers={"X-Init-Data": _make_init_data(999, token=platform_token)},
+    )
+    assert bad.status == 403
+
+    deact = await client.post(
+        f"/api/platform/tenants/{tid}/deactivate",
+        headers={"X-Init-Data": init_data},
+    )
+    assert deact.status == 200
+    assert db.get_tenant(tid)["is_active"] == 0
+
+
+@pytest.mark.asyncio
+async def test_away_reply_on_incoming(db):
+    from modules.private_chat_module import SK_AWAY_MSG, SK_AWAY_ON, PrivateChatModule
+
+    tid = db.add_tenant("tok:away", owner_user_id=1, bot_id=1)
+    db.set_setting(tid, SK_AWAY_ON, "1")
+    db.set_setting(tid, SK_AWAY_MSG, "管理员离开了")
+
+    mod = PrivateChatModule.__new__(PrivateChatModule)
+    mod.db = db
+    mod.tenant_id = tid
+    mod.admin_id = 1
+    mod._away_sent = {}
+    mod.bot_forward_blocked = "no"
+    mod._manage_group = lambda: None
+    mod._buffer_album = lambda *a, **k: None
+    mod._is_forwarded_from_bot = lambda m: False
+
+    replies = []
+
+    class FakeMsg:
+        media_group_id = None
+        via_bot = None
+        message_id = 1
+        chat_id = 50
+
+        async def reply_text(self, text, **kw):
+            replies.append(text)
+            return types.SimpleNamespace(message_id=2)
+
+        async def copy(self, *a, **k):
+            return types.SimpleNamespace(message_id=3)
+
+    class FakeBot:
+        async def send_message(self, **k):
+            return types.SimpleNamespace(message_id=9)
+
+        async def copy_message(self, **k):
+            return types.SimpleNamespace(message_id=10)
+
+        async def forward_message(self, **k):
+            return types.SimpleNamespace(message_id=11)
+
+    # Patch _incoming_user path partially via _maybe_send_away
+    msg = FakeMsg()
+    await mod._maybe_send_away(msg, 50)
+    assert replies == ["管理员离开了"]
+    # cooldown
+    await mod._maybe_send_away(msg, 50)
+    assert len(replies) == 1

@@ -42,11 +42,20 @@
           <button class="nav-item" data-tab="scheduled">
             <span class="nav-icon">⏰</span><span class="nav-label">定时消息</span>
           </button>
+          <button class="nav-item" data-tab="users">
+            <span class="nav-icon">👥</span><span class="nav-label">用户运营</span>
+          </button>
+          <button class="nav-item" data-tab="quick-replies">
+            <span class="nav-icon">⚡</span><span class="nav-label">快捷回复</span>
+          </button>
           <button class="nav-item" data-tab="banned">
             <span class="nav-icon">⛔</span><span class="nav-label">封禁管理</span>
           </button>
           <button class="nav-item" data-tab="logs">
             <span class="nav-icon">📋</span><span class="nav-label">拦截日志</span>
+          </button>
+          <button class="nav-item" data-tab="staff">
+            <span class="nav-icon">🧑‍💼</span><span class="nav-label">协作成员</span>
           </button>
           <button class="nav-item" data-tab="stats">
             <span class="nav-icon">📊</span><span class="nav-label">数据统计</span>
@@ -106,6 +115,20 @@
               把机器人加入开启「话题」的超级群，在群内发送 <code>/setgroup</code> 启用；
               发送 <code>/unsetgroup</code> 恢复 DM 模式。
             </p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">离开自动回复</h3>
+            <div class="toggles">
+              <div class="toggle-row">
+                <span>🌙 离开模式</span>
+                <label class="switch"><input type="checkbox" id="away-on"><span class="slider"></span></label>
+              </div>
+            </div>
+            <label class="field-label">离开提示文案
+              <textarea id="away-msg" rows="3" placeholder="管理员暂时不在，请稍后再联系…"></textarea>
+            </label>
+            <button id="save-away-settings" class="btn-primary">💾 保存离开设置</button>
+            <div id="away-msg-status" class="msg"></div>
           </div>
           <div class="card">
             <h3 class="card-title">安全开关</h3>
@@ -450,6 +473,88 @@
               <button id="sm-cancel" class="btn-ghost">取消</button>
             </div>
             <div id="sm-form-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Users ops -->
+        <section id="tab-users" class="tab">
+          <div class="page-header"><h2>👥 用户运营</h2></div>
+          <div class="card">
+            <div class="section-toolbar">
+              <input type="text" id="ops-users-search" placeholder="搜索 ID / 用户名 / 备注 / 标签">
+              <select id="ops-session-filter">
+                <option value="">全部会话</option>
+                <option value="open">未处理</option>
+                <option value="pending">处理中</option>
+                <option value="resolved">已解决</option>
+              </select>
+              <button id="ops-users-refresh" class="btn-ghost section-toolbar-btn">🔄 刷新</button>
+            </div>
+            <div id="ops-users-summary" class="hint-text"></div>
+            <div id="ops-users-list"></div>
+            <div id="ops-users-msg" class="msg"></div>
+          </div>
+          <div class="card" id="ops-user-editor" style="display:none">
+            <h3 class="card-title">编辑用户 <span id="ops-edit-uid"></span></h3>
+            <label class="field-label">备注
+              <textarea id="ops-notes" rows="3" placeholder="内部备注"></textarea>
+            </label>
+            <label class="field-label">标签（逗号分隔）
+              <input type="text" id="ops-tags" placeholder="VIP, 已成交">
+            </label>
+            <label class="field-label">会话状态
+              <select id="ops-session-status">
+                <option value="open">未处理</option>
+                <option value="pending">处理中</option>
+                <option value="resolved">已解决</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button id="ops-save-user" class="btn-primary">💾 保存</button>
+              <button id="ops-close-editor" class="btn-ghost">关闭</button>
+            </div>
+            <div id="ops-edit-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Quick replies -->
+        <section id="tab-quick-replies" class="tab">
+          <div class="page-header"><h2>⚡ 快捷回复模板</h2></div>
+          <div class="card">
+            <p class="hint-text">手动点选发送的话术模板（与自动回复区分）。客服可在后台维护，Bot 侧 /info 等场景可配合使用。</p>
+            <label class="field-label">标题
+              <input type="text" id="qr-title" placeholder="例如：欢迎话术">
+            </label>
+            <label class="field-label">内容
+              <textarea id="qr-content" rows="4" placeholder="要发送的文本"></textarea>
+            </label>
+            <button id="qr-add" class="btn-primary">＋ 添加模板</button>
+            <div id="qr-msg" class="msg"></div>
+          </div>
+          <div id="qr-list"></div>
+        </section>
+
+        <!-- Staff -->
+        <section id="tab-staff" class="tab">
+          <div class="page-header"><h2>🧑‍💼 协作成员</h2></div>
+          <div class="card">
+            <p class="hint-text">owner 拥有全部权限；admin 可改配置；support 可回复/封禁/改备注。仅 owner 可增删成员。</p>
+            <label class="field-label">用户 ID
+              <input type="number" id="staff-uid" placeholder="Telegram 用户数字 ID">
+            </label>
+            <label class="field-label">角色
+              <select id="staff-role">
+                <option value="support">support（客服）</option>
+                <option value="admin">admin（管理员）</option>
+              </select>
+            </label>
+            <button id="staff-add" class="btn-primary">＋ 添加成员</button>
+            <div id="staff-msg" class="msg"></div>
+          </div>
+          <div id="staff-list"></div>
+          <div class="card" style="margin-top:12px">
+            <h3 class="card-title">操作审计</h3>
+            <div id="audit-list"></div>
           </div>
         </section>
 

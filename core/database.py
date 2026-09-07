@@ -103,7 +103,9 @@ class Database:
                     bot_name      TEXT,
                     owner_user_id INTEGER NOT NULL,
                     is_active     INTEGER DEFAULT 1,
-                    created_at    TEXT DEFAULT (datetime('now'))
+                    created_at    TEXT DEFAULT (datetime('now')),
+                    last_error    TEXT DEFAULT '',
+                    last_health_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS tenant_settings (
                     tenant_id    INTEGER PRIMARY KEY,
@@ -201,6 +203,31 @@ class Database:
                     last_sent_at     TEXT,
                     created_at       TEXT DEFAULT (datetime('now'))
                 );
+                CREATE TABLE IF NOT EXISTS quick_replies (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id  INTEGER NOT NULL,
+                    title      TEXT NOT NULL,
+                    content    TEXT NOT NULL,
+                    sort_order INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS tenant_staff (
+                    tenant_id  INTEGER NOT NULL,
+                    user_id    INTEGER NOT NULL,
+                    role       TEXT NOT NULL DEFAULT 'support',
+                    username   TEXT DEFAULT '',
+                    full_name  TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    PRIMARY KEY (tenant_id, user_id)
+                );
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant_id  INTEGER NOT NULL,
+                    actor_id   INTEGER,
+                    action     TEXT NOT NULL,
+                    detail     TEXT DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now'))
+                );
             """)
         logger.info("数据库初始化完成 (db=%s)", self._db_path)
 
@@ -232,6 +259,14 @@ class Database:
                         ON scheduled_messages(tenant_id, id);
                     CREATE INDEX IF NOT EXISTS idx_scheduled_messages_due
                         ON scheduled_messages(tenant_id, enabled, next_run_at);
+                    CREATE INDEX IF NOT EXISTS idx_quick_replies_tid
+                        ON quick_replies(tenant_id, sort_order, id);
+                    CREATE INDEX IF NOT EXISTS idx_tenant_staff_tid
+                        ON tenant_staff(tenant_id, role);
+                    CREATE INDEX IF NOT EXISTS idx_audit_logs_tid
+                        ON audit_logs(tenant_id, id);
+                    CREATE INDEX IF NOT EXISTS idx_tenant_users_session
+                        ON tenant_users(tenant_id, session_status);
                 """)
         except sqlite3.Error as e:
             logger.warning("创建索引失败（不影响运行）: %s", e)
@@ -254,6 +289,9 @@ class Database:
                 ("bot_name", "TEXT"),
                 ("is_active", "INTEGER DEFAULT 1"),
                 ("created_at", "TEXT"),
+                # 平台健康：最近启动/轮询错误信息
+                ("last_error", "TEXT DEFAULT ''"),
+                ("last_health_at", "TEXT"),
             ],
             "tenant_settings": [
                 ("manage_group", "INTEGER"),
@@ -271,6 +309,12 @@ class Database:
                 # 来源机器人，供 /ban 时一并封禁该群发器机器人使用。
                 ("last_via_bot_id", "INTEGER"),
                 ("last_via_bot_username", "TEXT"),
+                # 运营字段：备注 / 标签 / 会话状态 / 封禁原因 / 认领客服
+                ("notes", "TEXT DEFAULT ''"),
+                ("tags", "TEXT DEFAULT ''"),
+                ("session_status", "TEXT DEFAULT 'open'"),
+                ("ban_reason", "TEXT DEFAULT ''"),
+                ("assigned_to", "INTEGER"),
             ],
             "filters": [
                 # 支持正则匹配（同 auto_replies.match_type），覆盖变体广告文案。
@@ -471,9 +515,223 @@ class Database:
         with self._conn() as c:
             for tbl in ("tenants", "tenant_settings", "tenant_users", "message_map",
                         "topic_map", "auto_replies", "filters", "tenant_kv",
-                        "banned_bots", "intercept_logs", "scheduled_messages"):
+                        "banned_bots", "intercept_logs", "scheduled_messages",
+                        "quick_replies", "tenant_staff", "audit_logs"):
                 col = "id" if tbl == "tenants" else "tenant_id"
                 c.execute(f"DELETE FROM {tbl} WHERE {col}=?", (tid,))
+
+    def set_tenant_health(self, tid, *, last_error: str = "", clear_error: bool = False):
+        """记录租户健康状态（启动失败 / Token 失效等）。"""
+        with self._conn() as c:
+            if clear_error:
+                c.execute(
+                    """UPDATE tenants SET last_error='', last_health_at=datetime('now')
+                       WHERE id=?""",
+                    (tid,))
+            else:
+                c.execute(
+                    """UPDATE tenants SET last_error=?, last_health_at=datetime('now')
+                       WHERE id=?""",
+                    (str(last_error or "")[:500], tid))
+
+    def list_platform_tenants(self, limit=200, offset=0):
+        """平台运营：列出租户（不含 token），附带基础用户计数。"""
+        try:
+            limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            limit = 200
+        try:
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset = 0
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT t.id, t.bot_id, t.bot_username, t.bot_name, t.owner_user_id,
+                          t.is_active, t.created_at, t.last_error, t.last_health_at,
+                          (SELECT COUNT(*) FROM tenant_users u WHERE u.tenant_id=t.id) AS user_count,
+                          (SELECT COUNT(*) FROM tenant_users u
+                             WHERE u.tenant_id=t.id AND u.last_seen >= datetime('now','-1 day')
+                          ) AS active_today
+                   FROM tenants t
+                   ORDER BY t.id DESC
+                   LIMIT ? OFFSET ?""",
+                (limit, offset)).fetchall()
+            total = c.execute("SELECT COUNT(*) AS n FROM tenants").fetchone()["n"]
+            return rows, int(total or 0)
+
+    def platform_stats(self) -> dict:
+        with self._conn() as c:
+            tenants = c.execute(
+                """SELECT COUNT(*) AS total,
+                          SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS active,
+                          SUM(CASE WHEN is_active=0 THEN 1 ELSE 0 END) AS inactive,
+                          SUM(CASE WHEN IFNULL(last_error,'') != '' THEN 1 ELSE 0 END) AS unhealthy
+                   FROM tenants"""
+            ).fetchone()
+            users = c.execute("SELECT COUNT(*) AS n FROM tenant_users").fetchone()["n"]
+            return {
+                "tenants_total": int(tenants["total"] or 0),
+                "tenants_active": int(tenants["active"] or 0),
+                "tenants_inactive": int(tenants["inactive"] or 0),
+                "tenants_unhealthy": int(tenants["unhealthy"] or 0),
+                "users_total": int(users or 0),
+            }
+
+    # ── 角色 / 员工 ──────────────────────────────────────────
+
+    _ROLE_RANK = {"support": 1, "admin": 2, "owner": 3}
+    _VALID_STAFF_ROLES = frozenset({"support", "admin"})
+
+    def get_user_role(self, tenant_id, user_id) -> str | None:
+        """返回用户在租户内的角色：owner / admin / support；无权限返回 None。"""
+        tenant = self.get_tenant(tenant_id)
+        if tenant is None:
+            return None
+        if int(tenant["owner_user_id"]) == int(user_id):
+            return "owner"
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT role FROM tenant_staff WHERE tenant_id=? AND user_id=?",
+                (tenant_id, user_id)).fetchone()
+        if not row:
+            return None
+        role = (row["role"] or "").strip()
+        return role if role in self._ROLE_RANK else None
+
+    def has_min_role(self, tenant_id, user_id, min_role: str) -> bool:
+        role = self.get_user_role(tenant_id, user_id)
+        if role is None:
+            return False
+        need = self._ROLE_RANK.get(min_role, 99)
+        return self._ROLE_RANK.get(role, 0) >= need
+
+    def list_staff(self, tenant_id):
+        tenant = self.get_tenant(tenant_id)
+        items = []
+        if tenant is not None:
+            items.append({
+                "user_id": tenant["owner_user_id"],
+                "role": "owner",
+                "username": "",
+                "full_name": "",
+                "is_owner": True,
+            })
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM tenant_staff WHERE tenant_id=? ORDER BY role, user_id",
+                (tenant_id,)).fetchall()
+        for r in rows:
+            if tenant and int(r["user_id"]) == int(tenant["owner_user_id"]):
+                continue
+            items.append({
+                "user_id": r["user_id"],
+                "role": r["role"],
+                "username": r["username"] or "",
+                "full_name": r["full_name"] or "",
+                "is_owner": False,
+            })
+        return items
+
+    def upsert_staff(self, tenant_id, user_id, role="support",
+                     username="", full_name=""):
+        role = (role or "support").strip()
+        if role not in self._VALID_STAFF_ROLES:
+            raise ValueError("invalid role")
+        tenant = self.get_tenant(tenant_id)
+        if tenant and int(tenant["owner_user_id"]) == int(user_id):
+            raise ValueError("owner is implicit")
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO tenant_staff(tenant_id,user_id,role,username,full_name)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(tenant_id,user_id) DO UPDATE SET
+                   role=excluded.role,
+                   username=excluded.username,
+                   full_name=excluded.full_name""",
+                (tenant_id, int(user_id), role, username or "", full_name or ""))
+
+    def remove_staff(self, tenant_id, user_id) -> bool:
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM tenant_staff WHERE tenant_id=? AND user_id=?",
+                (tenant_id, int(user_id)))
+            return cur.rowcount > 0
+
+    # ── 审计日志 ────────────────────────────────────────────
+
+    _AUDIT_LOG_MAX_PER_TENANT = 2000
+
+    def add_audit_log(self, tenant_id, action, *, actor_id=None, detail=""):
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO audit_logs(tenant_id, actor_id, action, detail)
+                   VALUES(?,?,?,?)""",
+                (tenant_id, actor_id, str(action)[:80], str(detail or "")[:500]))
+            count = c.execute(
+                "SELECT COUNT(*) FROM audit_logs WHERE tenant_id=?",
+                (tenant_id,)).fetchone()[0]
+            if count > self._AUDIT_LOG_MAX_PER_TENANT:
+                c.execute(
+                    """DELETE FROM audit_logs WHERE tenant_id=? AND id NOT IN (
+                           SELECT id FROM audit_logs WHERE tenant_id=?
+                           ORDER BY id DESC LIMIT ?)""",
+                    (tenant_id, tenant_id, self._AUDIT_LOG_MAX_PER_TENANT))
+
+    def get_audit_logs(self, tenant_id, limit=50, offset=0):
+        try:
+            limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset = 0
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT * FROM audit_logs WHERE tenant_id=?
+                   ORDER BY id DESC LIMIT ? OFFSET ?""",
+                (tenant_id, limit, offset)).fetchall()
+            total = c.execute(
+                "SELECT COUNT(*) AS n FROM audit_logs WHERE tenant_id=?",
+                (tenant_id,)).fetchone()["n"]
+            return rows, int(total or 0)
+
+    # ── 快捷回复 ────────────────────────────────────────────
+
+    def add_quick_reply(self, tenant_id, title, content, sort_order=0):
+        with self._conn() as c:
+            return c.execute(
+                """INSERT INTO quick_replies(tenant_id,title,content,sort_order)
+                   VALUES(?,?,?,?)""",
+                (tenant_id, title, content, int(sort_order or 0))).lastrowid
+
+    def update_quick_reply(self, tenant_id, qid, title, content, sort_order=0):
+        with self._conn() as c:
+            cur = c.execute(
+                """UPDATE quick_replies SET title=?, content=?, sort_order=?
+                   WHERE tenant_id=? AND id=?""",
+                (title, content, int(sort_order or 0), tenant_id, qid))
+            return cur.rowcount > 0
+
+    def get_quick_replies(self, tenant_id):
+        with self._conn() as c:
+            return c.execute(
+                """SELECT * FROM quick_replies WHERE tenant_id=?
+                   ORDER BY sort_order, id""",
+                (tenant_id,)).fetchall()
+
+    def get_quick_reply(self, tenant_id, qid):
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM quick_replies WHERE tenant_id=? AND id=?",
+                (tenant_id, qid)).fetchone()
+
+    def delete_quick_reply(self, tenant_id, qid) -> bool:
+        with self._conn() as c:
+            cur = c.execute(
+                "DELETE FROM quick_replies WHERE tenant_id=? AND id=?",
+                (tenant_id, qid))
+            return cur.rowcount > 0
 
     # ── 租户设置 ─────────────────────────────────────────────
 
@@ -509,20 +767,107 @@ class Database:
                 "SELECT * FROM tenant_users WHERE tenant_id=? AND user_id=?",
                 (tenant_id, uid)).fetchone()
 
-    def ban_user(self, tenant_id, uid):
+    def ban_user(self, tenant_id, uid, reason: str = ""):
         """封禁指定用户；若尚未建档（如命中过滤词自动封禁时的首条消息），退化为插入一行，
         避免 UPDATE 因用户不存在而静默无效。"""
+        reason = (reason or "")[:200]
         with self._conn() as c:
             c.execute(
-                """INSERT INTO tenant_users(tenant_id, user_id, is_banned)
-                   VALUES(?,?,1)
-                   ON CONFLICT(tenant_id, user_id) DO UPDATE SET is_banned=1""",
-                (tenant_id, uid))
+                """INSERT INTO tenant_users(tenant_id, user_id, is_banned, ban_reason)
+                   VALUES(?,?,1,?)
+                   ON CONFLICT(tenant_id, user_id) DO UPDATE SET
+                   is_banned=1, ban_reason=excluded.ban_reason""",
+                (tenant_id, uid, reason))
 
     def unban_user(self, tenant_id, uid):
         with self._conn() as c:
             c.execute(
-                "UPDATE tenant_users SET is_banned=0 WHERE tenant_id=? AND user_id=?",
+                """UPDATE tenant_users SET is_banned=0, ban_reason=''
+                   WHERE tenant_id=? AND user_id=?""",
+                (tenant_id, uid))
+
+    def update_tenant_user_profile(
+            self, tenant_id, uid, *, notes=None, tags=None,
+            session_status=None, assigned_to=None, ban_reason=None):
+        """更新运营字段；未传入的字段保持不变。用户不存在时插入最小行。"""
+        valid_status = frozenset({"open", "pending", "resolved"})
+        sets = []
+        params: list = []
+        if notes is not None:
+            sets.append("notes=?")
+            params.append(str(notes)[:1000])
+        if tags is not None:
+            # 逗号分隔标签，规范化空白
+            raw = str(tags)
+            parts = [p.strip() for p in raw.replace("，", ",").split(",") if p.strip()]
+            sets.append("tags=?")
+            params.append(",".join(parts)[:300])
+        if session_status is not None:
+            st = str(session_status).strip().lower()
+            if st not in valid_status:
+                raise ValueError("invalid session_status")
+            sets.append("session_status=?")
+            params.append(st)
+        if assigned_to is not None:
+            if assigned_to == "" or assigned_to is False:
+                sets.append("assigned_to=NULL")
+            else:
+                sets.append("assigned_to=?")
+                params.append(int(assigned_to))
+        if ban_reason is not None:
+            sets.append("ban_reason=?")
+            params.append(str(ban_reason)[:200])
+        if not sets:
+            return
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO tenant_users(tenant_id, user_id)
+                   VALUES(?,?)
+                   ON CONFLICT(tenant_id, user_id) DO NOTHING""",
+                (tenant_id, uid))
+            c.execute(
+                f"UPDATE tenant_users SET {', '.join(sets)} "
+                "WHERE tenant_id=? AND user_id=?",
+                (*params, tenant_id, uid))
+
+    def count_tenant_users(self, tenant_id, query="", *, only_active=False,
+                           session_status=None) -> int:
+        q = (query or "").strip()
+        sql = "SELECT COUNT(*) AS n FROM tenant_users WHERE tenant_id=?"
+        params: list = [tenant_id]
+        if only_active:
+            sql += " AND is_banned=0"
+        if session_status:
+            sql += " AND session_status=?"
+            params.append(str(session_status))
+        if q:
+            like = f"%{q}%"
+            if q.lstrip("-").isdigit():
+                sql += (" AND (CAST(user_id AS TEXT) LIKE ?"
+                        " OR IFNULL(username,'') LIKE ?"
+                        " OR IFNULL(full_name,'') LIKE ?"
+                        " OR IFNULL(notes,'') LIKE ?"
+                        " OR IFNULL(tags,'') LIKE ?)")
+                params.extend([like, like, like, like, like])
+            else:
+                sql += (" AND (IFNULL(username,'') LIKE ?"
+                        " OR IFNULL(full_name,'') LIKE ?"
+                        " OR IFNULL(notes,'') LIKE ?"
+                        " OR IFNULL(tags,'') LIKE ?)")
+                params.extend([like, like, like, like])
+        with self._conn() as c:
+            return int(c.execute(sql, params).fetchone()["n"] or 0)
+
+    def touch_user_session_on_message(self, tenant_id, uid):
+        """用户发来新消息时：若会话已解决则重新打开。"""
+        with self._conn() as c:
+            c.execute(
+                """UPDATE tenant_users
+                   SET session_status=CASE
+                         WHEN IFNULL(session_status,'open')='resolved' THEN 'open'
+                         ELSE IFNULL(session_status,'open')
+                       END
+                   WHERE tenant_id=? AND user_id=?""",
                 (tenant_id, uid))
 
     def is_banned(self, tenant_id, uid):
@@ -712,8 +1057,8 @@ class Database:
                 (tenant_id, limit)).fetchall()
 
     def search_tenant_users(self, tenant_id, query="", *, limit=50, offset=0,
-                            only_active=False):
-        """按 user_id / username / full_name 搜索租户用户（最近活跃在前）。"""
+                            only_active=False, session_status=None):
+        """按 user_id / username / full_name / notes / tags 搜索（最近活跃在前）。"""
         try:
             limit = max(1, min(int(limit), 200))
         except (TypeError, ValueError):
@@ -727,17 +1072,24 @@ class Database:
         params: list = [tenant_id]
         if only_active:
             sql += " AND is_banned=0"
+        if session_status:
+            sql += " AND session_status=?"
+            params.append(str(session_status))
         if q:
             like = f"%{q}%"
             if q.lstrip("-").isdigit():
                 sql += (" AND (CAST(user_id AS TEXT) LIKE ?"
                         " OR IFNULL(username,'') LIKE ?"
-                        " OR IFNULL(full_name,'') LIKE ?)")
-                params.extend([like, like, like])
+                        " OR IFNULL(full_name,'') LIKE ?"
+                        " OR IFNULL(notes,'') LIKE ?"
+                        " OR IFNULL(tags,'') LIKE ?)")
+                params.extend([like, like, like, like, like])
             else:
                 sql += (" AND (IFNULL(username,'') LIKE ?"
-                        " OR IFNULL(full_name,'') LIKE ?)")
-                params.extend([like, like])
+                        " OR IFNULL(full_name,'') LIKE ?"
+                        " OR IFNULL(notes,'') LIKE ?"
+                        " OR IFNULL(tags,'') LIKE ?)")
+                params.extend([like, like, like, like])
         sql += " ORDER BY last_seen DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         with self._conn() as c:

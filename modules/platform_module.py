@@ -265,6 +265,7 @@ class PlatformModule(BaseModule):
             [InlineKeyboardButton("🔘 启动信息按钮", callback_data="pf:admin:btns")],
             [InlineKeyboardButton("🏷 平台用户名（租户底部署名）",
                                   callback_data="pf:admin:uname")],
+            [InlineKeyboardButton("🏥 租户健康", callback_data="pf:admin:health")],
             [InlineKeyboardButton("⬅️ 返回", callback_data="pf:home")],
         ])
 
@@ -274,11 +275,37 @@ class PlatformModule(BaseModule):
         custom = self.db.get_setting(PLATFORM_TID, SK_PLATFORM_START_TEXT, "")
         uname = platform_footer_username(self.db)
         uname_line = f"@{html.escape(uname)}" if uname else "（未设置）"
+        stats = self.db.platform_stats()
         return (
             ui.section("平台设置", emoji="⚙️", html=True) + "\n\n"
             f"启动信息：{'已自定义' if custom else '默认'}\n"
             f"启动按钮：{html.escape(btns)}\n"
-            f"平台用户名：{uname_line}")
+            f"平台用户名：{uname_line}\n"
+            f"──────────────\n"
+            f"租户：{stats['tenants_total']}（活跃 {stats['tenants_active']} / "
+            f"异常 {stats['tenants_unhealthy']}）\n"
+            f"终端用户合计：{stats['users_total']}")
+
+    def _health_text(self) -> str:
+        stats = self.db.platform_stats()
+        rows, _total = self.db.list_platform_tenants(limit=15, offset=0)
+        lines = []
+        for r in rows:
+            uname = r["bot_username"] or r["bot_name"] or f"#{r['id']}"
+            flag = "✅" if r["is_active"] and not r["last_error"] else (
+                "⏸" if not r["is_active"] else "⚠️")
+            err = f" · {r['last_error']}" if r["last_error"] else ""
+            lines.append(
+                f"{flag} #{r['id']} @{html.escape(str(uname))} "
+                f"用户{r['user_count'] or 0}{html.escape(err)[:60]}")
+        body = "\n".join(lines) if lines else "暂无租户。"
+        return (
+            ui.section("租户健康", emoji="🏥", html=True) + "\n\n"
+            f"活跃 {stats['tenants_active']} / 停用 {stats['tenants_inactive']} / "
+            f"异常 {stats['tenants_unhealthy']}\n"
+            f"──────────────\n"
+            f"{body}\n\n"
+            "（仅展示最近 15 个；完整列表见 Web 平台 API）")
 
     async def _on_admin(self, q, ctx, action: str) -> None:
         if not self._is_super_admin(q.from_user.id):
@@ -316,6 +343,15 @@ class PlatformModule(BaseModule):
                 "请发送平台机器人的用户名（可带或不带 @）。\n\n"
                 "发送「清空」可恢复为自动探测的真实用户名，发送 /cancel 取消。",
                 parse_mode="Markdown")
+        elif action == "admin:health":
+            ctx.user_data.pop("pf_admin_flow", None)
+            await q.answer()
+            await q.edit_message_text(
+                self._health_text(), parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 刷新", callback_data="pf:admin:health")],
+                    [InlineKeyboardButton("⬅️ 返回平台设置", callback_data="pf:admin")],
+                ]))
         else:
             await q.answer()
 

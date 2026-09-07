@@ -270,8 +270,8 @@ def _normalize_force_sub_text(raw, *, max_len: int) -> str:
 
 @web.middleware
 async def _tenant_middleware(request: web.Request, handler):
-    """Parse tenant_id from path for /api/** routes."""
-    if request.path.startswith("/api/"):
+    """Parse tenant_id from path for /api/{tenant_id}/** routes (not platform)."""
+    if request.path.startswith("/api/") and not request.path.startswith("/api/platform"):
         raw = (request.match_info.get("tenant_id")
                or request.rel_url.query.get("tenant_id", ""))
         try:
@@ -284,9 +284,19 @@ async def _tenant_middleware(request: web.Request, handler):
 
 # ── Auth helper ───────────────────────────────────────────────────────────────
 
-def _auth(request: web.Request):
+# Role ranks: support < admin < owner
+_ROLE_RANK = {"support": 1, "admin": 2, "owner": 3}
+
+# Settings keys for away auto-reply (must match modules.private_chat_module)
+SK_AWAY_ON = "away_on"
+SK_AWAY_MSG = "away_msg"
+
+
+def _auth(request: web.Request, *, min_role: str = "support"):
     """Verify initData and return the tenant db row.
 
+    Allows tenant owner or staff with at least *min_role*.
+    Sets ``request['auth_user_id']`` and ``request['auth_role']``.
     Raises HTTPForbidden if authentication or authorisation fails.
     """
     db = Database()
@@ -299,15 +309,42 @@ def _auth(request: web.Request):
     if params is None:
         raise web.HTTPForbidden(reason="invalid init_data")
     user = _extract_tg_user(params)
-    if not user or user.get("id") != tenant["owner_user_id"]:
-        raise web.HTTPForbidden(reason="not the owner")
+    if not user or not user.get("id"):
+        raise web.HTTPForbidden(reason="invalid user")
+    uid = int(user["id"])
+    role = db.get_user_role(tenant["id"], uid)
+    if role is None:
+        raise web.HTTPForbidden(reason="not authorized")
+    need = _ROLE_RANK.get(min_role, 99)
+    if _ROLE_RANK.get(role, 0) < need:
+        raise web.HTTPForbidden(reason="insufficient role")
+    request["auth_user_id"] = uid
+    request["auth_role"] = role
     return tenant
+
+
+def _platform_auth(request: web.Request):
+    """Auth for /api/platform/* using the platform bot token + super admin id."""
+    token = request.app.get("platform_token") or ""
+    admin_id = request.app.get("platform_admin_id")
+    if not token or not admin_id:
+        raise web.HTTPForbidden(reason="platform api disabled")
+    init_data = (request.headers.get("X-Init-Data", "")
+                 or request.rel_url.query.get("init_data", ""))
+    params = _verify_init_data(init_data, token)
+    if params is None:
+        raise web.HTTPForbidden(reason="invalid init_data")
+    user = _extract_tg_user(params)
+    if not user or int(user.get("id") or 0) != int(admin_id):
+        raise web.HTTPForbidden(reason="not platform admin")
+    request["auth_user_id"] = int(user["id"])
+    return user
 
 
 # ── API handlers ──────────────────────────────────────────────────────────────
 
 async def _get_settings(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="support")
     tid, db = tenant["id"], Database()
     welcome_btns = db.get_setting(tid, SK_WELCOME_BTNS, "") or ""
     force_sub = db.get_setting(tid, SK_FORCE_SUB, "") or ""
@@ -337,15 +374,19 @@ async def _get_settings(request: web.Request):
         "flood_max_msgs":      db.get_int_setting(tid, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT),
         "flood_window":        db.get_int_setting(tid, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT)),
         "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
+        "away_on":             db.get_bool_setting(tid, SK_AWAY_ON, False),
+        "away_msg":            db.get_setting(tid, SK_AWAY_MSG, "") or "",
         "manage_group":        manage_group,
         "topics_enabled":      manage_group is not None,
         "bot_username":        tenant["bot_username"] or "",
         "bot_name":            tenant["bot_name"] or "",
+        "auth_role":           request.get("auth_role", "owner"),
+        "auth_user_id":        request.get("auth_user_id"),
     })
 
 
 async def _post_settings(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     tid, db = tenant["id"], Database()
     try:
         body = await request.json()
@@ -404,9 +445,14 @@ async def _post_settings(request: web.Request):
             return web.json_response({"error": "force_sub_msg invalid (max 500 chars)"}, status=400)
         db.set_setting(tid, SK_FORCE_SUB_MSG, fsub_msg)
     for key in (SK_ANTIFLOOD, SK_ALPHABET_LATIN, SK_FORCE_SUB_ON,
-                SK_FILTER_AUTO_BAN, SK_BLOCK_VIA_BOT):
+                SK_FILTER_AUTO_BAN, SK_BLOCK_VIA_BOT, SK_AWAY_ON):
         if key in body:
             db.set_setting(tid, key, "1" if body[key] else "0")
+    if SK_AWAY_MSG in body:
+        away_msg = _clean_text(body[SK_AWAY_MSG], max_len=1000)
+        if away_msg is None:
+            return web.json_response({"error": "away_msg invalid"}, status=400)
+        db.set_setting(tid, SK_AWAY_MSG, away_msg)
     if SK_FLOOD_MAX_MSGS in body or SK_FLOOD_WINDOW in body:
         try:
             raw_n = int(body.get(
@@ -481,7 +527,7 @@ def _parse_auto_reply_body(body: dict) -> dict:
 
 
 async def _post_auto_reply(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -495,7 +541,7 @@ async def _post_auto_reply(request: web.Request):
 
 
 async def _put_auto_reply(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         rid = int(request.match_info["rid"])
     except (ValueError, KeyError):
@@ -513,7 +559,7 @@ async def _put_auto_reply(request: web.Request):
 
 
 async def _delete_auto_reply(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         rid = int(request.match_info["rid"])
     except (ValueError, KeyError):
@@ -551,7 +597,7 @@ async def _get_filters(request: web.Request):
 
 
 async def _post_filter(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -573,7 +619,7 @@ async def _post_filter(request: web.Request):
 
 
 async def _put_filter(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         fid = int(request.match_info["fid"])
     except (ValueError, KeyError):
@@ -604,7 +650,7 @@ async def _put_filter(request: web.Request):
 
 
 async def _delete_filter(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         fid = int(request.match_info["fid"])
     except (ValueError, KeyError):
@@ -685,7 +731,7 @@ async def _get_scheduled_messages(request: web.Request):
 
 
 async def _post_scheduled_message(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -699,7 +745,7 @@ async def _post_scheduled_message(request: web.Request):
 
 
 async def _put_scheduled_message(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         sid = int(request.match_info["sid"])
     except (ValueError, KeyError):
@@ -719,7 +765,7 @@ async def _put_scheduled_message(request: web.Request):
 
 
 async def _delete_scheduled_message(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         sid = int(request.match_info["sid"])
     except (ValueError, KeyError):
@@ -729,7 +775,7 @@ async def _delete_scheduled_message(request: web.Request):
 
 
 async def _post_scheduled_messages_bulk_delete(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -746,7 +792,7 @@ async def _post_scheduled_messages_bulk_delete(request: web.Request):
 
 
 async def _post_scheduled_message_toggle(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         sid = int(request.match_info["sid"])
     except (ValueError, KeyError):
@@ -782,7 +828,7 @@ async def _get_scheduled_messages_export(request: web.Request):
 
 
 async def _post_scheduled_messages_import(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -808,25 +854,33 @@ async def _post_scheduled_messages_import(request: web.Request):
 
 
 def _user_row_json(r) -> dict:
+    keys = r.keys() if hasattr(r, "keys") else ()
+    def _get(name, default=None):
+        return r[name] if name in keys else default
     return {
         "user_id":   r["user_id"],
         "username":  r["username"] or "",
         "full_name": r["full_name"] or "",
-        "is_banned": bool(r["is_banned"]) if "is_banned" in r.keys() else False,
-        "joined_at": r["joined_at"] if "joined_at" in r.keys() else None,
-        "last_seen": r["last_seen"] if "last_seen" in r.keys() else None,
+        "is_banned": bool(r["is_banned"]) if "is_banned" in keys else False,
+        "joined_at": _get("joined_at"),
+        "last_seen": _get("last_seen"),
+        "notes": _get("notes") or "",
+        "tags": _get("tags") or "",
+        "session_status": _get("session_status") or "open",
+        "ban_reason": _get("ban_reason") or "",
+        "assigned_to": _get("assigned_to"),
     }
 
 
 async def _get_banned(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="support")
     rows = Database().get_banned_tenant_users(tenant["id"], limit=200)
     return web.json_response([_user_row_json(r) for r in rows])
 
 
 async def _get_users(request: web.Request):
     """Search / list recent tenant users (for ban helpers & ops)."""
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="support")
     q = request.rel_url.query.get("q", "")
     try:
         limit = int(request.rel_url.query.get("limit", "50"))
@@ -838,20 +892,87 @@ async def _get_users(request: web.Request):
         offset = 0
     only_active = request.rel_url.query.get("only_active", "").lower() in (
         "1", "true", "yes")
-    rows = Database().search_tenant_users(
-        tenant["id"], q, limit=limit, offset=offset, only_active=only_active)
-    return web.json_response([_user_row_json(r) for r in rows])
+    session_status = (request.rel_url.query.get("session_status") or "").strip() or None
+    db = Database()
+    rows = db.search_tenant_users(
+        tenant["id"], q, limit=limit, offset=offset,
+        only_active=only_active, session_status=session_status)
+    total = db.count_tenant_users(
+        tenant["id"], q, only_active=only_active, session_status=session_status)
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    return web.json_response({
+        "items": [_user_row_json(r) for r in rows],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })
+
+
+async def _get_user_detail(request: web.Request):
+    tenant = _auth(request, min_role="support")
+    try:
+        uid = int(request.match_info["uid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid uid"}, status=400)
+    row = Database().get_tenant_user(tenant["id"], uid)
+    if row is None:
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response(_user_row_json(row))
+
+
+async def _patch_user(request: web.Request):
+    tenant = _auth(request, min_role="support")
+    try:
+        uid = int(request.match_info["uid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid uid"}, status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    kwargs = {}
+    for key in ("notes", "tags", "session_status", "ban_reason"):
+        if key in body:
+            kwargs[key] = body[key]
+    if "assigned_to" in body:
+        kwargs["assigned_to"] = body["assigned_to"]
+    if not kwargs:
+        return web.json_response({"error": "no fields"}, status=400)
+    db = Database()
+    try:
+        db.update_tenant_user_profile(tenant["id"], uid, **kwargs)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    db.add_audit_log(
+        tenant["id"], "user_update",
+        actor_id=request.get("auth_user_id"),
+        detail=f"uid={uid} fields={','.join(kwargs)}")
+    row = db.get_tenant_user(tenant["id"], uid)
+    return web.json_response({"ok": True, "user": _user_row_json(row) if row else None})
 
 
 async def _post_ban(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="support")
     try:
         uid = int(request.match_info["uid"])
     except (ValueError, KeyError):
         return web.json_response({"error": "invalid uid"}, status=400)
     if uid <= 0:
         return web.json_response({"error": "invalid uid"}, status=400)
-    Database().ban_user(tenant["id"], uid)
+    reason = ""
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            reason = _clean_text(body.get("reason", ""), max_len=200) or ""
+    except Exception:
+        pass
+    db = Database()
+    db.ban_user(tenant["id"], uid, reason=reason)
+    db.add_audit_log(
+        tenant["id"], "ban",
+        actor_id=request.get("auth_user_id"),
+        detail=f"uid={uid} reason={reason}")
     return web.json_response({"ok": True, "user_id": uid, "is_banned": True})
 
 
@@ -958,7 +1079,7 @@ async def _do_broadcast(
 
 
 async def _post_broadcast(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -1049,13 +1170,209 @@ async def _get_broadcast_estimate(request: web.Request):
 
 
 async def _post_unban(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="support")
     try:
         uid = int(request.match_info["uid"])
     except (ValueError, KeyError):
         return web.json_response({"error": "invalid uid"}, status=400)
-    Database().unban_user(tenant["id"], uid)
+    db = Database()
+    db.unban_user(tenant["id"], uid)
+    db.add_audit_log(
+        tenant["id"], "unban",
+        actor_id=request.get("auth_user_id"), detail=f"uid={uid}")
     return web.json_response({"ok": True})
+
+
+# ── Quick replies ─────────────────────────────────────────────────────────────
+
+def _parse_quick_reply_body(body: dict) -> dict:
+    title = _clean_text(body.get("title", ""), max_len=80, allow_empty=False)
+    content = _clean_text(body.get("content", ""), max_len=4000, allow_empty=False)
+    if title is None or content is None:
+        raise ValueError("title and content required")
+    try:
+        sort_order = int(body.get("sort_order", 0) or 0)
+    except (TypeError, ValueError) as e:
+        raise ValueError("sort_order must be int") from e
+    return {"title": title, "content": content, "sort_order": sort_order}
+
+
+async def _get_quick_replies(request: web.Request):
+    tenant = _auth(request, min_role="support")
+    rows = Database().get_quick_replies(tenant["id"])
+    return web.json_response([
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "content": r["content"],
+            "sort_order": r["sort_order"] or 0,
+        }
+        for r in rows
+    ])
+
+
+async def _post_quick_reply(request: web.Request):
+    tenant = _auth(request, min_role="admin")
+    try:
+        body = await request.json()
+        fields = _parse_quick_reply_body(body)
+    except Exception as e:
+        return web.json_response({"error": str(e) or "invalid"}, status=400)
+    qid = Database().add_quick_reply(tenant["id"], **fields)
+    return web.json_response({"ok": True, "id": qid}, status=201)
+
+
+async def _put_quick_reply(request: web.Request):
+    tenant = _auth(request, min_role="admin")
+    try:
+        qid = int(request.match_info["qid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    try:
+        body = await request.json()
+        fields = _parse_quick_reply_body(body)
+    except Exception as e:
+        return web.json_response({"error": str(e) or "invalid"}, status=400)
+    if not Database().update_quick_reply(tenant["id"], qid, **fields):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+async def _delete_quick_reply(request: web.Request):
+    tenant = _auth(request, min_role="admin")
+    try:
+        qid = int(request.match_info["qid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    if not Database().delete_quick_reply(tenant["id"], qid):
+        return web.json_response({"error": "not found"}, status=404)
+    return web.json_response({"ok": True})
+
+
+# ── Staff ─────────────────────────────────────────────────────────────────────
+
+async def _get_staff(request: web.Request):
+    tenant = _auth(request, min_role="admin")
+    return web.json_response({"items": Database().list_staff(tenant["id"])})
+
+
+async def _post_staff(request: web.Request):
+    tenant = _auth(request, min_role="owner")
+    try:
+        body = await request.json()
+        uid = int(body.get("user_id"))
+        role = (body.get("role") or "support").strip()
+        username = _clean_text(body.get("username", ""), max_len=64) or ""
+        full_name = _clean_text(body.get("full_name", ""), max_len=120) or ""
+    except Exception:
+        return web.json_response({"error": "invalid body"}, status=400)
+    if uid <= 0:
+        return web.json_response({"error": "invalid user_id"}, status=400)
+    db = Database()
+    try:
+        db.upsert_staff(tenant["id"], uid, role=role,
+                        username=username, full_name=full_name)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    db.add_audit_log(
+        tenant["id"], "staff_add",
+        actor_id=request.get("auth_user_id"),
+        detail=f"uid={uid} role={role}")
+    return web.json_response({"ok": True})
+
+
+async def _delete_staff(request: web.Request):
+    tenant = _auth(request, min_role="owner")
+    try:
+        uid = int(request.match_info["uid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid uid"}, status=400)
+    db = Database()
+    if not db.remove_staff(tenant["id"], uid):
+        return web.json_response({"error": "not found"}, status=404)
+    db.add_audit_log(
+        tenant["id"], "staff_remove",
+        actor_id=request.get("auth_user_id"), detail=f"uid={uid}")
+    return web.json_response({"ok": True})
+
+
+async def _get_audit_logs(request: web.Request):
+    tenant = _auth(request, min_role="admin")
+    try:
+        limit = int(request.rel_url.query.get("limit", "50"))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        offset = 0
+    rows, total = Database().get_audit_logs(tenant["id"], limit=limit, offset=offset)
+    return web.json_response({
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "limit": max(1, min(limit, 200)),
+        "offset": max(0, offset),
+    })
+
+
+# ── Platform ops ──────────────────────────────────────────────────────────────
+
+async def _platform_get_stats(request: web.Request):
+    _platform_auth(request)
+    return web.json_response(Database().platform_stats())
+
+
+async def _platform_list_tenants(request: web.Request):
+    _platform_auth(request)
+    try:
+        limit = int(request.rel_url.query.get("limit", "100"))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        offset = 0
+    rows, total = Database().list_platform_tenants(limit=limit, offset=offset)
+    items = []
+    for r in rows:
+        items.append({
+            "id": r["id"],
+            "bot_id": r["bot_id"],
+            "bot_username": r["bot_username"] or "",
+            "bot_name": r["bot_name"] or "",
+            "owner_user_id": r["owner_user_id"],
+            "is_active": bool(r["is_active"]),
+            "created_at": r["created_at"],
+            "last_error": r["last_error"] or "",
+            "last_health_at": r["last_health_at"],
+            "user_count": r["user_count"] or 0,
+            "active_today": r["active_today"] or 0,
+            "healthy": not bool(r["last_error"]),
+        })
+    return web.json_response({
+        "items": items,
+        "total": total,
+        "limit": max(1, min(limit, 500)),
+        "offset": max(0, offset),
+    })
+
+
+async def _platform_deactivate_tenant(request: web.Request):
+    _platform_auth(request)
+    try:
+        tid = int(request.match_info["tid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid tid"}, status=400)
+    db = Database()
+    tenant = db.get_tenant(tid)
+    if tenant is None:
+        return web.json_response({"error": "not found"}, status=404)
+    db.deactivate_tenant(tid)
+    db.set_tenant_health(tid, last_error="deactivated by platform admin")
+    db.add_audit_log(
+        tid, "platform_deactivate",
+        actor_id=request.get("auth_user_id"), detail="via platform api")
+    return web.json_response({"ok": True, "id": tid, "is_active": False})
 
 
 async def _get_filters_export(request: web.Request):
@@ -1069,7 +1386,7 @@ async def _get_filters_export(request: web.Request):
 
 
 async def _post_filters_import(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -1119,7 +1436,7 @@ async def _get_auto_replies_export(request: web.Request):
 
 
 async def _post_auto_replies_import(request: web.Request):
-    tenant = _auth(request)
+    tenant = _auth(request, min_role="admin")
     try:
         body = await request.json()
     except Exception:
@@ -1156,9 +1473,12 @@ async def _serve_index(_request: web.Request):
 
 # ── Application factory / runner ──────────────────────────────────────────────
 
-def create_app() -> web.Application:
+def create_app(*, platform_token: str | None = None,
+               platform_admin_id: int | None = None) -> web.Application:
     """Build and return the aiohttp Application (not yet running)."""
     app = web.Application(middlewares=[_tenant_middleware])
+    app["platform_token"] = platform_token or ""
+    app["platform_admin_id"] = platform_admin_id
 
     # Serve the admin panel SPA
     app.router.add_get("/", _serve_index)
@@ -1204,6 +1524,10 @@ def create_app() -> web.Application:
     app.router.add_get(
         "/api/{tenant_id}/users",              _get_users)
     app.router.add_get(
+        "/api/{tenant_id}/users/{uid}",        _get_user_detail)
+    app.router.add_patch(
+        "/api/{tenant_id}/users/{uid}",        _patch_user)
+    app.router.add_get(
         "/api/{tenant_id}/intercept_logs",     _get_intercept_logs)
     app.router.add_post(
         "/api/{tenant_id}/ban/{uid}",          _post_ban)
@@ -1231,13 +1555,44 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/scheduled_messages/{sid}",        _delete_scheduled_message)
     app.router.add_post(
         "/api/{tenant_id}/scheduled_messages/{sid}/toggle", _post_scheduled_message_toggle)
+    app.router.add_get(
+        "/api/{tenant_id}/quick_replies",           _get_quick_replies)
+    app.router.add_post(
+        "/api/{tenant_id}/quick_replies",           _post_quick_reply)
+    app.router.add_put(
+        "/api/{tenant_id}/quick_replies/{qid}",     _put_quick_reply)
+    app.router.add_delete(
+        "/api/{tenant_id}/quick_replies/{qid}",     _delete_quick_reply)
+    app.router.add_get(
+        "/api/{tenant_id}/staff",                   _get_staff)
+    app.router.add_post(
+        "/api/{tenant_id}/staff",                   _post_staff)
+    app.router.add_delete(
+        "/api/{tenant_id}/staff/{uid}",             _delete_staff)
+    app.router.add_get(
+        "/api/{tenant_id}/audit_logs",              _get_audit_logs)
+
+    # Platform-level (super admin) — no tenant_id in path
+    app.router.add_get("/api/platform/stats", _platform_get_stats)
+    app.router.add_get("/api/platform/tenants", _platform_list_tenants)
+    app.router.add_post(
+        "/api/platform/tenants/{tid}/deactivate", _platform_deactivate_tenant)
 
     return app
 
 
-async def start_webapp(host: str, port: int) -> web.AppRunner:
+async def start_webapp(
+    host: str,
+    port: int,
+    *,
+    platform_token: str | None = None,
+    platform_admin_id: int | None = None,
+) -> web.AppRunner:
     """Start the web admin server. Returns the runner for graceful shutdown."""
-    app = create_app()
+    app = create_app(
+        platform_token=platform_token,
+        platform_admin_id=platform_admin_id,
+    )
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)

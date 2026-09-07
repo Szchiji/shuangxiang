@@ -120,14 +120,17 @@ function initTabs() {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-      if (btn.dataset.tab === 'stats')      loadStats();
-      if (btn.dataset.tab === 'banned')     loadBanned();
-      if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
-      if (btn.dataset.tab === 'filters')    loadFilters();
-      if (btn.dataset.tab === 'force-sub')  loadForceSub();
-      if (btn.dataset.tab === 'logs')       loadInterceptLogs();
-      if (btn.dataset.tab === 'scheduled')  loadScheduledMessages();
-      if (btn.dataset.tab === 'broadcast')  loadBroadcastEstimate();
+      if (btn.dataset.tab === 'stats')         loadStats();
+      if (btn.dataset.tab === 'banned')        loadBanned();
+      if (btn.dataset.tab === 'auto-reply')    loadAutoReplies();
+      if (btn.dataset.tab === 'filters')       loadFilters();
+      if (btn.dataset.tab === 'force-sub')     loadForceSub();
+      if (btn.dataset.tab === 'logs')          loadInterceptLogs();
+      if (btn.dataset.tab === 'scheduled')     loadScheduledMessages();
+      if (btn.dataset.tab === 'broadcast')     loadBroadcastEstimate();
+      if (btn.dataset.tab === 'users')         loadOpsUsers();
+      if (btn.dataset.tab === 'quick-replies') loadQuickReplies();
+      if (btn.dataset.tab === 'staff')         { loadStaff(); loadAuditLogs(); }
     });
   });
 }
@@ -312,6 +315,8 @@ async function loadSettings() {
   _welcomeBuilder.loadText(data.welcome_btns_text || '');
   document.getElementById('welcome-media-type').value = data.welcome_media_type || '';
   document.getElementById('welcome-media-id').value = data.welcome_media_id || '';
+  document.getElementById('away-on').checked = !!data.away_on;
+  document.getElementById('away-msg').value = data.away_msg || '';
   document.getElementById('antiflood').checked      = !!data.antiflood;
   document.getElementById('alphabet-latin').checked = !!data.alphabet_latin;
   document.getElementById('filter-auto-ban').checked = !!data.filter_auto_ban;
@@ -384,6 +389,13 @@ document.getElementById('save-security-settings').addEventListener('click', asyn
     flood_max_msgs:    floodMaxMsgs,
     flood_window:      floodWindow,
   }, 'settings-msg', '✅ 安全设置已保存');
+});
+
+document.getElementById('save-away-settings').addEventListener('click', async () => {
+  await saveSettingsPartial({
+    away_on:  document.getElementById('away-on').checked,
+    away_msg: document.getElementById('away-msg').value,
+  }, 'away-msg-status', '✅ 离开设置已保存');
 });
 
 // ── Auto Replies ──────────────────────────────────────────────────────────────
@@ -1180,7 +1192,7 @@ async function loadUsers() {
     list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
     return;
   }
-  _usersCache = Array.isArray(data) ? data : [];
+  _usersCache = Array.isArray(data) ? data : (data.items || []);
   renderUsers();
 }
 
@@ -1564,6 +1576,234 @@ document.getElementById('sm-import-file').addEventListener('change', async (e) =
   alert(`导入完成：成功 ${res.imported} 条${res.errors && res.errors.length ? `，失败 ${res.errors.length} 条` : ''}`);
   loadScheduledMessages();
 });
+
+// ── Users ops (notes / tags / session) ────────────────────────────────────────
+
+const _sessionLabels = { open: '未处理', pending: '处理中', resolved: '已解决' };
+let _opsUsersCache = [];
+let _opsEditUid = null;
+let _opsSearchTimer = null;
+
+function renderOpsUsers() {
+  const list = document.getElementById('ops-users-list');
+  if (!_opsUsersCache.length) {
+    list.innerHTML = '<p class="empty-state">暂无用户或无匹配结果。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  _opsUsersCache.forEach(u => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const name = u.full_name || (u.username ? '@' + u.username : String(u.user_id));
+    const tags = u.tags ? `<small>🏷 ${esc(u.tags)}</small>` : '';
+    const notes = u.notes ? `<div>${esc(summarizeText(u.notes, 60))}</div>` : '';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">👤 ${esc(name)} · ${_sessionLabels[u.session_status] || u.session_status || 'open'}</div>
+        <small>ID: ${esc(String(u.user_id))}${u.last_seen ? ' · ' + esc(formatDateTime(u.last_seen)) : ''}</small>
+        ${tags}${notes}
+      </div>
+      <button class="btn-ghost btn-sm ops-edit">编辑</button>`;
+    div.querySelector('.ops-edit').addEventListener('click', () => openOpsEditor(u));
+    list.appendChild(div);
+  });
+}
+
+function openOpsEditor(u) {
+  _opsEditUid = u.user_id;
+  document.getElementById('ops-edit-uid').textContent = '#' + u.user_id;
+  document.getElementById('ops-notes').value = u.notes || '';
+  document.getElementById('ops-tags').value = u.tags || '';
+  document.getElementById('ops-session-status').value = u.session_status || 'open';
+  document.getElementById('ops-edit-msg').textContent = '';
+  show('ops-user-editor');
+}
+
+async function loadOpsUsers() {
+  const list = document.getElementById('ops-users-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const q = document.getElementById('ops-users-search').value.trim();
+  const st = document.getElementById('ops-session-filter').value;
+  let path = '/users?limit=50';
+  if (q) path += '&q=' + encodeURIComponent(q);
+  if (st) path += '&session_status=' + encodeURIComponent(st);
+  const data = await api('GET', path);
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  _opsUsersCache = Array.isArray(data) ? data : (data.items || []);
+  const total = Array.isArray(data) ? _opsUsersCache.length : (data.total ?? _opsUsersCache.length);
+  document.getElementById('ops-users-summary').textContent = `共 ${total} 位用户`;
+  renderOpsUsers();
+}
+
+document.getElementById('ops-users-refresh').addEventListener('click', loadOpsUsers);
+document.getElementById('ops-session-filter').addEventListener('change', loadOpsUsers);
+document.getElementById('ops-users-search').addEventListener('input', () => {
+  if (_opsSearchTimer) clearTimeout(_opsSearchTimer);
+  _opsSearchTimer = setTimeout(loadOpsUsers, 300);
+});
+document.getElementById('ops-close-editor').addEventListener('click', () => {
+  hide('ops-user-editor');
+  _opsEditUid = null;
+});
+document.getElementById('ops-save-user').addEventListener('click', async () => {
+  if (!_opsEditUid) return;
+  const msgEl = document.getElementById('ops-edit-msg');
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('PATCH', '/users/' + _opsEditUid, {
+    notes: document.getElementById('ops-notes').value,
+    tags: document.getElementById('ops-tags').value,
+    session_status: document.getElementById('ops-session-status').value,
+  });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已保存';
+    loadOpsUsers();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '保存失败');
+  }
+});
+
+// ── Quick replies ─────────────────────────────────────────────────────────────
+
+async function loadQuickReplies() {
+  const list = document.getElementById('qr-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/quick_replies');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  const rows = Array.isArray(data) ? data : [];
+  if (!rows.length) {
+    list.innerHTML = '<p class="empty-state">暂无快捷回复模板。</p>';
+    return;
+  }
+  list.innerHTML = '';
+  rows.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">⚡ ${esc(r.title)}</div>
+        <div>${esc(summarizeText(r.content, 80))}</div>
+      </div>
+      <button class="btn-ghost btn-sm qr-del">🗑</button>`;
+    div.querySelector('.qr-del').addEventListener('click', async () => {
+      if (!window.confirm('删除该模板？')) return;
+      await api('DELETE', '/quick_replies/' + r.id);
+      loadQuickReplies();
+    });
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('qr-add').addEventListener('click', async () => {
+  const msgEl = document.getElementById('qr-msg');
+  const title = document.getElementById('qr-title').value.trim();
+  const content = document.getElementById('qr-content').value.trim();
+  if (!title || !content) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 标题与内容不能为空';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('POST', '/quick_replies', { title, content });
+  if (res.ok || res.id) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已添加';
+    document.getElementById('qr-title').value = '';
+    document.getElementById('qr-content').value = '';
+    loadQuickReplies();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '失败');
+  }
+});
+
+// ── Staff + audit ─────────────────────────────────────────────────────────────
+
+async function loadStaff() {
+  const list = document.getElementById('staff-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/staff');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  const items = data.items || [];
+  list.innerHTML = '';
+  items.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'ban-item';
+    const label = s.full_name || s.username || String(s.user_id);
+    div.innerHTML = `
+      <div class="ban-info">
+        <div class="ban-name">${esc(label)} · <code>${esc(s.role)}</code></div>
+        <small>ID: ${esc(String(s.user_id))}${s.is_owner ? ' · owner' : ''}</small>
+      </div>
+      ${s.is_owner ? '' : '<button class="btn-ghost btn-sm staff-del">移除</button>'}`;
+    const btn = div.querySelector('.staff-del');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        if (!window.confirm('移除该成员？')) return;
+        const res = await api('DELETE', '/staff/' + s.user_id);
+        if (res.error) alert(res.error);
+        loadStaff();
+      });
+    }
+    list.appendChild(div);
+  });
+}
+
+document.getElementById('staff-add').addEventListener('click', async () => {
+  const msgEl = document.getElementById('staff-msg');
+  const uid = parseInt(document.getElementById('staff-uid').value, 10);
+  const role = document.getElementById('staff-role').value;
+  if (Number.isNaN(uid) || uid <= 0) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ 请输入有效用户 ID';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '保存中…';
+  const res = await api('POST', '/staff', { user_id: uid, role });
+  if (res.ok) {
+    msgEl.className = 'msg ok';
+    msgEl.textContent = '✅ 已添加';
+    document.getElementById('staff-uid').value = '';
+    loadStaff();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (res.error || '失败（需 owner 权限）');
+  }
+});
+
+async function loadAuditLogs() {
+  const list = document.getElementById('audit-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/audit_logs?limit=30');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">${esc(data.error)}</p>`;
+    return;
+  }
+  const items = data.items || [];
+  if (!items.length) {
+    list.innerHTML = '<p class="empty-state">暂无审计记录。</p>';
+    return;
+  }
+  list.innerHTML = items.map(r => `
+    <div class="ban-item"><div class="ban-info">
+      <div class="ban-name">${esc(r.action)}</div>
+      <small>操作者 ${esc(String(r.actor_id || '—'))} · ${esc(formatDateTime(r.created_at))}</small>
+      <div>${esc(r.detail || '')}</div>
+    </div></div>`).join('');
+}
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 

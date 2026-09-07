@@ -12,6 +12,7 @@ import asyncio
 import html
 import logging
 import re
+import time
 
 from telegram import (
     InlineKeyboardButton,
@@ -46,10 +47,16 @@ from modules.platform_module import platform_footer_username
 
 logger = logging.getLogger("shuangxiang.private_chat")
 
+# 离开自动回复（tenant_kv）
+SK_AWAY_ON = "away_on"
+SK_AWAY_MSG = "away_msg"
+
 # 控制面板「添加/编辑过滤词」会话状态键
 _SK_FILTER_ADD = "pc_filter_add"
 # 过滤词列表每页条数（避免 inline keyboard 过长导致编辑消息失败）
 _FILTERS_PAGE_SIZE = 8
+# 离开自动回复：同一用户最短间隔（秒），避免刷屏
+_AWAY_COOLDOWN = 3600.0
 
 
 class PrivateChatModule(BaseModule):
@@ -59,6 +66,8 @@ class PrivateChatModule(BaseModule):
         self.db        = Database()
         self.tenant_id = int(self.config.get("tenant_id", 0))
         self.admin_id  = int(self.config["bot"]["admin_id"])
+        # 离开自动回复冷却：user_id -> last_sent_ts
+        self._away_sent: dict[int, float] = {}
         # 相册（媒体组）缓冲：media_group_id -> {"user", "messages", "task"}。
         # 同一相册的多张媒体以多个独立消息到达，需聚合后整体转发。
         self._albums       = {}
@@ -128,8 +137,15 @@ class PrivateChatModule(BaseModule):
 
     # ── 辅助 ────────────────────────────────────────────────
 
-    def _is_admin(self, uid: int) -> bool:
-        return uid == self.admin_id
+    def _is_admin(self, uid: int, *, min_role: str = "support") -> bool:
+        """owner / staff（默认 support 及以上）均可作为客服操作。"""
+        if uid == self.admin_id:
+            return True
+        return self.db.has_min_role(self.tenant_id, uid, min_role)
+
+    def _is_config_admin(self, uid: int) -> bool:
+        """可改设置的角色：admin / owner。"""
+        return self._is_admin(uid, min_role="admin")
 
     def _manage_group(self):
         return self.db.get_manage_group(self.tenant_id)
@@ -283,12 +299,27 @@ class PrivateChatModule(BaseModule):
             await update.message.reply_text(f"未找到用户 `{target}`", parse_mode="Markdown")
             return
         status = "⛔ 已封禁" if u["is_banned"] else "✅ 正常"
+        keys = u.keys() if hasattr(u, "keys") else ()
+        notes = (u["notes"] if "notes" in keys else "") or ""
+        tags = (u["tags"] if "tags" in keys else "") or ""
+        sess = (u["session_status"] if "session_status" in keys else "") or "open"
+        ban_reason = (u["ban_reason"] if "ban_reason" in keys else "") or ""
+        sess_label = {"open": "未处理", "pending": "处理中", "resolved": "已解决"}.get(
+            sess, sess)
+        extra = (
+            f"🏷 标签：{html.escape(tags) or '—'}\n"
+            f"📝 备注：{html.escape(notes) or '—'}\n"
+            f"📂 会话：{sess_label}\n"
+        )
+        if ban_reason:
+            extra += f"⛔ 封禁原因：{html.escape(ban_reason)}\n"
         await update.message.reply_text(
             ui.header("用户资料", emoji="👤", html=True) + "\n"
             f"👤 {html.escape(u['full_name'] or '')}\n"
             f"🔗 @{html.escape(u['username'] or '无')}\n"
             f"🆔 <code>{u['user_id']}</code>\n"
             f"📊 状态：{status}\n"
+            f"{extra}"
             f"🕐 首次：{u['joined_at']}\n"
             f"🕐 最近：{u['last_seen']}",
             parse_mode="HTML",
@@ -729,6 +760,23 @@ class PrivateChatModule(BaseModule):
             return None
         return self.db.get_topic_user(self.tenant_id, thread_id)
 
+    async def _maybe_send_away(self, msg, user_id: int) -> None:
+        """若开启离开模式，在冷却窗口内向用户发送一次 away_msg。"""
+        if not self.db.get_bool_setting(self.tenant_id, SK_AWAY_ON, False):
+            return
+        text = (self.db.get_setting(self.tenant_id, SK_AWAY_MSG, "") or "").strip()
+        if not text:
+            return
+        now = time.time()
+        last = self._away_sent.get(user_id, 0)
+        if now - last < _AWAY_COOLDOWN:
+            return
+        try:
+            await msg.reply_text(text)
+            self._away_sent[user_id] = now
+        except TelegramError as e:
+            logger.debug("away reply failed: %s", e)
+
     # ── 私聊消息 ─────────────────────────────────────────────
 
     async def on_private(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -753,6 +801,10 @@ class PrivateChatModule(BaseModule):
         if self.db.is_banned(self.tenant_id, user.id):
             # 被封禁用户静默失效：不回复任何提示，避免其得知封禁状态。
             return
+        try:
+            self.db.touch_user_session_on_message(self.tenant_id, user.id)
+        except Exception:
+            pass
 
         # 消息若「通过某机器人」（如群发/推广机器人）发出：若该机器人已被封禁，
         # 无论发送者是谁都静默拦截，防止其借他人账号继续借道发送广告；否则
@@ -768,6 +820,9 @@ class PrivateChatModule(BaseModule):
         if self._is_forwarded_from_bot(msg):
             await msg.reply_text(self.bot_forward_blocked)
             return
+
+        # 离开 / 非工作时间自动回复（冷却，避免对同一用户刷屏）
+        await self._maybe_send_away(msg, user.id)
 
         # 相册（媒体组）：聚合后整体转发，避免逐张拆散。
         if getattr(msg, "media_group_id", None):
