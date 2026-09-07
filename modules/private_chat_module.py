@@ -106,10 +106,15 @@ class PrivateChatModule(BaseModule):
         app.add_handler(CommandHandler("unsetgroup", self.cmd_unsetgroup))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
         app.add_handler(CallbackQueryHandler(self.on_panel, pattern=r"^pc:"))
-        # 控制面板添加过滤词向导：高优先级拦截拥有者输入，避免被当成普通私聊转发。
+        # 控制面板添加过滤词向导：必须独占一个 group。
+        # python-telegram-bot 每个 group 只会执行一个匹配的 handler；若与
+        # customize 的 on_wizard 同组，先注册的一方会“吞掉”更新（即使 callback
+        # 里 return 未处理），导致另一方的引导式输入永远不生效。
+        # group=-4 先于 customize(-3) 运行：有会话时拦截并 ApplicationHandlerStop；
+        # 无会话时直接 return，让后续 group 继续处理。
         app.add_handler(MessageHandler(
             filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-            self.on_filter_add_wizard), group=-3)
+            self.on_filter_add_wizard), group=-4)
 
         # 私聊消息（用户 ↔ DM 模式拥有者）—— 放在较低优先级 group，
         # 让自动回复/过滤模块（group=0）有机会先拦截。
@@ -176,7 +181,7 @@ class PrivateChatModule(BaseModule):
             "──────────────\n\n"
             "机器人管理已升级为 *网页后台* 模式。\n"
             "点击下方按钮即可自动登录进入管理后台，"
-            "在后台中设置自动回复、启动语、封禁管理等。\n\n"
+            "在后台中设置自动回复、过滤词、启动语、封禁管理等。\n\n"
             "💡 你也可以继续使用 /panel 打开传统控制面板。"
         )
         await update.message.reply_text(
@@ -537,10 +542,15 @@ class PrivateChatModule(BaseModule):
                     "• 支持一次多行，每行一个词\n"
                     "• 正则请用 `regex:表达式` 前缀\n"
                     "• 发送 /cancel 取消"))
-            await q.edit_message_text(
-                text, parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("✖️ 取消", callback_data="pc:filter_add_cancel")]]))
+            markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("✖️ 取消", callback_data="pc:filter_add_cancel")]])
+            try:
+                await q.edit_message_text(
+                    text, parse_mode="Markdown", reply_markup=markup)
+            except TelegramError:
+                # 编辑失败（消息过旧/内容相同）时改为新发一条，保证向导仍可用。
+                await q.message.reply_text(
+                    text, parse_mode="Markdown", reply_markup=markup)
         elif action == "filter_add_cancel":
             ctx.user_data.pop(_SK_FILTER_ADD, None)
             await q.answer("已取消")

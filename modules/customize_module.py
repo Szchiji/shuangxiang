@@ -213,7 +213,10 @@ class CustomizeModule(BaseModule):
             parse_mode="Markdown")
 
     async def cmd_cancel(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        if ctx.user_data.pop("cz", None) is not None:
+        # 同时清理本模块引导态与控制面板「添加过滤词」会话（键名见 private_chat_module）。
+        cleared = ctx.user_data.pop("cz", None) is not None
+        cleared = ctx.user_data.pop("pc_filter_add", None) is not None or cleared
+        if cleared:
             await update.effective_message.reply_text("已取消当前操作。")
 
     # ── 回调分发 ────────────────────────────────────────────

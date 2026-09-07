@@ -45,6 +45,8 @@ def test_autoreply_and_guard_in_distinct_groups(db):
     guard_group     = _group_of(app, "on_guard")       # 强制订阅拦截
     autoreply_group = _group_of(app, "on_message")     # 自动回复 / 过滤 / 防刷屏
     forward_group   = _group_of(app, "on_private")     # 双向转发
+    filter_wiz_group = _group_of(app, "on_filter_add_wizard")  # 面板添加过滤词
+    customize_wiz_group = _group_of(app, "on_wizard")          # 自定义引导输入
 
     # 三者必须分属不同 group，否则每组只会执行一个处理器。
     assert len({guard_group, autoreply_group, forward_group}) == 3, (
@@ -52,3 +54,7 @@ def test_autoreply_and_guard_in_distinct_groups(db):
         f"guard={guard_group} autoreply={autoreply_group} forward={forward_group}")
     # 顺序：强制订阅(先) → 自动回复 → 双向转发(后)
     assert guard_group < autoreply_group < forward_group
+    # 过滤词向导与自定义向导也必须分属不同 group，否则会互相抢占输入。
+    assert filter_wiz_group != customize_wiz_group, (
+        "on_filter_add_wizard 与 on_wizard 不能在同一 group")
+    assert filter_wiz_group < customize_wiz_group < guard_group

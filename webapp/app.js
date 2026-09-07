@@ -18,7 +18,16 @@ async function api(method, path, body) {
   if (body !== undefined) opts.body = JSON.stringify(body);
   try {
     const res = await fetch(BASE + path, opts);
-    return res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (_) {
+      return { error: res.ok ? '响应格式错误' : `请求失败 (${res.status})` };
+    }
+    if (!res.ok && data && typeof data === 'object' && data.error == null) {
+      data.error = `请求失败 (${res.status})`;
+    }
+    return data;
   } catch (_) {
     return { error: '网络错误，请检查连接后重试' };
   }
@@ -592,6 +601,7 @@ async function deleteFilter(id) {
 
 document.getElementById('fl-submit').addEventListener('click', async () => {
   const msgEl = document.getElementById('fl-msg');
+  const btn = document.getElementById('fl-submit');
   const raw = document.getElementById('fl-keyword').value;
   const match = document.getElementById('fl-match').value;
   const words = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -600,26 +610,32 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
     msgEl.textContent = '请输入至少一个过滤词';
     return;
   }
+  btn.disabled = true;
   msgEl.className = 'msg';
   msgEl.textContent = '添加中…';
   let ok = 0;
   const errors = [];
-  for (const keyword of words) {
-    const res = await api('POST', '/filters', { keyword, match_type: match });
-    if (res.id) ok += 1;
-    else errors.push(`${keyword}: ${res.error || '失败'}`);
-  }
-  if (ok) {
-    document.getElementById('fl-keyword').value = '';
-    msgEl.className = 'msg ok';
-    msgEl.textContent = errors.length
-      ? `✅ 已添加 ${ok} 个，失败 ${errors.length} 个`
-      : `✅ 已添加 ${ok} 个过滤词`;
-    tg?.HapticFeedback?.notificationOccurred('success');
-    loadFilters();
-  } else {
-    msgEl.className = 'msg fail';
-    msgEl.textContent = '❌ ' + (errors[0] || '添加失败');
+  try {
+    for (const keyword of words) {
+      const res = await api('POST', '/filters', { keyword, match_type: match });
+      // 用 != null 判断，避免把合法 id 与错误响应混淆；同时要求无 error 字段。
+      if (res && res.id != null && res.error == null) ok += 1;
+      else errors.push(`${keyword}: ${(res && res.error) || '失败'}`);
+    }
+    if (ok) {
+      document.getElementById('fl-keyword').value = '';
+      msgEl.className = 'msg ok';
+      msgEl.textContent = errors.length
+        ? `✅ 已添加 ${ok} 个，失败 ${errors.length} 个`
+        : `✅ 已添加 ${ok} 个过滤词`;
+      tg?.HapticFeedback?.notificationOccurred('success');
+      await loadFilters();
+    } else {
+      msgEl.className = 'msg fail';
+      msgEl.textContent = '❌ ' + (errors[0] || '添加失败');
+    }
+  } finally {
+    btn.disabled = false;
   }
 });
 

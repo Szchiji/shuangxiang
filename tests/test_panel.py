@@ -231,6 +231,51 @@ async def test_filter_add_wizard_cancel(db):
     assert any("取消" in r for r in msg.replies)
 
 
+@pytest.mark.asyncio
+async def test_filter_add_wizard_inactive_does_not_stop(db):
+    """无会话时向导应直接 return，让其它 group 的处理器继续工作。"""
+    from modules.private_chat_module import _SK_FILTER_ADD
+    from tests.conftest import FakeMessage, make_ctx
+
+    mod = make_module(db)
+    ctx = make_ctx(None)
+    ctx.user_data = {}
+    msg = FakeMessage(1, text="普通消息")
+    upd = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=99),
+        effective_message=msg,
+        message=msg,
+    )
+    # 不应抛 ApplicationHandlerStop，也不应写入过滤词
+    await mod.on_filter_add_wizard(upd, ctx)
+    assert _SK_FILTER_ADD not in ctx.user_data
+    assert not any(r["keyword"] == "普通消息" for r in db.get_filters(1))
+
+
+@pytest.mark.asyncio
+async def test_cmd_cancel_clears_filter_add_state(db):
+    """ /cancel 应同时清掉控制面板添加过滤词会话。"""
+    from modules.customize_module import CustomizeModule
+    from modules.private_chat_module import _SK_FILTER_ADD
+    from tests.conftest import FakeMessage, make_ctx
+
+    mod = CustomizeModule.__new__(CustomizeModule)
+    mod.db = db
+    mod.tenant_id = 1
+    mod.admin_id = 99
+    ctx = make_ctx(None)
+    ctx.user_data = {_SK_FILTER_ADD: {"step": "keyword"}}
+    msg = FakeMessage(1, text="/cancel")
+    upd = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=99),
+        effective_message=msg,
+        message=msg,
+    )
+    await mod.cmd_cancel(upd, ctx)
+    assert _SK_FILTER_ADD not in ctx.user_data
+    assert any("取消" in r for r in msg.replies)
+
+
 # ── 统计文案 ─────────────────────────────────────────────────
 
 def test_stats_text_empty_and_nonempty(db):
