@@ -116,36 +116,112 @@ function initTheme() {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
+function isMobileLayout() {
+  return window.matchMedia && window.matchMedia('(max-width: 720px)').matches;
+}
+
 function initSidebar() {
   const sidebar = document.getElementById('sidebar');
+  if (!sidebar) return;
+
   const toggleBtn = document.getElementById('sidebar-toggle');
   const hideBtn = document.getElementById('sidebar-hide');
   const reopenBtn = document.getElementById('sidebar-reopen');
+  let backdrop = document.getElementById('sidebar-backdrop');
+  if (!backdrop) {
+    backdrop = document.createElement('button');
+    backdrop.type = 'button';
+    backdrop.id = 'sidebar-backdrop';
+    backdrop.className = 'sidebar-backdrop';
+    backdrop.setAttribute('aria-label', '关闭侧栏');
+    backdrop.hidden = true;
+    // Place after sidebar so it stacks correctly
+    sidebar.insertAdjacentElement('afterend', backdrop);
+  }
+
   const KEY = 'bh_sidebar_mode'; // '', 'collapsed', 'hidden'
 
-  function applyMode(mode) {
-    sidebar.classList.remove('collapsed', 'hidden');
-    if (mode === 'collapsed') sidebar.classList.add('collapsed');
-    if (mode === 'hidden') sidebar.classList.add('hidden');
-    if (reopenBtn) {
-      if (mode === 'hidden') show('sidebar-reopen');
-      else hide('sidebar-reopen');
+  function setReopenVisible(visible) {
+    if (!reopenBtn) return;
+    if (visible) {
+      reopenBtn.hidden = false;
+      reopenBtn.style.display = 'inline-flex';
+      reopenBtn.setAttribute('aria-hidden', 'false');
+    } else {
+      reopenBtn.hidden = true;
+      reopenBtn.style.display = 'none';
+      reopenBtn.setAttribute('aria-hidden', 'true');
     }
-    try { localStorage.setItem(KEY, mode || ''); } catch (_) {}
+  }
+
+  function setBackdrop(visible) {
+    if (!backdrop) return;
+    backdrop.hidden = !visible;
+    backdrop.classList.toggle('show', !!visible);
+    document.body.classList.toggle('sidebar-open', !!visible && isMobileLayout());
+  }
+
+  function applyMode(mode) {
+    const mobile = isMobileLayout();
+    // Compact icon-rail is awkward on very narrow screens — keep labels visible.
+    const effective = mobile && mode === 'collapsed' ? '' : (mode || '');
+
+    sidebar.classList.remove('collapsed', 'hidden');
+    if (effective === 'collapsed') sidebar.classList.add('collapsed');
+    if (effective === 'hidden') sidebar.classList.add('hidden');
+
+    setBackdrop(false);
+    setReopenVisible(effective === 'hidden');
+
+    try {
+      localStorage.setItem(
+        KEY,
+        effective === 'collapsed' || effective === 'hidden' ? effective : ''
+      );
+    } catch (_) {}
+  }
+
+  function currentMode() {
+    if (sidebar.classList.contains('hidden')) return 'hidden';
+    if (sidebar.classList.contains('collapsed')) return 'collapsed';
+    return '';
   }
 
   const saved = (() => { try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; } })();
   applyMode(saved === 'collapsed' || saved === 'hidden' ? saved : '');
 
-  toggleBtn?.addEventListener('click', () => {
+  toggleBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (sidebar.classList.contains('hidden')) {
       applyMode('');
       return;
     }
+    if (isMobileLayout()) {
+      // On mobile: hamburger hides/shows the docked rail
+      applyMode(currentMode() === 'hidden' ? '' : 'hidden');
+      return;
+    }
     applyMode(sidebar.classList.contains('collapsed') ? '' : 'collapsed');
   });
-  hideBtn?.addEventListener('click', () => applyMode('hidden'));
-  reopenBtn?.addEventListener('click', () => applyMode(''));
+  hideBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyMode('hidden');
+  });
+  reopenBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    applyMode('');
+  });
+  backdrop?.addEventListener('click', (e) => {
+    e.preventDefault();
+    applyMode('hidden');
+  });
+
+  window.addEventListener('resize', () => {
+    applyMode(currentMode());
+  });
 
   // Collapsible nav groups
   const gkey = 'bh_nav_groups';
@@ -156,7 +232,9 @@ function initSidebar() {
     const name = group.dataset.group;
     const toggle = group.querySelector('.nav-group-toggle');
     if (collapsedGroups[name]) group.classList.add('collapsed');
-    toggle?.addEventListener('click', () => {
+    toggle?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       group.classList.toggle('collapsed');
       collapsedGroups[name] = group.classList.contains('collapsed');
       try { localStorage.setItem(gkey, JSON.stringify(collapsedGroups)); } catch (_) {}
@@ -197,93 +275,139 @@ function initTabs() {
 /**
  * Initialise an interactive button-row builder inside `containerEl`.
  * `addRowBtnId` is the id of the "add row" button below the builder.
- * Returns { getText } — serialises to "text - url && text - url\ntext - url" format.
+ * Returns { getText, loadText } — serialises to "text - url && text - url\ntext - url" format.
  */
 function initButtonBuilder(containerEl, addRowBtnId) {
+  if (!containerEl) {
+    return { getText: () => '', loadText: () => {} };
+  }
+
   /**
-   * Each button is stored as a data object { text, url } on the pill element.
-   * Pills are rendered inside .btn-pills-area of each .btn-row.
-   * An inline edit form (.btn-inline-form) is shown/hidden per row when
-   * the user clicks "＋ 添加按钮" or clicks an existing pill.
+   * Each button is stored as { text, url } on the pill element.
+   * Clicking "＋ 添加按钮" / a pill opens a clear inline editor panel.
+   * Event delegation keeps handlers alive after loadText() re-renders rows.
    */
 
+  function closeInlineForm(row) {
+    row?.querySelector('.btn-inline-form')?.remove();
+  }
+
+  function closeAllForms() {
+    containerEl.querySelectorAll('.btn-inline-form').forEach(f => f.remove());
+  }
+
+  function createPill(text, url) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'btn-pill';
+    pill.dataset.btnText = text;
+    pill.dataset.btnUrl = url;
+    pill.title = url || '点击编辑';
+    pill.innerHTML = `<span class="pill-label">${esc(text)}</span><span class="pill-edit-hint">✏️</span>`;
+    return pill;
+  }
+
   function showInlineForm(row, pillEl) {
-    // Close any open form in this row first
-    closeInlineForm(row);
+    if (!row) return;
+    closeAllForms();
 
     const pillsArea = row.querySelector('.btn-pills-area');
-    const form = document.createElement('div');
-    form.className = 'btn-inline-form';
+    if (!pillsArea) return;
 
     const isEdit = !!pillEl;
-    const initText = isEdit ? pillEl.dataset.btnText : '';
-    const initUrl  = isEdit ? pillEl.dataset.btnUrl  : '';
+    const initText = isEdit ? (pillEl.dataset.btnText || '') : '';
+    const initUrl = isEdit ? (pillEl.dataset.btnUrl || '') : '';
 
+    const form = document.createElement('div');
+    form.className = 'btn-inline-form open';
+    form.setAttribute('role', 'dialog');
+    form.setAttribute('aria-label', isEdit ? '编辑按钮' : '添加按钮');
     form.innerHTML = `
-      <input class="btn-inline-txt" type="text" placeholder="按钮文字" value="${esc(initText)}">
-      <input class="btn-inline-url" type="text" placeholder="https://链接" value="${esc(initUrl)}">
+      <div class="btn-inline-title">${isEdit ? '✏️ 编辑按钮' : '➕ 添加按钮'}</div>
+      <p class="btn-inline-hint">填写按钮显示文字和点击后打开的链接</p>
+      <label class="btn-inline-field">按钮文字
+        <input class="btn-inline-txt" type="text" placeholder="例如：官方频道" value="${esc(initText)}" maxlength="64" autocomplete="off">
+      </label>
+      <label class="btn-inline-field">链接 URL
+        <input class="btn-inline-url" type="url" placeholder="https://t.me/..." value="${esc(initUrl)}" autocomplete="off">
+      </label>
       <div class="btn-inline-actions">
-        <button class="btn-ghost btn-sm btn-inline-save">💾 保存</button>
-        <button class="btn-ghost btn-sm btn-inline-cancel">取消</button>
-        ${isEdit ? '<button class="btn-icon danger btn-inline-del" title="删除此按钮">🗑</button>' : ''}
+        <button type="button" class="btn-primary btn-sm btn-inline-save">💾 保存</button>
+        <button type="button" class="btn-ghost btn-sm btn-inline-cancel">取消</button>
+        ${isEdit ? '<button type="button" class="btn-icon danger btn-inline-del" title="删除此按钮">🗑</button>' : ''}
       </div>`;
 
-    row.insertBefore(form, pillsArea.nextSibling);
+    // Place editor after pills so it is always visible under the row content
+    const actions = row.querySelector('.btn-row-actions');
+    if (actions) row.insertBefore(form, actions);
+    else row.appendChild(form);
 
     const txtInput = form.querySelector('.btn-inline-txt');
     const urlInput = form.querySelector('.btn-inline-url');
-    txtInput.focus();
 
-    form.querySelector('.btn-inline-save').addEventListener('click', () => {
+    const save = () => {
       const t = txtInput.value.trim();
       const u = urlInput.value.trim();
+      txtInput.classList.toggle('invalid', !t);
+      urlInput.classList.toggle('invalid', !u);
       if (!t || !u) {
-        txtInput.style.borderColor = t ? '' : 'var(--danger)';
-        urlInput.style.borderColor = u ? '' : 'var(--danger)';
+        (!t ? txtInput : urlInput).focus();
         return;
       }
-      if (isEdit) {
+      if (isEdit && pillEl.isConnected) {
         pillEl.dataset.btnText = t;
-        pillEl.dataset.btnUrl  = u;
-        pillEl.querySelector('.pill-label').textContent = t;
+        pillEl.dataset.btnUrl = u;
+        const label = pillEl.querySelector('.pill-label');
+        if (label) label.textContent = t;
         pillEl.title = u;
       } else {
         pillsArea.appendChild(createPill(t, u));
       }
       closeInlineForm(row);
-    });
+      tg?.HapticFeedback?.impactOccurred?.('light');
+    };
 
-    form.querySelector('.btn-inline-cancel').addEventListener('click', () => {
+    form.querySelector('.btn-inline-save')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      save();
+    });
+    form.querySelector('.btn-inline-cancel')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       closeInlineForm(row);
-      // Remove the row if it has no pills (e.g. newly added row where user cancelled)
+      if (!row.querySelector('.btn-pill')) row.remove();
+    });
+    form.querySelector('.btn-inline-del')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      pillEl?.remove();
+      closeInlineForm(row);
       if (!row.querySelector('.btn-pill')) row.remove();
     });
 
-    if (isEdit) {
-      form.querySelector('.btn-inline-del').addEventListener('click', () => {
-        pillEl.remove();
-        closeInlineForm(row);
-        if (!row.querySelector('.btn-pill')) row.remove();
+    // Enter in either field saves
+    [txtInput, urlInput].forEach(input => {
+      input?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          save();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          form.querySelector('.btn-inline-cancel')?.click();
+        }
       });
-    }
-  }
-
-  function closeInlineForm(row) {
-    row.querySelector('.btn-inline-form')?.remove();
-  }
-
-  function createPill(text, url) {
-    const pill = document.createElement('div');
-    pill.className = 'btn-pill';
-    pill.dataset.btnText = text;
-    pill.dataset.btnUrl  = url;
-    pill.title = url;
-    pill.innerHTML = `<span class="pill-label">${esc(text)}</span><span class="pill-edit-hint">✏️</span>`;
-    pill.addEventListener('click', () => {
-      const row = pill.closest('.btn-row');
-      showInlineForm(row, pill);
     });
-    return pill;
+
+    // Ensure the editor is on-screen (critical in Telegram Mini App)
+    try {
+      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (_) {
+      try { form.scrollIntoView(true); } catch (__) {}
+    }
+    setTimeout(() => {
+      try { txtInput?.focus(); } catch (_) {}
+    }, 50);
   }
 
   function createRow(initialEntries = []) {
@@ -295,10 +419,11 @@ function initButtonBuilder(containerEl, addRowBtnId) {
     header.innerHTML = '<span>一行按钮</span>';
 
     const removeRowBtn = document.createElement('button');
+    removeRowBtn.type = 'button';
     removeRowBtn.className = 'btn-icon danger remove-row';
     removeRowBtn.title = '删除此行';
+    removeRowBtn.setAttribute('aria-label', '删除此行');
     removeRowBtn.textContent = '✕';
-    removeRowBtn.addEventListener('click', () => row.remove());
     header.appendChild(removeRowBtn);
 
     const pillsArea = document.createElement('div');
@@ -307,26 +432,61 @@ function initButtonBuilder(containerEl, addRowBtnId) {
     const actions = document.createElement('div');
     actions.className = 'btn-row-actions';
     const addBtnInRow = document.createElement('button');
+    addBtnInRow.type = 'button';
     addBtnInRow.className = 'btn-ghost btn-sm add-btn-in-row';
     addBtnInRow.textContent = '＋ 添加按钮';
-    addBtnInRow.addEventListener('click', () => showInlineForm(row, null));
     actions.appendChild(addBtnInRow);
 
     row.append(header, pillsArea, actions);
 
-    initialEntries.forEach(([t, u]) => {
+    (initialEntries || []).forEach(([t, u]) => {
       if (t && u) pillsArea.appendChild(createPill(t, u));
     });
 
     return row;
   }
 
-  document.getElementById(addRowBtnId).addEventListener('click', () => {
-    const row = createRow();
-    containerEl.appendChild(row);
-    // Immediately open the add form for the new row
-    showInlineForm(row, null);
+  // Event delegation — survives loadText() re-renders
+  containerEl.addEventListener('click', (e) => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+
+    const removeRow = target.closest('.remove-row');
+    if (removeRow && containerEl.contains(removeRow)) {
+      e.preventDefault();
+      e.stopPropagation();
+      removeRow.closest('.btn-row')?.remove();
+      return;
+    }
+
+    const addInRow = target.closest('.add-btn-in-row');
+    if (addInRow && containerEl.contains(addInRow)) {
+      e.preventDefault();
+      e.stopPropagation();
+      const row = addInRow.closest('.btn-row');
+      showInlineForm(row, null);
+      return;
+    }
+
+    const pill = target.closest('.btn-pill');
+    if (pill && containerEl.contains(pill)) {
+      e.preventDefault();
+      e.stopPropagation();
+      showInlineForm(pill.closest('.btn-row'), pill);
+    }
   });
+
+  const addRowBtn = document.getElementById(addRowBtnId);
+  if (addRowBtn) {
+    addRowBtn.type = 'button';
+    addRowBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const row = createRow();
+      containerEl.appendChild(row);
+      showInlineForm(row, null);
+    });
+  }
 
   function getText() {
     const lines = [];
@@ -344,8 +504,8 @@ function initButtonBuilder(containerEl, addRowBtnId) {
 
   function loadText(raw) {
     containerEl.innerHTML = '';
-    if (!raw || !raw.trim()) return;
-    raw.trim().split('\n').forEach(line => {
+    if (!raw || !String(raw).trim()) return;
+    String(raw).trim().split('\n').forEach(line => {
       line = line.trim();
       if (!line) return;
       const parts = line.split('&&').map(s => s.trim()).filter(Boolean);
@@ -1925,27 +2085,57 @@ async function loadStats() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-tg?.ready();
-tg?.expand();
+function bootApp() {
+  try { tg?.ready(); } catch (_) {}
+  try { tg?.expand(); } catch (_) {}
 
-_welcomeBuilder = initButtonBuilder(
-  document.getElementById('welcome-buttons-builder'),
-  'welcome-buttons-add-row'
-);
-_arBuilder = initButtonBuilder(
-  document.getElementById('ar-buttons-builder'),
-  'ar-buttons-add-row'
-);
-_bcBuilder = initButtonBuilder(
-  document.getElementById('bc-buttons-builder'),
-  'bc-buttons-add-row'
-);
-_smBuilder = initButtonBuilder(
-  document.getElementById('sm-buttons-builder'),
-  'sm-buttons-add-row'
-);
+  // Theme + sidebar first so chrome works even if a builder fails
+  try { initTheme(); } catch (err) { console.warn('initTheme', err); }
+  try { initSidebar(); } catch (err) { console.warn('initSidebar', err); }
+  try { initTabs(); } catch (err) { console.warn('initTabs', err); }
 
-initTheme();
-initSidebar();
-initTabs();
-loadSettings();
+  try {
+    _welcomeBuilder = initButtonBuilder(
+      document.getElementById('welcome-buttons-builder'),
+      'welcome-buttons-add-row'
+    );
+  } catch (err) {
+    console.warn('welcome builder', err);
+    _welcomeBuilder = { getText: () => '', loadText: () => {} };
+  }
+  try {
+    _arBuilder = initButtonBuilder(
+      document.getElementById('ar-buttons-builder'),
+      'ar-buttons-add-row'
+    );
+  } catch (err) {
+    console.warn('ar builder', err);
+    _arBuilder = { getText: () => '', loadText: () => {} };
+  }
+  try {
+    _bcBuilder = initButtonBuilder(
+      document.getElementById('bc-buttons-builder'),
+      'bc-buttons-add-row'
+    );
+  } catch (err) {
+    console.warn('bc builder', err);
+    _bcBuilder = { getText: () => '', loadText: () => {} };
+  }
+  try {
+    _smBuilder = initButtonBuilder(
+      document.getElementById('sm-buttons-builder'),
+      'sm-buttons-add-row'
+    );
+  } catch (err) {
+    console.warn('sm builder', err);
+    _smBuilder = { getText: () => '', loadText: () => {} };
+  }
+
+  loadSettings();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootApp);
+} else {
+  bootApp();
+}
