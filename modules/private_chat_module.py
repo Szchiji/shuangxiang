@@ -1014,8 +1014,23 @@ class PrivateChatModule(BaseModule):
         msg    = update.message
         target = self._resolve_target(update)
         if target is None:
+            # 未回复用户消息时：若发送的是媒体，回传 file_id，方便在 Web 后台配置封面/自动回复。
+            # 向导会话（customize / 过滤词）由更低 group 的 handler 优先处理，此处不会抢占。
+            from modules.customize_module import extract_media
+            media_type, media_id = extract_media(msg)
+            if media_type and media_id:
+                await msg.reply_text(
+                    "📎 *媒体 file_id（可粘贴到 Web 管理后台）*\n"
+                    f"类型：`{media_type}`\n"
+                    f"`{media_id}`\n\n"
+                    "用于启动语封面、自动回复媒体、定时消息或群发图片。\n"
+                    "若要回复用户，请「回复」某条用户消息。",
+                    parse_mode="Markdown")
+                return
             await msg.reply_text(
-                "⚠️ 请「回复」某条用户消息来回复对应用户。\n可用指令：/ban /unban /info /stats")
+                "⚠️ 请「回复」某条用户消息来回复对应用户。\n"
+                "💡 直接发送图片/视频可获取 file_id，用于后台媒体配置。\n"
+                "可用指令：/ban /unban /info /stats /panel")
             return
         try:
             await ctx.bot.copy_message(

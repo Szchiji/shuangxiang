@@ -206,3 +206,34 @@ def test_delete_tenant_purges_scheduled_messages(db):
     db.add_scheduled_message(6, target_type="group", target_chat_id=-1, content="x")
     db.delete_tenant(6)
     assert db.get_scheduled_messages(6) == []
+
+
+def test_search_tenant_users_and_stats(db):
+    db.upsert_tenant_user(1, 10, "alice", "Alice A")
+    db.upsert_tenant_user(1, 11, "bob", "Bob B")
+    db.ban_user(1, 11)
+    db.add_intercept_log(1, "filter", user_id=10, rule="x")
+
+    rows = db.search_tenant_users(1, "ali")
+    assert any(r["user_id"] == 10 for r in rows)
+
+    by_id = db.search_tenant_users(1, "10")
+    assert any(r["user_id"] == 10 for r in by_id)
+
+    stats = db.get_tenant_user_count(1)
+    assert stats["total"] >= 2
+    assert stats["banned"] >= 1
+    assert "new_today" in stats
+    assert "intercept_by_reason" in stats
+    assert stats["filters"] >= 0
+
+
+def test_intercept_logs_reason_filter_and_pagination(db):
+    db.add_intercept_log(1, "filter", user_id=1)
+    db.add_intercept_log(1, "antiflood", user_id=2)
+    db.add_intercept_log(1, "filter", user_id=3)
+    rows = db.get_intercept_logs(1, reason="filter", limit=10)
+    assert all(r["reason"] == "filter" for r in rows)
+    assert db.count_intercept_logs(1, reason="filter") == 2
+    page = db.get_intercept_logs(1, limit=1, offset=0)
+    assert len(page) == 1

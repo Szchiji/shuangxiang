@@ -38,6 +38,8 @@ from modules.customize_module import (
     SK_FORCE_SUB_MSG,
     SK_FORCE_SUB_ON,
     SK_WELCOME_BTNS,
+    SK_WELCOME_MEDIA_ID,
+    SK_WELCOME_MEDIA_TYPE,
     SK_WELCOME_TEXT,
     parse_buttons,
 )
@@ -59,6 +61,14 @@ _VALID_FILTER_MATCH_TYPES = frozenset({"contains", "regex"})
 # Allowed values for scheduled-message target_type / msg_type.
 _VALID_TARGET_TYPES = frozenset({"group", "channel"})
 _VALID_SCHEDULED_MSG_TYPES = frozenset({"text", "photo", "video", "document"})
+
+# Allowed media types for welcome / auto-reply covers (empty = clear / none).
+_VALID_MEDIA_TYPES = frozenset({
+    "", "photo", "video", "animation", "document", "audio", "voice",
+})
+
+# In-memory broadcast job progress (job_id -> status dict). Process-local.
+_broadcast_jobs: dict[str, dict] = {}
 
 
 # ── Telegram initData validation ─────────────────────────────────────────────
@@ -309,10 +319,13 @@ async def _get_settings(request: web.Request):
                 force_sub_channels = parsed
         except ValueError:
             pass
+    manage_group = db.get_manage_group(tid)
     return web.json_response({
         "welcome_text":        db.get_setting(tid, SK_WELCOME_TEXT, "") or "",
         "welcome_btns":        welcome_btns,
         "welcome_btns_text":   _button_rows_to_text(welcome_btns),
+        "welcome_media_type":  db.get_setting(tid, SK_WELCOME_MEDIA_TYPE, "") or "",
+        "welcome_media_id":    db.get_setting(tid, SK_WELCOME_MEDIA_ID, "") or "",
         "force_sub":           force_sub,
         "force_sub_text":      _force_sub_rows_to_text(force_sub),
         "force_sub_channels":  force_sub_channels,
@@ -324,7 +337,8 @@ async def _get_settings(request: web.Request):
         "flood_max_msgs":      db.get_int_setting(tid, SK_FLOOD_MAX_MSGS, _FLOOD_MAX_MSGS_DEFAULT),
         "flood_window":        db.get_int_setting(tid, SK_FLOOD_WINDOW, int(_FLOOD_WINDOW_DEFAULT)),
         "force_sub_on":        db.get_bool_setting(tid, SK_FORCE_SUB_ON, False),
-        "manage_group":        db.get_manage_group(tid),
+        "manage_group":        manage_group,
+        "topics_enabled":      manage_group is not None,
         "bot_username":        tenant["bot_username"] or "",
         "bot_name":            tenant["bot_name"] or "",
     })
@@ -342,6 +356,30 @@ async def _post_settings(request: web.Request):
         if welcome_text is None:
             return web.json_response({"error": "welcome_text invalid"}, status=400)
         db.set_setting(tid, SK_WELCOME_TEXT, welcome_text)
+    if SK_WELCOME_MEDIA_TYPE in body or SK_WELCOME_MEDIA_ID in body:
+        media_type = _clean_text(
+            body.get(SK_WELCOME_MEDIA_TYPE,
+                     db.get_setting(tid, SK_WELCOME_MEDIA_TYPE, "") or ""),
+            max_len=32) or ""
+        media_id = _clean_text(
+            body.get(SK_WELCOME_MEDIA_ID,
+                     db.get_setting(tid, SK_WELCOME_MEDIA_ID, "") or ""),
+            max_len=500) or ""
+        if media_type not in _VALID_MEDIA_TYPES:
+            return web.json_response(
+                {"error": f"welcome_media_type must be one of "
+                          f"{sorted(t for t in _VALID_MEDIA_TYPES if t)} or empty"},
+                status=400)
+        if media_id and not media_type:
+            return web.json_response(
+                {"error": "welcome_media_type required when media_id is set"},
+                status=400)
+        if media_type and not media_id:
+            return web.json_response(
+                {"error": "welcome_media_id required when media_type is set"},
+                status=400)
+        db.set_setting(tid, SK_WELCOME_MEDIA_TYPE, media_type)
+        db.set_setting(tid, SK_WELCOME_MEDIA_ID, media_id)
     if "welcome_btns_text" in body:
         try:
             buttons_json = _normalize_button_text(body["welcome_btns_text"], max_len=2000)
@@ -402,26 +440,57 @@ async def _get_auto_replies(request: web.Request):
     ])
 
 
+def _parse_auto_reply_body(body: dict) -> dict:
+    """Validate auto-reply payload. Raises ValueError on invalid input."""
+    keyword = str(body.get("keyword", "")).strip()
+    reply = str(body.get("reply", "")).strip()
+    if not keyword or not reply:
+        raise ValueError("keyword and reply required")
+    if len(keyword) > 200:
+        raise ValueError("keyword too long (max 200)")
+    if len(reply) > 4000:
+        raise ValueError("reply too long (max 4000)")
+    match_type = str(body.get("match_type", "contains"))
+    if match_type not in _VALID_MATCH_TYPES:
+        raise ValueError(f"match_type must be one of {sorted(_VALID_MATCH_TYPES)}")
+    if match_type == "regex":
+        try:
+            re.compile(keyword)
+        except re.error as e:
+            raise ValueError(f"invalid regex: {e}") from e
+    buttons_json = _normalize_button_text(body.get("buttons_text", ""), max_len=2000)
+    stop = 1 if body.get("stop") else 0
+    media_type = _clean_text(body.get("media_type", ""), max_len=32) or ""
+    media_id = _clean_text(body.get("media_id", ""), max_len=500) or ""
+    if media_type not in _VALID_MEDIA_TYPES:
+        raise ValueError(
+            f"media_type must be one of {sorted(t for t in _VALID_MEDIA_TYPES if t)} or empty")
+    if media_id and not media_type:
+        raise ValueError("media_type required when media_id is set")
+    if media_type and not media_id:
+        raise ValueError("media_id required when media_type is set")
+    return {
+        "keyword": keyword,
+        "reply": reply,
+        "match_type": match_type,
+        "stop": stop,
+        "buttons": buttons_json,
+        "media_type": media_type,
+        "media_id": media_id,
+    }
+
+
 async def _post_auto_reply(request: web.Request):
     tenant = _auth(request)
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    keyword = str(body.get("keyword", "")).strip()
-    reply   = str(body.get("reply", "")).strip()
-    if not keyword or not reply:
-        return web.json_response({"error": "keyword and reply required"}, status=400)
-    match_type = str(body.get("match_type", "contains"))
-    if match_type not in _VALID_MATCH_TYPES:
-        return web.json_response(
-            {"error": f"match_type must be one of {sorted(_VALID_MATCH_TYPES)}"}, status=400)
     try:
-        buttons_json = _normalize_button_text(body.get("buttons_text", ""), max_len=2000)
+        fields = _parse_auto_reply_body(body if isinstance(body, dict) else {})
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
-    rid = Database().add_auto_reply(
-        tenant["id"], keyword, reply, match_type, buttons=buttons_json)
+    rid = Database().add_auto_reply(tenant["id"], **fields)
     return web.json_response({"id": rid})
 
 
@@ -435,20 +504,11 @@ async def _put_auto_reply(request: web.Request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
-    keyword = str(body.get("keyword", "")).strip()
-    reply   = str(body.get("reply", "")).strip()
-    if not keyword or not reply:
-        return web.json_response({"error": "keyword and reply required"}, status=400)
-    match_type = str(body.get("match_type", "contains"))
-    if match_type not in _VALID_MATCH_TYPES:
-        return web.json_response(
-            {"error": f"match_type must be one of {sorted(_VALID_MATCH_TYPES)}"}, status=400)
     try:
-        buttons_json = _normalize_button_text(body.get("buttons_text", ""), max_len=2000)
+        fields = _parse_auto_reply_body(body if isinstance(body, dict) else {})
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
-    Database().update_auto_reply(
-        tenant["id"], rid, keyword, reply, match_type, buttons=buttons_json)
+    Database().update_auto_reply(tenant["id"], rid, **fields)
     return web.json_response({"ok": True})
 
 
@@ -747,26 +807,80 @@ async def _post_scheduled_messages_import(request: web.Request):
     return web.json_response({"ok": True, "imported": imported, "errors": errors})
 
 
+def _user_row_json(r) -> dict:
+    return {
+        "user_id":   r["user_id"],
+        "username":  r["username"] or "",
+        "full_name": r["full_name"] or "",
+        "is_banned": bool(r["is_banned"]) if "is_banned" in r.keys() else False,
+        "joined_at": r["joined_at"] if "joined_at" in r.keys() else None,
+        "last_seen": r["last_seen"] if "last_seen" in r.keys() else None,
+    }
+
+
 async def _get_banned(request: web.Request):
     tenant = _auth(request)
-    rows = Database().get_banned_tenant_users(tenant["id"])
-    return web.json_response([
-        {
-            "user_id":   r["user_id"],
-            "username":  r["username"],
-            "full_name": r["full_name"],
-        }
-        for r in rows
-    ])
+    rows = Database().get_banned_tenant_users(tenant["id"], limit=200)
+    return web.json_response([_user_row_json(r) for r in rows])
+
+
+async def _get_users(request: web.Request):
+    """Search / list recent tenant users (for ban helpers & ops)."""
+    tenant = _auth(request)
+    q = request.rel_url.query.get("q", "")
+    try:
+        limit = int(request.rel_url.query.get("limit", "50"))
+    except (TypeError, ValueError):
+        limit = 50
+    try:
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        offset = 0
+    only_active = request.rel_url.query.get("only_active", "").lower() in (
+        "1", "true", "yes")
+    rows = Database().search_tenant_users(
+        tenant["id"], q, limit=limit, offset=offset, only_active=only_active)
+    return web.json_response([_user_row_json(r) for r in rows])
+
+
+async def _post_ban(request: web.Request):
+    tenant = _auth(request)
+    try:
+        uid = int(request.match_info["uid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid uid"}, status=400)
+    if uid <= 0:
+        return web.json_response({"error": "invalid uid"}, status=400)
+    Database().ban_user(tenant["id"], uid)
+    return web.json_response({"ok": True, "user_id": uid, "is_banned": True})
 
 
 async def _get_intercept_logs(request: web.Request):
     tenant = _auth(request)
-    rows = Database().get_intercept_logs(tenant["id"], limit=200)
-    return web.json_response([dict(r) for r in rows])
+    reason = (request.rel_url.query.get("reason") or "").strip() or None
+    try:
+        limit = int(request.rel_url.query.get("limit", "100"))
+    except (TypeError, ValueError):
+        limit = 100
+    try:
+        offset = int(request.rel_url.query.get("offset", "0"))
+    except (TypeError, ValueError):
+        offset = 0
+    db = Database()
+    rows = db.get_intercept_logs(
+        tenant["id"], limit=limit, offset=offset, reason=reason)
+    total = db.count_intercept_logs(tenant["id"], reason=reason)
+    return web.json_response({
+        "items": [dict(r) for r in rows],
+        "total": total,
+        "limit": max(1, min(limit, 500)),
+        "offset": max(0, offset),
+        "reason": reason,
+    })
 
 
 async def _do_broadcast(
+    job_id: str,
     user_ids: list, token: str, text: str, *,
     photo: str | None = None,
     reply_markup: dict | None = None,
@@ -777,7 +891,13 @@ async def _do_broadcast(
     When *photo* is provided a photo message is sent (caption = text).
     *reply_markup* adds inline keyboard buttons.
     *silent* disables sound/vibration notifications.
+    Progress is written into ``_broadcast_jobs[job_id]``.
     """
+    job = _broadcast_jobs.get(job_id)
+    if job is not None:
+        job["status"] = "running"
+        job["started_at"] = time.time()
+
     if photo:
         api_method = "sendPhoto"
         base_payload: dict = {"photo": photo, "parse_mode": "HTML"}
@@ -794,9 +914,15 @@ async def _do_broadcast(
 
     api_url = f"https://api.telegram.org/bot{token}/{api_method}"
     sem = asyncio.Semaphore(20)
+    success = 0
+    failed = 0
+    done = 0
+    lock = asyncio.Lock()
 
     async def _send(uid):
+        nonlocal success, failed, done
         async with sem:
+            ok = False
             try:
                 async with _aiohttp.ClientSession() as session:
                     async with session.post(
@@ -805,11 +931,30 @@ async def _do_broadcast(
                         timeout=_aiohttp.ClientTimeout(total=10),
                     ) as resp:
                         data = await resp.json()
-                        return bool(data.get("ok"))
+                        ok = bool(data.get("ok"))
             except Exception:
-                return False
+                ok = False
+            async with lock:
+                done += 1
+                if ok:
+                    success += 1
+                else:
+                    failed += 1
+                if job is not None:
+                    job["done"] = done
+                    job["success"] = success
+                    job["failed"] = failed
+            return ok
 
-    await asyncio.gather(*(_send(uid) for uid in user_ids))
+    try:
+        await asyncio.gather(*(_send(uid) for uid in user_ids))
+    finally:
+        if job is not None:
+            job["status"] = "done"
+            job["done"] = done
+            job["success"] = success
+            job["failed"] = failed
+            job["finished_at"] = time.time()
 
 
 async def _post_broadcast(request: web.Request):
@@ -821,15 +966,12 @@ async def _post_broadcast(request: web.Request):
     text = _clean_text(body.get("text", ""), max_len=4096)
     if text is None:
         return web.json_response({"error": "text too long (max 4096 chars)"}, status=400)
+    # photo accepts a public http(s) URL or a Telegram file_id.
     photo = _clean_text(body.get("photo", ""), max_len=500)
     if photo is None:
-        return web.json_response({"error": "photo url too long"}, status=400)
-    if photo and not photo.startswith(("http://", "https://")):
-        return web.json_response({"error": "photo must be a http/https URL"}, status=400)
+        return web.json_response({"error": "photo url/file_id too long"}, status=400)
     if not text and not photo:
         return web.json_response({"error": "text or photo required"}, status=400)
-    # Caption text is required for sendPhoto with HTML parse_mode when buttons are used;
-    # allow empty caption but photo is mandatory.
     silent = bool(body.get("silent", False))
     # Parse optional inline keyboard
     reply_markup: dict | None = None
@@ -850,13 +992,60 @@ async def _post_broadcast(request: web.Request):
                 return web.json_response({"error": "buttons invalid"}, status=400)
             reply_markup = {"inline_keyboard": inline_keyboard}
     user_ids = Database().get_tenant_user_ids(tenant["id"], only_active=True)
+    import uuid
+    job_id = uuid.uuid4().hex
+    _broadcast_jobs[job_id] = {
+        "id": job_id,
+        "tenant_id": tenant["id"],
+        "status": "queued",
+        "total": len(user_ids),
+        "done": 0,
+        "success": 0,
+        "failed": 0,
+        "created_at": time.time(),
+    }
+    # Bound memory: drop oldest finished jobs beyond a soft limit.
+    if len(_broadcast_jobs) > 100:
+        finished = sorted(
+            (j for j in _broadcast_jobs.values() if j.get("status") == "done"),
+            key=lambda j: j.get("finished_at") or j.get("created_at") or 0,
+        )
+        for old in finished[: max(0, len(_broadcast_jobs) - 80)]:
+            _broadcast_jobs.pop(old["id"], None)
     asyncio.create_task(_do_broadcast(
-        user_ids, tenant["token"], text,
+        job_id, user_ids, tenant["token"], text,
         photo=photo or None,
         reply_markup=reply_markup,
         silent=silent,
     ))
-    return web.json_response({"ok": True, "queued": len(user_ids)}, status=202)
+    return web.json_response({
+        "ok": True,
+        "queued": len(user_ids),
+        "job_id": job_id,
+    }, status=202)
+
+
+async def _get_broadcast_job(request: web.Request):
+    tenant = _auth(request)
+    job_id = request.match_info.get("job_id", "")
+    job = _broadcast_jobs.get(job_id)
+    if job is None or job.get("tenant_id") != tenant["id"]:
+        return web.json_response({"error": "job not found"}, status=404)
+    return web.json_response({
+        "id": job["id"],
+        "status": job.get("status", "unknown"),
+        "total": job.get("total", 0),
+        "done": job.get("done", 0),
+        "success": job.get("success", 0),
+        "failed": job.get("failed", 0),
+    })
+
+
+async def _get_broadcast_estimate(request: web.Request):
+    """Return how many active users a broadcast would reach."""
+    tenant = _auth(request)
+    user_ids = Database().get_tenant_user_ids(tenant["id"], only_active=True)
+    return web.json_response({"active_users": len(user_ids)})
 
 
 async def _post_unban(request: web.Request):
@@ -867,6 +1056,92 @@ async def _post_unban(request: web.Request):
         return web.json_response({"error": "invalid uid"}, status=400)
     Database().unban_user(tenant["id"], uid)
     return web.json_response({"ok": True})
+
+
+async def _get_filters_export(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_filters(tenant["id"])
+    items = [{"keyword": r["keyword"], "match_type": r["match_type"] or "contains"}
+             for r in rows]
+    return web.json_response(
+        {"items": items},
+        headers={"Content-Disposition": 'attachment; filename="filters.json"'})
+
+
+async def _post_filters_import(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    items = body.get("items", body if isinstance(body, list) else None)
+    if not isinstance(items, list):
+        return web.json_response({"error": "items must be a list"}, status=400)
+    db = Database()
+    imported = 0
+    errors = []
+    for idx, item in enumerate(items):
+        if isinstance(item, str):
+            item = {"keyword": item, "match_type": "contains"}
+        if not isinstance(item, dict):
+            errors.append(f"#{idx}: invalid item")
+            continue
+        try:
+            keyword, match_type = _parse_filter_keyword(item)
+        except ValueError as e:
+            errors.append(f"#{idx}: {e}")
+            continue
+        try:
+            db.add_filter(tenant["id"], keyword, match_type)
+            imported += 1
+        except Exception:
+            errors.append(f"#{idx}: failed to save")
+    return web.json_response({"ok": True, "imported": imported, "errors": errors})
+
+
+async def _get_auto_replies_export(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_auto_replies(tenant["id"])
+    items = []
+    for r in rows:
+        items.append({
+            "keyword": r["keyword"],
+            "reply": r["reply"],
+            "match_type": r["match_type"] or "contains",
+            "stop": bool(r["stop"]),
+            "buttons_text": _button_rows_to_text(r["buttons"] or ""),
+            "media_type": r["media_type"] or "",
+            "media_id": r["media_id"] or "",
+        })
+    return web.json_response(
+        {"items": items},
+        headers={"Content-Disposition": 'attachment; filename="auto_replies.json"'})
+
+
+async def _post_auto_replies_import(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    items = body.get("items", body if isinstance(body, list) else None)
+    if not isinstance(items, list):
+        return web.json_response({"error": "items must be a list"}, status=400)
+    db = Database()
+    imported = 0
+    errors = []
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            errors.append(f"#{idx}: invalid item")
+            continue
+        try:
+            fields = _parse_auto_reply_body(item)
+        except ValueError as e:
+            errors.append(f"#{idx}: {e}")
+            continue
+        db.add_auto_reply(tenant["id"], **fields)
+        imported += 1
+    return web.json_response({"ok": True, "imported": imported, "errors": errors})
 
 
 # ── Static files ──────────────────────────────────────────────────────────────
@@ -909,6 +1184,10 @@ def create_app() -> web.Application:
     app.router.add_delete(
         "/api/{tenant_id}/auto_replies/{rid}", _delete_auto_reply)
     app.router.add_get(
+        "/api/{tenant_id}/auto_replies/export", _get_auto_replies_export)
+    app.router.add_post(
+        "/api/{tenant_id}/auto_replies/import", _post_auto_replies_import)
+    app.router.add_get(
         "/api/{tenant_id}/filters",            _get_filters)
     app.router.add_post(
         "/api/{tenant_id}/filters",            _post_filter)
@@ -917,11 +1196,23 @@ def create_app() -> web.Application:
     app.router.add_delete(
         "/api/{tenant_id}/filters/{fid}",      _delete_filter)
     app.router.add_get(
+        "/api/{tenant_id}/filters/export",     _get_filters_export)
+    app.router.add_post(
+        "/api/{tenant_id}/filters/import",     _post_filters_import)
+    app.router.add_get(
         "/api/{tenant_id}/banned",             _get_banned)
+    app.router.add_get(
+        "/api/{tenant_id}/users",              _get_users)
     app.router.add_get(
         "/api/{tenant_id}/intercept_logs",     _get_intercept_logs)
     app.router.add_post(
+        "/api/{tenant_id}/ban/{uid}",          _post_ban)
+    app.router.add_post(
         "/api/{tenant_id}/unban/{uid}",        _post_unban)
+    app.router.add_get(
+        "/api/{tenant_id}/broadcast/estimate", _get_broadcast_estimate)
+    app.router.add_get(
+        "/api/{tenant_id}/broadcast/{job_id}", _get_broadcast_job)
     app.router.add_post(
         "/api/{tenant_id}/broadcast",          _post_broadcast)
     app.router.add_get(

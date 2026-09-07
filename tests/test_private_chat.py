@@ -308,3 +308,42 @@ async def test_cmd_ban_also_bans_via_bot(db):
     assert db.is_banned(mod.tenant_id, USER.id)
     assert db.is_bot_banned(mod.tenant_id, VIA_BOT.id)
     assert any("已同时封禁群发器机器人" in r for r in reply_msg.replies)
+
+
+@pytest.mark.asyncio
+async def test_admin_dm_media_returns_file_id(db):
+    """Admin sending media (not reply) gets file_id helper text."""
+    from modules.private_chat_module import PrivateChatModule
+
+    captured = {}
+
+    class FakePhoto:
+        file_id = "PHOTO_FILE_ID_XYZ"
+
+    class FakeMsg:
+        reply_to_message = None
+        text = None
+        caption = None
+        photo = [FakePhoto()]
+        video = None
+        animation = None
+        document = None
+        audio = None
+        voice = None
+        chat_id = 99
+        message_id = 1
+
+        async def reply_text(self, text, **kw):
+            captured["text"] = text
+
+    mod = PrivateChatModule.__new__(PrivateChatModule)
+    mod.db = db
+    mod.tenant_id = 1
+    mod.admin_id = 99
+    mod._manage_group = lambda: None
+    mod._resolve_target = lambda update: None
+
+    update = types.SimpleNamespace(message=FakeMsg())
+    await mod._admin_reply_dm(update, None)
+    assert "file_id" in captured["text"]
+    assert "PHOTO_FILE_ID_XYZ" in captured["text"]

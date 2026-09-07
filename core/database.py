@@ -607,14 +607,38 @@ class Database:
                            ORDER BY id DESC LIMIT ?)""",
                     (tenant_id, tenant_id, self._INTERCEPT_LOG_MAX_PER_TENANT))
 
-    def get_intercept_logs(self, tenant_id, limit=50):
+    def get_intercept_logs(self, tenant_id, limit=50, offset=0, reason=None):
+        """返回拦截日志（新→旧）。可选按 reason 过滤，支持 limit/offset 分页。"""
+        try:
+            limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset = 0
+        sql = "SELECT * FROM intercept_logs WHERE tenant_id=?"
+        params: list = [tenant_id]
+        if reason:
+            sql += " AND reason=?"
+            params.append(str(reason))
+        sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
         with self._conn() as c:
-            return c.execute(
-                "SELECT * FROM intercept_logs WHERE tenant_id=? "
-                "ORDER BY id DESC LIMIT ?",
-                (tenant_id, limit)).fetchall()
+            return c.execute(sql, params).fetchall()
+
+    def count_intercept_logs(self, tenant_id, reason=None) -> int:
+        sql = "SELECT COUNT(*) AS n FROM intercept_logs WHERE tenant_id=?"
+        params: list = [tenant_id]
+        if reason:
+            sql += " AND reason=?"
+            params.append(str(reason))
+        with self._conn() as c:
+            row = c.execute(sql, params).fetchone()
+            return int(row["n"] if row else 0)
 
     def get_tenant_user_count(self, tenant_id):
+        """返回租户用户与运营相关统计（Web 统计页 /stats 使用）。"""
         with self._conn() as c:
             row = c.execute(
                 """SELECT
@@ -623,17 +647,59 @@ class Database:
                        SUM(CASE WHEN last_seen >= datetime('now','-7 days')
                                 THEN 1 ELSE 0 END)                          AS active_7d,
                        SUM(CASE WHEN joined_at >= datetime('now','-7 days')
-                                THEN 1 ELSE 0 END)                          AS new_7d
+                                THEN 1 ELSE 0 END)                          AS new_7d,
+                       SUM(CASE WHEN last_seen >= datetime('now','-1 day')
+                                THEN 1 ELSE 0 END)                          AS active_today,
+                       SUM(CASE WHEN joined_at >= datetime('now','-1 day')
+                                THEN 1 ELSE 0 END)                          AS new_today
                    FROM tenant_users WHERE tenant_id=?""",
                 (tenant_id,)).fetchone()
             total  = row["total"]  or 0
             banned = row["banned"] or 0
+            intercept_today = c.execute(
+                """SELECT COUNT(*) AS n FROM intercept_logs
+                   WHERE tenant_id=? AND created_at >= datetime('now','-1 day')""",
+                (tenant_id,)).fetchone()["n"] or 0
+            intercept_7d = c.execute(
+                """SELECT COUNT(*) AS n FROM intercept_logs
+                   WHERE tenant_id=? AND created_at >= datetime('now','-7 days')""",
+                (tenant_id,)).fetchone()["n"] or 0
+            reason_rows = c.execute(
+                """SELECT reason, COUNT(*) AS n FROM intercept_logs
+                   WHERE tenant_id=? AND created_at >= datetime('now','-7 days')
+                   GROUP BY reason ORDER BY n DESC""",
+                (tenant_id,)).fetchall()
+            messages_7d = c.execute(
+                """SELECT COUNT(*) AS n FROM message_map
+                   WHERE tenant_id=? AND created_at >= datetime('now','-7 days')""",
+                (tenant_id,)).fetchone()["n"] or 0
+            messages_today = c.execute(
+                """SELECT COUNT(*) AS n FROM message_map
+                   WHERE tenant_id=? AND created_at >= datetime('now','-1 day')""",
+                (tenant_id,)).fetchone()["n"] or 0
+            auto_replies = c.execute(
+                "SELECT COUNT(*) AS n FROM auto_replies WHERE tenant_id=?",
+                (tenant_id,)).fetchone()["n"] or 0
+            filters_n = c.execute(
+                "SELECT COUNT(*) AS n FROM filters WHERE tenant_id=?",
+                (tenant_id,)).fetchone()["n"] or 0
             return {
-                "total":     total,
-                "active":    total - banned,
-                "banned":    banned,
-                "active_7d": row["active_7d"] or 0,
-                "new_7d":    row["new_7d"]    or 0,
+                "total":           total,
+                "active":          total - banned,
+                "banned":          banned,
+                "active_7d":       row["active_7d"] or 0,
+                "new_7d":          row["new_7d"]    or 0,
+                "active_today":    row["active_today"] or 0,
+                "new_today":       row["new_today"] or 0,
+                "intercept_today": intercept_today,
+                "intercept_7d":    intercept_7d,
+                "intercept_by_reason": {
+                    (r["reason"] or "unknown"): r["n"] for r in reason_rows
+                },
+                "messages_today":  messages_today,
+                "messages_7d":     messages_7d,
+                "auto_replies":    auto_replies,
+                "filters":         filters_n,
             }
 
     def get_banned_tenant_users(self, tenant_id, limit=20):
@@ -644,6 +710,38 @@ class Database:
                 "WHERE tenant_id=? AND is_banned=1 "
                 "ORDER BY last_seen DESC LIMIT ?",
                 (tenant_id, limit)).fetchall()
+
+    def search_tenant_users(self, tenant_id, query="", *, limit=50, offset=0,
+                            only_active=False):
+        """按 user_id / username / full_name 搜索租户用户（最近活跃在前）。"""
+        try:
+            limit = max(1, min(int(limit), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            offset = max(0, int(offset))
+        except (TypeError, ValueError):
+            offset = 0
+        q = (query or "").strip()
+        sql = "SELECT * FROM tenant_users WHERE tenant_id=?"
+        params: list = [tenant_id]
+        if only_active:
+            sql += " AND is_banned=0"
+        if q:
+            like = f"%{q}%"
+            if q.lstrip("-").isdigit():
+                sql += (" AND (CAST(user_id AS TEXT) LIKE ?"
+                        " OR IFNULL(username,'') LIKE ?"
+                        " OR IFNULL(full_name,'') LIKE ?)")
+                params.extend([like, like, like])
+            else:
+                sql += (" AND (IFNULL(username,'') LIKE ?"
+                        " OR IFNULL(full_name,'') LIKE ?)")
+                params.extend([like, like])
+        sql += " ORDER BY last_seen DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        with self._conn() as c:
+            return c.execute(sql, params).fetchall()
 
     def get_tenant_user_ids(self, tenant_id, only_active=True):
         """返回该租户下的用户 ID 列表，用于群发广播。默认排除已封禁用户。"""

@@ -557,16 +557,29 @@ async def test_get_intercept_logs_ok(aiohttp_client, app, db, tenant_id, init_da
     db.add_intercept_log(
         tenant_id, "filter", user_id=55, rule="违禁词",
         message_summary="包含违禁词的消息")
+    db.add_intercept_log(tenant_id, "antiflood", user_id=56, message_summary="刷屏")
     client = await aiohttp_client(app)
     resp = await client.get(
         f"/api/{tenant_id}/intercept_logs",
         headers={"X-Init-Data": init_data_header},
     )
     assert resp.status == 200
-    logs = await resp.json()
-    assert len(logs) == 1
-    assert logs[0]["reason"] == "filter"
-    assert logs[0]["rule"] == "违禁词"
+    payload = await resp.json()
+    assert "items" in payload
+    logs = payload["items"]
+    assert payload["total"] == 2
+    assert len(logs) == 2
+    assert logs[0]["reason"] in ("filter", "antiflood")
+
+    filtered = await client.get(
+        f"/api/{tenant_id}/intercept_logs?reason=filter",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert filtered.status == 200
+    fdata = await filtered.json()
+    assert fdata["total"] == 1
+    assert fdata["items"][0]["reason"] == "filter"
+    assert fdata["items"][0]["rule"] == "违禁词"
 
 
 @pytest.mark.asyncio
@@ -814,3 +827,185 @@ async def test_admin_start_without_webapp_shows_panel(db):
     # None of the buttons should be a WebApp button
     all_buttons = [btn for row in markup.inline_keyboard for btn in row]
     assert all(btn.web_app is None for btn in all_buttons)
+
+
+# ── P0 alignment: welcome media / AR media+stop / ban / users / filters IO ─────
+
+
+@pytest.mark.asyncio
+async def test_settings_welcome_media(aiohttp_client, app, db, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_media_type": "photo", "welcome_media_id": "AgAC_test_file"},
+    )
+    assert resp.status == 200
+    assert db.get_setting(tenant_id, "welcome_media_type") == "photo"
+    assert db.get_setting(tenant_id, "welcome_media_id") == "AgAC_test_file"
+
+    got = await client.get(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+    )
+    data = await got.json()
+    assert data["welcome_media_type"] == "photo"
+    assert data["welcome_media_id"] == "AgAC_test_file"
+    assert data["topics_enabled"] is False
+
+    bad = await client.post(
+        f"/api/{tenant_id}/settings",
+        headers={"X-Init-Data": init_data_header},
+        json={"welcome_media_type": "photo", "welcome_media_id": ""},
+    )
+    assert bad.status == 400
+
+
+@pytest.mark.asyncio
+async def test_auto_replies_media_and_stop(aiohttp_client, app, db, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/auto_replies",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "keyword": "价格",
+            "reply": "请看官网",
+            "match_type": "contains",
+            "stop": True,
+            "media_type": "photo",
+            "media_id": "FILE_ABC",
+        },
+    )
+    assert resp.status == 200
+    rid = (await resp.json())["id"]
+    row = next(r for r in db.get_auto_replies(tenant_id) if r["id"] == rid)
+    assert row["stop"] == 1
+    assert row["media_type"] == "photo"
+    assert row["media_id"] == "FILE_ABC"
+
+    resp = await client.put(
+        f"/api/{tenant_id}/auto_replies/{rid}",
+        headers={"X-Init-Data": init_data_header},
+        json={
+            "keyword": "价格",
+            "reply": "请看官网",
+            "stop": False,
+            "media_type": "",
+            "media_id": "",
+        },
+    )
+    assert resp.status == 200
+    row = next(r for r in db.get_auto_replies(tenant_id) if r["id"] == rid)
+    assert row["stop"] == 0
+    assert (row["media_type"] or "") == ""
+
+
+@pytest.mark.asyncio
+async def test_ban_and_users_search(aiohttp_client, app, db, tenant_id, init_data_header):
+    db.upsert_tenant_user(tenant_id, 101, "alice", "Alice")
+    db.upsert_tenant_user(tenant_id, 102, "bob", "Bob")
+    client = await aiohttp_client(app)
+
+    resp = await client.post(
+        f"/api/{tenant_id}/ban/101",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    assert db.is_banned(tenant_id, 101)
+
+    users = await client.get(
+        f"/api/{tenant_id}/users?q=ali",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert users.status == 200
+    rows = await users.json()
+    assert any(u["user_id"] == 101 and u["is_banned"] for u in rows)
+
+
+@pytest.mark.asyncio
+async def test_filters_export_import(aiohttp_client, app, db, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "导出词", "match_type": "contains"},
+    )
+    exp = await client.get(
+        f"/api/{tenant_id}/filters/export",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert exp.status == 200
+    payload = await exp.json()
+    assert any(i["keyword"] == "导出词" for i in payload["items"])
+
+    imp = await client.post(
+        f"/api/{tenant_id}/filters/import",
+        headers={"X-Init-Data": init_data_header},
+        json={"items": [{"keyword": "导入词", "match_type": "contains"}, "纯文本词"]},
+    )
+    assert imp.status == 200
+    data = await imp.json()
+    assert data["imported"] >= 2
+    kws = {r["keyword"] for r in db.get_filters(tenant_id)}
+    assert "导入词" in kws
+    assert "纯文本词" in kws
+
+
+@pytest.mark.asyncio
+async def test_broadcast_returns_job_id(aiohttp_client, app, db, tenant_id, init_data_header,
+                                         monkeypatch):
+    db.upsert_tenant_user(tenant_id, 201, "u201", "U201")
+    client = await aiohttp_client(app)
+
+    async def _noop_broadcast(job_id, user_ids, token, text, **kwargs):
+        from core import webapp as wa
+        job = wa._broadcast_jobs.get(job_id)
+        if job:
+            job["status"] = "done"
+            job["done"] = len(user_ids)
+            job["success"] = len(user_ids)
+            job["failed"] = 0
+
+    monkeypatch.setattr("core.webapp._do_broadcast", _noop_broadcast)
+
+    resp = await client.post(
+        f"/api/{tenant_id}/broadcast",
+        headers={"X-Init-Data": init_data_header},
+        json={"text": "hello all"},
+    )
+    assert resp.status == 202
+    data = await resp.json()
+    assert data["ok"] is True
+    assert data["queued"] >= 1
+    assert data["job_id"]
+
+    job = await client.get(
+        f"/api/{tenant_id}/broadcast/{data['job_id']}",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert job.status == 200
+    j = await job.json()
+    assert j["total"] >= 1
+
+    est = await client.get(
+        f"/api/{tenant_id}/broadcast/estimate",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert est.status == 200
+    assert (await est.json())["active_users"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_stats_extended_fields(aiohttp_client, app, db, tenant_id, init_data_header):
+    db.upsert_tenant_user(tenant_id, 301, "s1", "S1")
+    db.add_intercept_log(tenant_id, "filter", user_id=301)
+    client = await aiohttp_client(app)
+    resp = await client.get(
+        f"/api/{tenant_id}/stats",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    for key in ("total", "new_today", "intercept_today", "auto_replies", "filters",
+                "messages_today", "intercept_by_reason"):
+        assert key in data
