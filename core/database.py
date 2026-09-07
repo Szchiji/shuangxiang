@@ -2,6 +2,7 @@ import json
 import logging
 import sqlite3
 import threading
+from contextlib import contextmanager
 
 logger = logging.getLogger("shuangxiang.db")
 
@@ -46,13 +47,31 @@ class Database:
                 cls._instance._seed_default_filters_for_all_tenants()
         return cls._instance
 
-    def _conn(self) -> sqlite3.Connection:
+    @contextmanager
+    def _conn(self):
+        """打开短生命周期连接：提交/回滚后关闭，避免连接泄漏导致写入失败。
+
+        用法：``with self._conn() as c: ...``
+        旧代码曾直接 ``return sqlite3.connect(...)`` 并依赖连接自身的 context
+        manager 提交事务，但从不 ``close()``，在 Web 后台 + 多租户高并发下
+        会逐渐耗尽文件句柄/锁，表现为「后台添加过滤词失败」等偶发写入错误。
+        """
         # timeout 配合 busy_timeout，缓解多租户高并发下的 "database is locked"
         conn = sqlite3.connect(self._db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            conn.close()
 
     def _init_pragmas(self) -> None:
         """开启 WAL 等持久化 PRAGMA（WAL 为数据库级设置，仅需设置一次）。"""

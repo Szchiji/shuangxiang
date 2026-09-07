@@ -384,6 +384,7 @@ async def test_filters_crud(aiohttp_client, app, db, tenant_id, init_data_header
     assert resp.status == 200
     data = await resp.json()
     fid = data["id"]
+    assert data.get("ok") is True
     assert data["keyword"] == "自定义违禁"
     assert data["match_type"] == "contains"
 
@@ -417,6 +418,7 @@ async def test_filters_add_regex_and_reject_invalid(aiohttp_client, app, db, ten
     assert resp.status == 200
     data = await resp.json()
     assert data["match_type"] == "regex"
+    assert data.get("ok") is True
 
     bad = await client.post(
         f"/api/{tenant_id}/filters",
@@ -438,6 +440,13 @@ async def test_filters_add_regex_and_reject_invalid(aiohttp_client, app, db, ten
         json={"keyword": "x", "match_type": "exact"},
     )
     assert bad_type.status == 400
+
+    not_obj = await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json=["not", "an", "object"],
+    )
+    assert not_obj.status == 400
 
 
 @pytest.mark.asyncio

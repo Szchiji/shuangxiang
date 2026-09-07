@@ -35,8 +35,8 @@ def test_rebuild_legacy_tenants_admin_id(tmp_path):
         tid = db.add_tenant("222:NEW", 7, bot_id=222,
                             bot_username="newbot", bot_name="New")
         assert db.get_tenant(tid)["owner_user_id"] == 7
-        cols = {r["name"] for r in
-                db._conn().execute("PRAGMA table_info(tenants)").fetchall()}
+        with db._conn() as c:
+            cols = {r["name"] for r in c.execute("PRAGMA table_info(tenants)").fetchall()}
         assert "admin_id" not in cols
     finally:
         Database._instance = None

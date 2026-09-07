@@ -496,12 +496,20 @@ async def _post_filter(request: web.Request):
         body = await request.json()
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "invalid JSON object"}, status=400)
     try:
         keyword, match_type = _parse_filter_keyword(body)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
-    fid = Database().add_filter(tenant["id"], keyword, match_type)
-    return web.json_response({"id": fid, "keyword": keyword, "match_type": match_type})
+    try:
+        fid = Database().add_filter(tenant["id"], keyword, match_type)
+    except Exception:
+        logger.exception("添加过滤词失败 tenant=%s", tenant["id"])
+        return web.json_response({"error": "failed to save filter"}, status=500)
+    if not fid:
+        return web.json_response({"error": "failed to save filter"}, status=500)
+    return web.json_response({"ok": True, "id": fid, "keyword": keyword, "match_type": match_type})
 
 
 async def _delete_filter(request: web.Request):
