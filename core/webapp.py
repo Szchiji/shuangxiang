@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from urllib.parse import parse_qsl
 
@@ -51,6 +52,9 @@ _INIT_DATA_MAX_AGE = 3600  # 1 hour
 
 # Allowed values for auto-reply match_type.
 _VALID_MATCH_TYPES = frozenset({"contains", "exact", "startswith", "regex"})
+
+# Allowed values for filter-word match_type (subset of auto-reply types).
+_VALID_FILTER_MATCH_TYPES = frozenset({"contains", "regex"})
 
 # Allowed values for scheduled-message target_type / msg_type.
 _VALID_TARGET_TYPES = frozenset({"group", "channel"})
@@ -458,6 +462,58 @@ async def _delete_auto_reply(request: web.Request):
     return web.json_response({"ok": True})
 
 
+# ── 过滤词 ────────────────────────────────────────────────────────────────────
+
+def _parse_filter_keyword(body: dict) -> tuple[str, str]:
+    """Validate filter keyword payload. Returns (keyword, match_type).
+
+    Raises ValueError with a user-facing message on invalid input.
+    """
+    keyword = _clean_text(body.get("keyword", ""), max_len=200, allow_empty=False)
+    if keyword is None:
+        raise ValueError("keyword required (max 200 chars)")
+    match_type = str(body.get("match_type", "contains") or "contains").strip().lower()
+    if match_type not in _VALID_FILTER_MATCH_TYPES:
+        raise ValueError(
+            f"match_type must be one of {sorted(_VALID_FILTER_MATCH_TYPES)}")
+    if match_type == "regex":
+        try:
+            re.compile(keyword)
+        except re.error as e:
+            raise ValueError(f"invalid regex: {e}") from e
+    return keyword, match_type
+
+
+async def _get_filters(request: web.Request):
+    tenant = _auth(request)
+    rows = Database().get_filters(tenant["id"])
+    return web.json_response([dict(r) for r in rows])
+
+
+async def _post_filter(request: web.Request):
+    tenant = _auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    try:
+        keyword, match_type = _parse_filter_keyword(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    fid = Database().add_filter(tenant["id"], keyword, match_type)
+    return web.json_response({"id": fid, "keyword": keyword, "match_type": match_type})
+
+
+async def _delete_filter(request: web.Request):
+    tenant = _auth(request)
+    try:
+        fid = int(request.match_info["fid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    Database().delete_filter(tenant["id"], fid)
+    return web.json_response({"ok": True})
+
+
 # ── 定时消息 ──────────────────────────────────────────────────────────────────
 
 def _scheduled_message_to_json(r) -> dict:
@@ -812,6 +868,12 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/auto_replies/{rid}", _put_auto_reply)
     app.router.add_delete(
         "/api/{tenant_id}/auto_replies/{rid}", _delete_auto_reply)
+    app.router.add_get(
+        "/api/{tenant_id}/filters",            _get_filters)
+    app.router.add_post(
+        "/api/{tenant_id}/filters",            _post_filter)
+    app.router.add_delete(
+        "/api/{tenant_id}/filters/{fid}",      _delete_filter)
     app.router.add_get(
         "/api/{tenant_id}/banned",             _get_banned)
     app.router.add_get(
