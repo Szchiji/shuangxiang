@@ -10,8 +10,21 @@ const initData = tg?.initData || '';
 const BASE    = `/api/${tenantId}`;
 const HEADERS = { 'Content-Type': 'application/json', 'X-Init-Data': initData };
 
-function show(id) { document.getElementById(id).style.display = ''; }
-function hide(id) { document.getElementById(id).style.display = 'none'; }
+function show(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  // removeProperty restores stylesheet display (block/flex/etc.)
+  el.style.removeProperty('display');
+  // Fallback if element was only hidden via inline style and has no CSS display
+  if (getComputedStyle(el).display === 'none') {
+    el.style.display = (el.tagName === 'BUTTON' || el.tagName === 'SPAN') ? 'inline-flex' : 'block';
+  }
+}
+function hide(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.display = 'none';
+}
 
 async function api(method, path, body) {
   const opts = { method, headers: HEADERS };
@@ -106,8 +119,52 @@ function initTheme() {
 function initSidebar() {
   const sidebar = document.getElementById('sidebar');
   const toggleBtn = document.getElementById('sidebar-toggle');
-  toggleBtn.addEventListener('click', () => {
-    sidebar.classList.toggle('collapsed');
+  const hideBtn = document.getElementById('sidebar-hide');
+  const reopenBtn = document.getElementById('sidebar-reopen');
+  const KEY = 'bh_sidebar_mode'; // '', 'collapsed', 'hidden'
+
+  function applyMode(mode) {
+    sidebar.classList.remove('collapsed', 'hidden');
+    if (mode === 'collapsed') sidebar.classList.add('collapsed');
+    if (mode === 'hidden') sidebar.classList.add('hidden');
+    if (reopenBtn) {
+      if (mode === 'hidden') show('sidebar-reopen');
+      else hide('sidebar-reopen');
+    }
+    try { localStorage.setItem(KEY, mode || ''); } catch (_) {}
+  }
+
+  const saved = (() => { try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; } })();
+  applyMode(saved === 'collapsed' || saved === 'hidden' ? saved : '');
+
+  toggleBtn?.addEventListener('click', () => {
+    if (sidebar.classList.contains('hidden')) {
+      applyMode('');
+      return;
+    }
+    applyMode(sidebar.classList.contains('collapsed') ? '' : 'collapsed');
+  });
+  hideBtn?.addEventListener('click', () => applyMode('hidden'));
+  reopenBtn?.addEventListener('click', () => applyMode(''));
+
+  // Collapsible nav groups
+  const gkey = 'bh_nav_groups';
+  let collapsedGroups = {};
+  try { collapsedGroups = JSON.parse(localStorage.getItem(gkey) || '{}') || {}; } catch (_) { collapsedGroups = {}; }
+
+  document.querySelectorAll('.nav-group').forEach(group => {
+    const name = group.dataset.group;
+    const toggle = group.querySelector('.nav-group-toggle');
+    if (collapsedGroups[name]) group.classList.add('collapsed');
+    toggle?.addEventListener('click', () => {
+      group.classList.toggle('collapsed');
+      collapsedGroups[name] = group.classList.contains('collapsed');
+      try { localStorage.setItem(gkey, JSON.stringify(collapsedGroups)); } catch (_) {}
+      toggle.setAttribute('aria-expanded', group.classList.contains('collapsed') ? 'false' : 'true');
+    });
+    if (toggle) {
+      toggle.setAttribute('aria-expanded', group.classList.contains('collapsed') ? 'false' : 'true');
+    }
   });
 }
 
@@ -330,7 +387,9 @@ async function loadSettings() {
     topicsEl.textContent = '未启用（当前为 DM 私聊模式）';
   }
   if (data.bot_name) {
-    document.getElementById('bot-name').textContent = '🤖 ' + data.bot_name;
+    const nameEl = document.getElementById('bot-name');
+    nameEl.textContent = '🤖 ' + data.bot_name;
+    nameEl.title = data.bot_name;
   }
   hide('loading');
   show('main');
@@ -405,12 +464,16 @@ let _arEditId = null;
 let _autoRepliesCache = [];
 
 function showArListView() {
+  show('ar-hero');
+  show('ar-search-card');
   show('ar-list-view');
   hide('ar-editor-view');
 }
 
 function showArEditorView() {
   hide('ar-list-view');
+  hide('ar-search-card');
+  show('ar-hero');
   show('ar-editor-view');
 }
 
@@ -635,37 +698,45 @@ function filterMatchLabel(t) {
 }
 
 function showFlListView() {
+  show('fl-hero');
+  show('fl-search-card');
   show('fl-list-card');
   hide('fl-editor-card');
 }
 
 function showFlEditorView() {
+  // Keep hero actions visible (same pattern as scheduled messages)
+  show('fl-hero');
+  hide('fl-search-card');
   hide('fl-list-card');
   show('fl-editor-card');
 }
 
-function resetFlForm() {
+function resetFlFormFields() {
   _flEditId = null;
   document.getElementById('fl-edit-id').value = '';
   document.getElementById('fl-form-title').textContent = '➕ 添加过滤词';
   document.getElementById('fl-form-hint').textContent =
     '支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。';
   document.getElementById('fl-submit').textContent = '➕ 添加';
-  hide('fl-cancel');
   document.getElementById('fl-keyword').value = '';
   document.getElementById('fl-keyword').rows = 3;
   document.getElementById('fl-match').value = 'contains';
   document.getElementById('fl-msg').textContent = '';
   document.getElementById('fl-msg').className = 'msg';
+}
+
+function resetFlForm() {
+  resetFlFormFields();
   showFlListView();
 }
 
 function startCreateFl() {
-  resetFlForm();
-  show('fl-cancel');
+  resetFlFormFields();
   showFlEditorView();
-  document.getElementById('fl-editor-card').scrollIntoView({ behavior: 'smooth' });
-  document.getElementById('fl-keyword').focus();
+  const editor = document.getElementById('fl-editor-card');
+  editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => document.getElementById('fl-keyword').focus(), 50);
 }
 
 function startEditFl(r) {
@@ -675,15 +746,14 @@ function startEditFl(r) {
   document.getElementById('fl-form-hint').textContent =
     '修改关键词或匹配方式后保存。编辑时一次只能改一条。';
   document.getElementById('fl-submit').textContent = '💾 保存修改';
-  show('fl-cancel');
   document.getElementById('fl-keyword').value = r.keyword || '';
   document.getElementById('fl-keyword').rows = 2;
   document.getElementById('fl-match').value = r.match_type || 'contains';
   document.getElementById('fl-msg').textContent = '';
   document.getElementById('fl-msg').className = 'msg';
   showFlEditorView();
-  document.getElementById('fl-editor-card').scrollIntoView({ behavior: 'smooth' });
-  document.getElementById('fl-keyword').focus();
+  document.getElementById('fl-editor-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setTimeout(() => document.getElementById('fl-keyword').focus(), 50);
 }
 
 function renderFilters() {
@@ -823,7 +893,11 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('fl-start-create').addEventListener('click', startCreateFl);
+document.getElementById('fl-start-create')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  startCreateFl();
+});
 document.getElementById('fl-cancel').addEventListener('click', resetFlForm);
 document.getElementById('fl-back').addEventListener('click', resetFlForm);
 document.getElementById('fl-search').addEventListener('input', renderFilters);
@@ -1331,11 +1405,14 @@ const _smTargetTypeLabels = { group: '群组', channel: '频道' };
 
 function showSmListView() {
   show('sm-list-view');
+  show('sm-search-card');
   show('sm-table-card');
   hide('sm-editor-view');
 }
 
 function showSmEditorView() {
+  show('sm-list-view');
+  hide('sm-search-card');
   hide('sm-table-card');
   show('sm-editor-view');
 }
