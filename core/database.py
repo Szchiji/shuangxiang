@@ -832,12 +832,29 @@ class Database:
                 "INSERT INTO filters(tenant_id,keyword,match_type) VALUES(?,?,?)",
                 (tenant_id, keyword, match_type)).lastrowid
 
+    def update_filter(self, tenant_id, fid, keyword, match_type="contains"):
+        """更新指定过滤词；返回是否实际更新到行。"""
+        with self._conn() as c:
+            cur = c.execute(
+                """UPDATE filters SET keyword=?, match_type=?
+                   WHERE tenant_id=? AND id=?""",
+                (keyword, match_type, tenant_id, fid))
+            return cur.rowcount > 0
+
     def get_filters(self, tenant_id):
         with self._conn() as c:
             return c.execute(
                 "SELECT * FROM filters WHERE tenant_id=? ORDER BY id",
                 (tenant_id,)).fetchall()
 
+    def get_filter(self, tenant_id, fid):
+        with self._conn() as c:
+            return c.execute(
+                "SELECT * FROM filters WHERE tenant_id=? AND id=?",
+                (tenant_id, fid)).fetchone()
+
     def delete_filter(self, tenant_id, fid):
         with self._conn() as c:
-            c.execute("DELETE FROM filters WHERE tenant_id=? AND id=?", (tenant_id, fid))
+            cur = c.execute(
+                "DELETE FROM filters WHERE tenant_id=? AND id=?", (tenant_id, fid))
+            return cur.rowcount > 0

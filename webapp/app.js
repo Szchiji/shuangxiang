@@ -532,9 +532,62 @@ document.getElementById('ar-filter-match').addEventListener('change', renderAuto
 // ── Filters ───────────────────────────────────────────────────────────────────
 
 let _filtersCache = [];
+let _flEditId = null;
 
 function filterMatchLabel(t) {
   return { contains: '包含', regex: '正则' }[t] || t || '包含';
+}
+
+function showFlListView() {
+  show('fl-list-card');
+  hide('fl-editor-card');
+}
+
+function showFlEditorView() {
+  hide('fl-list-card');
+  show('fl-editor-card');
+}
+
+function resetFlForm() {
+  _flEditId = null;
+  document.getElementById('fl-edit-id').value = '';
+  document.getElementById('fl-form-title').textContent = '➕ 添加过滤词';
+  document.getElementById('fl-form-hint').textContent =
+    '支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。';
+  document.getElementById('fl-submit').textContent = '➕ 添加';
+  hide('fl-cancel');
+  document.getElementById('fl-keyword').value = '';
+  document.getElementById('fl-keyword').rows = 3;
+  document.getElementById('fl-match').value = 'contains';
+  document.getElementById('fl-msg').textContent = '';
+  document.getElementById('fl-msg').className = 'msg';
+  showFlListView();
+}
+
+function startCreateFl() {
+  resetFlForm();
+  show('fl-cancel');
+  showFlEditorView();
+  document.getElementById('fl-editor-card').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('fl-keyword').focus();
+}
+
+function startEditFl(r) {
+  _flEditId = r.id;
+  document.getElementById('fl-edit-id').value = r.id;
+  document.getElementById('fl-form-title').textContent = '✏️ 编辑过滤词';
+  document.getElementById('fl-form-hint').textContent =
+    '修改关键词或匹配方式后保存。编辑时一次只能改一条。';
+  document.getElementById('fl-submit').textContent = '💾 保存修改';
+  show('fl-cancel');
+  document.getElementById('fl-keyword').value = r.keyword || '';
+  document.getElementById('fl-keyword').rows = 2;
+  document.getElementById('fl-match').value = r.match_type || 'contains';
+  document.getElementById('fl-msg').textContent = '';
+  document.getElementById('fl-msg').className = 'msg';
+  showFlEditorView();
+  document.getElementById('fl-editor-card').scrollIntoView({ behavior: 'smooth' });
+  document.getElementById('fl-keyword').focus();
 }
 
 function renderFilters() {
@@ -550,7 +603,9 @@ function renderFilters() {
 
   if (!rows.length) {
     list.innerHTML = `<p class="empty-state">${
-      _filtersCache.length ? '没有匹配的过滤词。' : '暂无过滤词，上方可直接添加。'
+      _filtersCache.length
+        ? '没有匹配的过滤词。'
+        : '暂无过滤词。点上方「➕ 添加过滤词」开始配置。'
     }</p>`;
     return;
   }
@@ -558,7 +613,9 @@ function renderFilters() {
   list.innerHTML = '';
   const count = document.createElement('div');
   count.className = 'list-count';
-  count.textContent = `共 ${rows.length} 个过滤词`;
+  count.textContent = query || match
+    ? `显示 ${rows.length} / ${_filtersCache.length} 个过滤词`
+    : `已添加 ${rows.length} 个过滤词（可编辑或删除）`;
   list.appendChild(count);
 
   rows.forEach(r => {
@@ -574,8 +631,10 @@ function renderFilters() {
         </div>
       </div>
       <div class="fl-actions">
+        <button class="btn-icon edit" title="编辑">✏️</button>
         <button class="btn-icon danger" title="删除">🗑</button>
       </div>`;
+    div.querySelector('.btn-icon.edit').addEventListener('click', () => startEditFl(r));
     div.querySelector('.btn-icon.danger').addEventListener('click', () => deleteFilter(r.id));
     list.appendChild(div);
   });
@@ -583,9 +642,10 @@ function renderFilters() {
 
 async function loadFilters() {
   const list = document.getElementById('fl-list');
+  showFlListView();
   list.innerHTML = '<p class="empty-state">加载中…</p>';
   const data = await api('GET', '/filters');
-  if (data.error) {
+  if (data && data.error) {
     list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
     return;
   }
@@ -595,8 +655,13 @@ async function loadFilters() {
 
 async function deleteFilter(id) {
   if (!window.confirm('确定要删除这个过滤词吗？')) return;
-  await api('DELETE', '/filters/' + id);
-  loadFilters();
+  const res = await api('DELETE', '/filters/' + id);
+  if (res && res.error) {
+    window.alert('删除失败：' + res.error);
+    return;
+  }
+  if (_flEditId === id) resetFlForm();
+  await loadFilters();
 }
 
 document.getElementById('fl-submit').addEventListener('click', async () => {
@@ -612,10 +677,32 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
   }
   btn.disabled = true;
   msgEl.className = 'msg';
-  msgEl.textContent = '添加中…';
-  let ok = 0;
-  const errors = [];
+  msgEl.textContent = _flEditId != null ? '保存中…' : '添加中…';
   try {
+    if (_flEditId != null) {
+      if (words.length !== 1) {
+        msgEl.className = 'msg fail';
+        msgEl.textContent = '编辑时请只保留一行关键词';
+        return;
+      }
+      const res = await api('PUT', '/filters/' + _flEditId, {
+        keyword: words[0], match_type: match,
+      });
+      if (res && res.ok && res.error == null) {
+        msgEl.className = 'msg ok';
+        msgEl.textContent = '✅ 已保存修改';
+        tg?.HapticFeedback?.notificationOccurred('success');
+        resetFlForm();
+        await loadFilters();
+      } else {
+        msgEl.className = 'msg fail';
+        msgEl.textContent = '❌ ' + ((res && res.error) || '保存失败');
+      }
+      return;
+    }
+
+    let ok = 0;
+    const errors = [];
     for (const keyword of words) {
       const res = await api('POST', '/filters', { keyword, match_type: match });
       // 用 != null 判断，避免把合法 id 与错误响应混淆；同时要求无 error 字段。
@@ -629,6 +716,7 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
         ? `✅ 已添加 ${ok} 个，失败 ${errors.length} 个`
         : `✅ 已添加 ${ok} 个过滤词`;
       tg?.HapticFeedback?.notificationOccurred('success');
+      resetFlForm();
       await loadFilters();
     } else {
       msgEl.className = 'msg fail';
@@ -639,6 +727,9 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
   }
 });
 
+document.getElementById('fl-start-create').addEventListener('click', startCreateFl);
+document.getElementById('fl-cancel').addEventListener('click', resetFlForm);
+document.getElementById('fl-back').addEventListener('click', resetFlForm);
 document.getElementById('fl-search').addEventListener('input', renderFilters);
 document.getElementById('fl-filter-match').addEventListener('change', renderFilters);
 

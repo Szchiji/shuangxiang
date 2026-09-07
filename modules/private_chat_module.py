@@ -46,8 +46,10 @@ from modules.platform_module import platform_footer_username
 
 logger = logging.getLogger("shuangxiang.private_chat")
 
-# 控制面板「添加过滤词」会话状态键
+# 控制面板「添加/编辑过滤词」会话状态键
 _SK_FILTER_ADD = "pc_filter_add"
+# 过滤词列表每页条数（避免 inline keyboard 过长导致编辑消息失败）
+_FILTERS_PAGE_SIZE = 8
 
 
 class PrivateChatModule(BaseModule):
@@ -358,9 +360,17 @@ class PrivateChatModule(BaseModule):
                 "• 自定义自动回复、启动语、群发等常用功能\n"
                 "• 一键开关安全过滤与 Topics 协作模式"))
 
-    def _filters_view(self):
-        """过滤词管理视图：列出已配置的过滤词，并提供添加 / 删除按钮。"""
+    @staticmethod
+    def _filter_match_type(row) -> str:
+        return (row["match_type"] if "match_type" in row.keys() else "") or "contains"
+
+    def _filters_view(self, page: int = 0):
+        """过滤词管理视图：在正文列出已配置词，并提供添加 / 编辑 / 删除按钮。"""
         rows = self.db.get_filters(self.tenant_id)
+        total = len(rows)
+        page_size = _FILTERS_PAGE_SIZE
+        page_count = max(1, (total + page_size - 1) // page_size) if total else 1
+        page = max(0, min(int(page), page_count - 1))
         add_row = [InlineKeyboardButton("➕ 添加过滤词", callback_data="pc:filter_add")]
         back_row = [InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]
         if not rows:
@@ -371,20 +381,67 @@ class PrivateChatModule(BaseModule):
                     "点下方「➕ 添加过滤词」直接添加；命中关键词的消息将被自动拦截。\n"
                     "也可发送 /filter_add <关键词>（正则：/filter_add regex:<表达式>）。"))
             return text, InlineKeyboardMarkup([add_row, back_row])
-        text = ui.section(
-            "过滤词管理", emoji="🚫",
-            body=f"共 {len(rows)} 个过滤词。点「➕」添加，点词条删除：")
+
+        start = page * page_size
+        page_rows = rows[start:start + page_size]
+        lines = []
+        for i, r in enumerate(page_rows, start + 1):
+            mt = self._filter_match_type(r)
+            tag = " [正则]" if mt == "regex" else ""
+            # 正文列出关键词，避免只能靠按钮文字才能看到已添加内容。
+            # 去掉 Markdown 特殊字符，防止 parse_mode 解析失败导致整页无法展示。
+            kw = str(r["keyword"] or "").replace("\n", " ")
+            for ch in ("*", "_", "`", "[", "]", "(", ")"):
+                kw = kw.replace(ch, "")
+            if len(kw) > 40:
+                kw = kw[:39] + "…"
+            lines.append(f"{i}. 「{kw}」{tag}")
+
+        body = (
+            f"共 *{total}* 个过滤词"
+            + (f"（第 {page + 1}/{page_count} 页）" if page_count > 1 else "")
+            + "：\n"
+            + "\n".join(lines)
+            + "\n\n点「✏️」编辑，「🗑」删除；点「➕」继续添加。"
+        )
+        text = ui.section("过滤词管理", emoji="🚫", body=body)
+
         kb = [add_row]
-        for r in rows:
-            kw = r["keyword"][:30]
-            prefix = "🔀 " if (r["match_type"] if "match_type" in r.keys() else "") == "regex" else "🗑 "
-            kb.append([InlineKeyboardButton(
-                f"{prefix}{kw}", callback_data=f"pc:filter_del:{r['id']}")])
+        for i, r in enumerate(page_rows, start + 1):
+            kb.append([
+                InlineKeyboardButton(
+                    f"✏️ 编辑 {i}", callback_data=f"pc:filter_edit:{r['id']}"),
+                InlineKeyboardButton(
+                    f"🗑 删除 {i}", callback_data=f"pc:filter_del:{r['id']}:{page}"),
+            ])
+        if page_count > 1:
+            nav = []
+            if page > 0:
+                nav.append(InlineKeyboardButton(
+                    "⬅️ 上一页", callback_data=f"pc:filters:{page - 1}"))
+            if page + 1 < page_count:
+                nav.append(InlineKeyboardButton(
+                    "下一页 ➡️", callback_data=f"pc:filters:{page + 1}"))
+            if nav:
+                kb.append(nav)
         kb.append(back_row)
         return text, InlineKeyboardMarkup(kb)
 
+    async def _edit_filters_message(self, q, page: int = 0) -> None:
+        """刷新过滤词列表；编辑失败时改为新发一条，避免用户看不到列表。"""
+        text, markup = self._filters_view(page)
+        try:
+            await q.edit_message_text(
+                text, parse_mode="Markdown", reply_markup=markup)
+        except TelegramError:
+            try:
+                await q.message.reply_text(
+                    text, parse_mode="Markdown", reply_markup=markup)
+            except TelegramError as e:
+                logger.warning("展示过滤词列表失败: %s", e)
+
     async def on_filter_add_wizard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """接收控制面板触发的过滤词输入（支持多行 / regex: 前缀）。"""
+        """接收控制面板触发的过滤词输入（支持多行 / regex: 前缀；编辑时仅一条）。"""
         state = (ctx.user_data or {}).get(_SK_FILTER_ADD)
         if not state:
             return
@@ -397,32 +454,65 @@ class PrivateChatModule(BaseModule):
         if not text or text.lower() in ("/cancel", "cancel", "取消"):
             ctx.user_data.pop(_SK_FILTER_ADD, None)
             await update.effective_message.reply_text(
-                "已取消添加过滤词。",
+                "已取消。",
                 reply_markup=InlineKeyboardMarkup(
                     [[InlineKeyboardButton("🚫 过滤词", callback_data="pc:filters"),
                       InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]))
             raise ApplicationHandlerStop
 
-        added, errors = [], []
-        for raw in text.splitlines():
+        edit_id = state.get("edit_id")
+        nav = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🚫 过滤词", callback_data="pc:filters"),
+              InlineKeyboardButton("➕ 继续添加", callback_data="pc:filter_add")],
+             [InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]])
+
+        def _parse_one(raw: str):
             word = raw.strip()
             if not word:
-                continue
+                return None, "空内容"
             match_type = "contains"
             if word.lower().startswith("regex:"):
                 word = word[len("regex:"):].strip()
                 match_type = "regex"
                 if not word:
-                    errors.append("空正则")
-                    continue
+                    return None, "空正则"
                 try:
                     re.compile(word)
                 except re.error as e:
-                    errors.append(f"{word}: {e}")
-                    continue
+                    return None, f"{word}: {e}"
             if len(word) > 200:
-                errors.append(f"{word[:20]}…过长")
+                return None, f"{word[:20]}…过长"
+            return (word, match_type), None
+
+        if edit_id is not None:
+            # 编辑模式：只接受第一条非空行
+            first = next((ln for ln in text.splitlines() if ln.strip()), "")
+            parsed, err = _parse_one(first)
+            ctx.user_data.pop(_SK_FILTER_ADD, None)
+            if err or not parsed:
+                await update.effective_message.reply_text(
+                    f"⚠️ 未保存：{err or '请发送有效关键词。'}", reply_markup=nav)
+                raise ApplicationHandlerStop
+            word, match_type = parsed
+            if self.db.get_filter(self.tenant_id, edit_id) is None:
+                await update.effective_message.reply_text(
+                    "⚠️ 该过滤词已不存在。", reply_markup=nav)
+                raise ApplicationHandlerStop
+            self.db.update_filter(self.tenant_id, edit_id, word, match_type)
+            label = ("🔀 " if match_type == "regex" else "") + word
+            await update.effective_message.reply_text(
+                f"✅ 已更新过滤词：{label}", reply_markup=nav)
+            raise ApplicationHandlerStop
+
+        added, errors = [], []
+        for raw in text.splitlines():
+            if not raw.strip():
                 continue
+            parsed, err = _parse_one(raw)
+            if err or not parsed:
+                errors.append(err or "无效")
+                continue
+            word, match_type = parsed
             self.db.add_filter(self.tenant_id, word, match_type)
             added.append(("🔀 " if match_type == "regex" else "") + word)
 
@@ -435,12 +525,7 @@ class PrivateChatModule(BaseModule):
                 body += "\n\n⚠️ 跳过：\n" + "\n".join(errors[:5])
         else:
             body = "⚠️ 未添加任何过滤词。\n" + ("\n".join(errors[:5]) if errors else "请发送有效关键词。")
-        await update.effective_message.reply_text(
-            body,
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🚫 过滤词", callback_data="pc:filters"),
-                  InlineKeyboardButton("➕ 继续添加", callback_data="pc:filter_add")],
-                 [InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]))
+        await update.effective_message.reply_text(body, reply_markup=nav)
         raise ApplicationHandlerStop
 
     def _bans_view(self):
@@ -528,10 +613,15 @@ class PrivateChatModule(BaseModule):
             await q.answer("已解封")
             text, markup = self._bans_view()
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-        elif action == "filters":
+        elif action == "filters" or action.startswith("filters:"):
+            page = 0
+            if action.startswith("filters:"):
+                try:
+                    page = int(action.split(":", 1)[1])
+                except ValueError:
+                    page = 0
             await q.answer()
-            text, markup = self._filters_view()
-            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+            await self._edit_filters_message(q, page)
         elif action == "filter_add":
             await q.answer()
             ctx.user_data[_SK_FILTER_ADD] = {"step": "keyword"}
@@ -551,21 +641,63 @@ class PrivateChatModule(BaseModule):
                 # 编辑失败（消息过旧/内容相同）时改为新发一条，保证向导仍可用。
                 await q.message.reply_text(
                     text, parse_mode="Markdown", reply_markup=markup)
-        elif action == "filter_add_cancel":
-            ctx.user_data.pop(_SK_FILTER_ADD, None)
-            await q.answer("已取消")
-            text, markup = self._filters_view()
-            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
-        elif action.startswith("filter_del:"):
+        elif action.startswith("filter_edit:"):
             try:
                 fid = int(action.split(":", 1)[1])
             except ValueError:
                 await q.answer("⚠️ 无效 ID")
                 return
-            self.db.delete_filter(self.tenant_id, fid)
-            await q.answer("已删除")
-            text, markup = self._filters_view()
-            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+            row = self.db.get_filter(self.tenant_id, fid)
+            if row is None:
+                await q.answer("该过滤词已不存在", show_alert=True)
+                await self._edit_filters_message(q, 0)
+                return
+            ctx.user_data[_SK_FILTER_ADD] = {"step": "keyword", "edit_id": fid}
+            mt = self._filter_match_type(row)
+            cur = str(row["keyword"] or "").replace("\n", " ")
+            for ch in ("*", "_", "`", "[", "]"):
+                cur = cur.replace(ch, "")
+            if len(cur) > 60:
+                cur = cur[:59] + "…"
+            hint = f"当前：「{cur}」" + ("（正则）" if mt == "regex" else "")
+            text = ui.section(
+                "编辑过滤词", emoji="✏️",
+                body=(
+                    f"{hint}\n\n"
+                    "请发送*新的关键词*（仅一条）。\n"
+                    "• 正则请用 `regex:表达式` 前缀\n"
+                    "• 发送 /cancel 取消"))
+            markup = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("✖️ 取消", callback_data="pc:filter_add_cancel")]])
+            await q.answer()
+            try:
+                await q.edit_message_text(
+                    text, parse_mode="Markdown", reply_markup=markup)
+            except TelegramError:
+                await q.message.reply_text(
+                    text, parse_mode="Markdown", reply_markup=markup)
+        elif action == "filter_add_cancel":
+            ctx.user_data.pop(_SK_FILTER_ADD, None)
+            await q.answer("已取消")
+            await self._edit_filters_message(q, 0)
+        elif action.startswith("filter_del:"):
+            parts = action.split(":")
+            try:
+                fid = int(parts[1])
+            except (ValueError, IndexError):
+                await q.answer("⚠️ 无效 ID")
+                return
+            page = 0
+            if len(parts) >= 3:
+                try:
+                    page = int(parts[2])
+                except ValueError:
+                    page = 0
+            if self.db.delete_filter(self.tenant_id, fid):
+                await q.answer("已删除")
+            else:
+                await q.answer("该过滤词已不存在", show_alert=True)
+            await self._edit_filters_message(q, page)
         elif action == "toggle:antiflood":
             cur = self.db.get_bool_setting(self.tenant_id, SK_ANTIFLOOD, True)
             self.db.set_setting(self.tenant_id, SK_ANTIFLOOD, "0" if cur else "1")

@@ -53,6 +53,18 @@ def test_default_filters_not_reseeded_after_deletion(db):
     assert len(remaining) == len(DEFAULT_FILTER_KEYWORDS) - 1
 
 
+def test_update_and_get_filter(db):
+    fid = db.add_filter(1, "旧词", "contains")
+    assert db.get_filter(1, fid)["keyword"] == "旧词"
+    assert db.update_filter(1, fid, "新词", "regex") is True
+    row = db.get_filter(1, fid)
+    assert row["keyword"] == "新词" and row["match_type"] == "regex"
+    assert db.update_filter(1, 999999, "x") is False
+    assert db.get_filter(1, 999999) is None
+    assert db.delete_filter(1, fid) is True
+    assert db.delete_filter(1, fid) is False
+
+
 def test_add_filter_supports_regex_match_type(db):
     fid = db.add_filter(1, r"PC\d+", "regex")
     rows = db.get_filters(1)

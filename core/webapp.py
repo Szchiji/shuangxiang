@@ -512,13 +512,45 @@ async def _post_filter(request: web.Request):
     return web.json_response({"ok": True, "id": fid, "keyword": keyword, "match_type": match_type})
 
 
+async def _put_filter(request: web.Request):
+    tenant = _auth(request)
+    try:
+        fid = int(request.match_info["fid"])
+    except (ValueError, KeyError):
+        return web.json_response({"error": "invalid id"}, status=400)
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "invalid JSON object"}, status=400)
+    try:
+        keyword, match_type = _parse_filter_keyword(body)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    db = Database()
+    if db.get_filter(tenant["id"], fid) is None:
+        return web.json_response({"error": "filter not found"}, status=404)
+    try:
+        ok = db.update_filter(tenant["id"], fid, keyword, match_type)
+    except Exception:
+        logger.exception("更新过滤词失败 tenant=%s fid=%s", tenant["id"], fid)
+        return web.json_response({"error": "failed to update filter"}, status=500)
+    if not ok:
+        return web.json_response({"error": "filter not found"}, status=404)
+    return web.json_response({
+        "ok": True, "id": fid, "keyword": keyword, "match_type": match_type,
+    })
+
+
 async def _delete_filter(request: web.Request):
     tenant = _auth(request)
     try:
         fid = int(request.match_info["fid"])
     except (ValueError, KeyError):
         return web.json_response({"error": "invalid id"}, status=400)
-    Database().delete_filter(tenant["id"], fid)
+    if not Database().delete_filter(tenant["id"], fid):
+        return web.json_response({"error": "filter not found"}, status=404)
     return web.json_response({"ok": True})
 
 
@@ -880,6 +912,8 @@ def create_app() -> web.Application:
         "/api/{tenant_id}/filters",            _get_filters)
     app.router.add_post(
         "/api/{tenant_id}/filters",            _post_filter)
+    app.router.add_put(
+        "/api/{tenant_id}/filters/{fid}",      _put_filter)
     app.router.add_delete(
         "/api/{tenant_id}/filters/{fid}",      _delete_filter)
     app.router.add_get(
