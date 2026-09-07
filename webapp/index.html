@@ -30,6 +30,9 @@
           <button class="nav-item" data-tab="auto-reply">
             <span class="nav-icon">💬</span><span class="nav-label">自动回复</span>
           </button>
+          <button class="nav-item" data-tab="filters">
+            <span class="nav-icon">🚫</span><span class="nav-label">过滤词</span>
+          </button>
           <button class="nav-item" data-tab="force-sub">
             <span class="nav-icon">📢</span><span class="nav-label">强制订阅</span>
           </button>
@@ -155,6 +158,42 @@
               <button id="ar-cancel" class="btn-ghost" style="display:none">取消</button>
             </div>
             <div id="ar-msg" class="msg"></div>
+          </div>
+        </section>
+
+        <!-- Filters -->
+        <section id="tab-filters" class="tab">
+          <div class="page-header">
+            <h2>🚫 过滤词管理</h2>
+            <p class="page-desc">命中过滤词的用户消息将被拦截，不再转发给管理员。</p>
+          </div>
+          <div class="card" id="fl-add-card">
+            <h3 class="card-title">➕ 添加过滤词</h3>
+            <p class="hint-text">支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。</p>
+            <label class="field-label">过滤词
+              <textarea id="fl-keyword" rows="3" placeholder="输入违禁词，多词请换行"></textarea>
+            </label>
+            <label class="field-label">匹配方式
+              <select id="fl-match">
+                <option value="contains">包含（不区分大小写）</option>
+                <option value="regex">正则表达式</option>
+              </select>
+            </label>
+            <div class="form-actions">
+              <button id="fl-submit" class="btn-primary">➕ 添加</button>
+            </div>
+            <div id="fl-msg" class="msg"></div>
+          </div>
+          <div class="card">
+            <div class="section-toolbar section-toolbar-row">
+              <input type="text" id="fl-search" placeholder="搜索过滤词">
+              <select id="fl-filter-match">
+                <option value="">全部匹配方式</option>
+                <option value="contains">包含</option>
+                <option value="regex">正则</option>
+              </select>
+            </div>
+            <div id="fl-list"></div>
           </div>
         </section>
 

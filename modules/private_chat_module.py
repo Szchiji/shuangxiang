@@ -11,6 +11,7 @@
 import asyncio
 import html
 import logging
+import re
 
 from telegram import (
     InlineKeyboardButton,
@@ -21,6 +22,7 @@ from telegram import (
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -43,6 +45,9 @@ from modules.customize_module import (
 from modules.platform_module import platform_footer_username
 
 logger = logging.getLogger("shuangxiang.private_chat")
+
+# 控制面板「添加过滤词」会话状态键
+_SK_FILTER_ADD = "pc_filter_add"
 
 
 class PrivateChatModule(BaseModule):
@@ -101,6 +106,10 @@ class PrivateChatModule(BaseModule):
         app.add_handler(CommandHandler("unsetgroup", self.cmd_unsetgroup))
         app.add_handler(CommandHandler("panel", self.cmd_panel))
         app.add_handler(CallbackQueryHandler(self.on_panel, pattern=r"^pc:"))
+        # 控制面板添加过滤词向导：高优先级拦截拥有者输入，避免被当成普通私聊转发。
+        app.add_handler(MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            self.on_filter_add_wizard), group=-3)
 
         # 私聊消息（用户 ↔ DM 模式拥有者）—— 放在较低优先级 group，
         # 让自动回复/过滤模块（group=0）有机会先拦截。
@@ -345,26 +354,89 @@ class PrivateChatModule(BaseModule):
                 "• 一键开关安全过滤与 Topics 协作模式"))
 
     def _filters_view(self):
-        """过滤词管理视图：列出已配置的过滤词，并提供一键删除按钮。"""
+        """过滤词管理视图：列出已配置的过滤词，并提供添加 / 删除按钮。"""
         rows = self.db.get_filters(self.tenant_id)
+        add_row = [InlineKeyboardButton("➕ 添加过滤词", callback_data="pc:filter_add")]
+        back_row = [InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]
         if not rows:
             text = ui.section(
                 "过滤词管理", emoji="🚫",
                 body=(
                     "当前没有过滤词。\n"
-                    "发送 /filter_add <关键词> 可添加。命中关键词的消息将被自动拦截。"))
-            kb = [[InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]
-            return text, InlineKeyboardMarkup(kb)
+                    "点下方「➕ 添加过滤词」直接添加；命中关键词的消息将被自动拦截。\n"
+                    "也可发送 /filter_add <关键词>（正则：/filter_add regex:<表达式>）。"))
+            return text, InlineKeyboardMarkup([add_row, back_row])
         text = ui.section(
             "过滤词管理", emoji="🚫",
-            body=f"共 {len(rows)} 个过滤词，点按钮删除：")
-        kb = []
+            body=f"共 {len(rows)} 个过滤词。点「➕」添加，点词条删除：")
+        kb = [add_row]
         for r in rows:
             kw = r["keyword"][:30]
+            prefix = "🔀 " if (r["match_type"] if "match_type" in r.keys() else "") == "regex" else "🗑 "
             kb.append([InlineKeyboardButton(
-                f"🗑 {kw}", callback_data=f"pc:filter_del:{r['id']}")])
-        kb.append([InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")])
+                f"{prefix}{kw}", callback_data=f"pc:filter_del:{r['id']}")])
+        kb.append(back_row)
         return text, InlineKeyboardMarkup(kb)
+
+    async def on_filter_add_wizard(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """接收控制面板触发的过滤词输入（支持多行 / regex: 前缀）。"""
+        state = (ctx.user_data or {}).get(_SK_FILTER_ADD)
+        if not state:
+            return
+        user = update.effective_user
+        if not user or not self._is_admin(user.id):
+            ctx.user_data.pop(_SK_FILTER_ADD, None)
+            return
+
+        text = (update.effective_message.text or "").strip()
+        if not text or text.lower() in ("/cancel", "cancel", "取消"):
+            ctx.user_data.pop(_SK_FILTER_ADD, None)
+            await update.effective_message.reply_text(
+                "已取消添加过滤词。",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🚫 过滤词", callback_data="pc:filters"),
+                      InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]))
+            raise ApplicationHandlerStop
+
+        added, errors = [], []
+        for raw in text.splitlines():
+            word = raw.strip()
+            if not word:
+                continue
+            match_type = "contains"
+            if word.lower().startswith("regex:"):
+                word = word[len("regex:"):].strip()
+                match_type = "regex"
+                if not word:
+                    errors.append("空正则")
+                    continue
+                try:
+                    re.compile(word)
+                except re.error as e:
+                    errors.append(f"{word}: {e}")
+                    continue
+            if len(word) > 200:
+                errors.append(f"{word[:20]}…过长")
+                continue
+            self.db.add_filter(self.tenant_id, word, match_type)
+            added.append(("🔀 " if match_type == "regex" else "") + word)
+
+        ctx.user_data.pop(_SK_FILTER_ADD, None)
+        if added:
+            body = f"✅ 已添加 {len(added)} 个过滤词：\n" + "\n".join(f"• {w}" for w in added[:20])
+            if len(added) > 20:
+                body += f"\n…等共 {len(added)} 个"
+            if errors:
+                body += "\n\n⚠️ 跳过：\n" + "\n".join(errors[:5])
+        else:
+            body = "⚠️ 未添加任何过滤词。\n" + ("\n".join(errors[:5]) if errors else "请发送有效关键词。")
+        await update.effective_message.reply_text(
+            body,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🚫 过滤词", callback_data="pc:filters"),
+                  InlineKeyboardButton("➕ 继续添加", callback_data="pc:filter_add")],
+                 [InlineKeyboardButton("⬅️ 返回面板", callback_data="pc:home")]]))
+        raise ApplicationHandlerStop
 
     def _bans_view(self):
         """封禁管理视图：列出已封禁用户，并提供一键解封按钮。"""
@@ -453,6 +525,25 @@ class PrivateChatModule(BaseModule):
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         elif action == "filters":
             await q.answer()
+            text, markup = self._filters_view()
+            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
+        elif action == "filter_add":
+            await q.answer()
+            ctx.user_data[_SK_FILTER_ADD] = {"step": "keyword"}
+            text = ui.section(
+                "添加过滤词", emoji="➕",
+                body=(
+                    "请发送要拦截的关键词。\n"
+                    "• 支持一次多行，每行一个词\n"
+                    "• 正则请用 `regex:表达式` 前缀\n"
+                    "• 发送 /cancel 取消"))
+            await q.edit_message_text(
+                text, parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("✖️ 取消", callback_data="pc:filter_add_cancel")]]))
+        elif action == "filter_add_cancel":
+            ctx.user_data.pop(_SK_FILTER_ADD, None)
+            await q.answer("已取消")
             text, markup = self._filters_view()
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=markup)
         elif action.startswith("filter_del:"):

@@ -168,6 +168,69 @@ async def test_non_admin_cannot_unban(db):
     assert db.is_banned(1, 42) is True
 
 
+# ── 过滤词管理：面板添加 ─────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_filters_view_has_add_button(db):
+    mod = make_module(db)
+    q = FakeQuery(99, "pc:filters")
+    await mod.on_panel(make_cbk_update(q), None)
+    cbs = _callbacks(q.edits[0][1]["reply_markup"])
+    assert "pc:filter_add" in cbs
+
+
+@pytest.mark.asyncio
+async def test_filter_add_via_panel_wizard(db):
+    from telegram.ext import ApplicationHandlerStop
+
+    from modules.private_chat_module import _SK_FILTER_ADD
+    from tests.conftest import FakeMessage, make_ctx
+
+    mod = make_module(db)
+    ctx = make_ctx(None)
+    ctx.user_data = {}
+
+    q = FakeQuery(99, "pc:filter_add")
+    await mod.on_panel(make_cbk_update(q), ctx)
+    assert ctx.user_data.get(_SK_FILTER_ADD)
+
+    msg = FakeMessage(1, text="广告词\nregex:PC\\d+")
+    upd = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=99),
+        effective_message=msg,
+        message=msg,
+    )
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_filter_add_wizard(upd, ctx)
+    assert _SK_FILTER_ADD not in ctx.user_data
+    keywords = {r["keyword"] for r in db.get_filters(1)}
+    assert "广告词" in keywords
+    assert r"PC\d+" in keywords
+    assert any("已添加" in r for r in msg.replies)
+
+
+@pytest.mark.asyncio
+async def test_filter_add_wizard_cancel(db):
+    from telegram.ext import ApplicationHandlerStop
+
+    from modules.private_chat_module import _SK_FILTER_ADD
+    from tests.conftest import FakeMessage, make_ctx
+
+    mod = make_module(db)
+    ctx = make_ctx(None)
+    ctx.user_data = {_SK_FILTER_ADD: {"step": "keyword"}}
+    msg = FakeMessage(1, text="/cancel")
+    upd = types.SimpleNamespace(
+        effective_user=types.SimpleNamespace(id=99),
+        effective_message=msg,
+        message=msg,
+    )
+    with pytest.raises(ApplicationHandlerStop):
+        await mod.on_filter_add_wizard(upd, ctx)
+    assert _SK_FILTER_ADD not in ctx.user_data
+    assert any("取消" in r for r in msg.replies)
+
+
 # ── 统计文案 ─────────────────────────────────────────────────
 
 def test_stats_text_empty_and_nonempty(db):

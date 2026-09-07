@@ -373,6 +373,74 @@ async def test_auto_replies_reject_invalid_buttons(aiohttp_client, app, tenant_i
 
 
 @pytest.mark.asyncio
+async def test_filters_crud(aiohttp_client, app, db, tenant_id, init_data_header):
+    client = await aiohttp_client(app)
+    # 新建租户会预置默认过滤词；额外添加自定义词
+    resp = await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "自定义违禁", "match_type": "contains"},
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    fid = data["id"]
+    assert data["keyword"] == "自定义违禁"
+    assert data["match_type"] == "contains"
+
+    resp = await client.get(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    items = await resp.json()
+    assert any(r["id"] == fid and r["keyword"] == "自定义违禁" for r in items)
+
+    resp = await client.delete(
+        f"/api/{tenant_id}/filters/{fid}",
+        headers={"X-Init-Data": init_data_header},
+    )
+    assert resp.status == 200
+    assert (await resp.json())["ok"] is True
+    remaining = {r["keyword"] for r in db.get_filters(tenant_id)}
+    assert "自定义违禁" not in remaining
+
+
+@pytest.mark.asyncio
+async def test_filters_add_regex_and_reject_invalid(aiohttp_client, app, db, tenant_id,
+                                                    init_data_header):
+    client = await aiohttp_client(app)
+    resp = await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": r"PC\d+", "match_type": "regex"},
+    )
+    assert resp.status == 200
+    data = await resp.json()
+    assert data["match_type"] == "regex"
+
+    bad = await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "(", "match_type": "regex"},
+    )
+    assert bad.status == 400
+
+    empty = await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "  "},
+    )
+    assert empty.status == 400
+
+    bad_type = await client.post(
+        f"/api/{tenant_id}/filters",
+        headers={"X-Init-Data": init_data_header},
+        json={"keyword": "x", "match_type": "exact"},
+    )
+    assert bad_type.status == 400
+
+
+@pytest.mark.asyncio
 async def test_banned_and_unban(aiohttp_client, app, db, tenant_id, init_data_header):
     # Add and ban a user
     db.upsert_tenant_user(tenant_id, 55, "user55", "User55")

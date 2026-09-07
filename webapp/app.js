@@ -114,6 +114,7 @@ function initTabs() {
       if (btn.dataset.tab === 'stats')      loadStats();
       if (btn.dataset.tab === 'banned')     loadBanned();
       if (btn.dataset.tab === 'auto-reply') loadAutoReplies();
+      if (btn.dataset.tab === 'filters')    loadFilters();
       if (btn.dataset.tab === 'force-sub')  loadForceSub();
       if (btn.dataset.tab === 'logs')       loadInterceptLogs();
       if (btn.dataset.tab === 'scheduled')  loadScheduledMessages();
@@ -518,6 +519,112 @@ document.getElementById('ar-back').addEventListener('click', resetArForm);
 document.getElementById('ar-start-create').addEventListener('click', startCreateAr);
 document.getElementById('ar-search').addEventListener('input', renderAutoReplies);
 document.getElementById('ar-filter-match').addEventListener('change', renderAutoReplies);
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+
+let _filtersCache = [];
+
+function filterMatchLabel(t) {
+  return { contains: '包含', regex: '正则' }[t] || t || '包含';
+}
+
+function renderFilters() {
+  const list = document.getElementById('fl-list');
+  const query = document.getElementById('fl-search').value.trim().toLowerCase();
+  const match = document.getElementById('fl-filter-match').value;
+  const rows = _filtersCache.filter(r => {
+    if (match && (r.match_type || 'contains') !== match) return false;
+    if (!query) return true;
+    return String(r.keyword || '').toLowerCase().includes(query)
+      || filterMatchLabel(r.match_type).includes(query);
+  });
+
+  if (!rows.length) {
+    list.innerHTML = `<p class="empty-state">${
+      _filtersCache.length ? '没有匹配的过滤词。' : '暂无过滤词，上方可直接添加。'
+    }</p>`;
+    return;
+  }
+
+  list.innerHTML = '';
+  const count = document.createElement('div');
+  count.className = 'list-count';
+  count.textContent = `共 ${rows.length} 个过滤词`;
+  list.appendChild(count);
+
+  rows.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'fl-item';
+    const mt = r.match_type || 'contains';
+    div.innerHTML = `
+      <div class="fl-text">
+        <div class="fl-kw">🚫 ${esc(r.keyword)}</div>
+        <div class="fl-meta">
+          <span class="tag tag-${esc(mt)}">${esc(filterMatchLabel(mt))}</span>
+          <span class="fl-id">#${esc(String(r.id))}</span>
+        </div>
+      </div>
+      <div class="fl-actions">
+        <button class="btn-icon danger" title="删除">🗑</button>
+      </div>`;
+    div.querySelector('.btn-icon.danger').addEventListener('click', () => deleteFilter(r.id));
+    list.appendChild(div);
+  });
+}
+
+async function loadFilters() {
+  const list = document.getElementById('fl-list');
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/filters');
+  if (data.error) {
+    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    return;
+  }
+  _filtersCache = Array.isArray(data) ? data : [];
+  renderFilters();
+}
+
+async function deleteFilter(id) {
+  if (!window.confirm('确定要删除这个过滤词吗？')) return;
+  await api('DELETE', '/filters/' + id);
+  loadFilters();
+}
+
+document.getElementById('fl-submit').addEventListener('click', async () => {
+  const msgEl = document.getElementById('fl-msg');
+  const raw = document.getElementById('fl-keyword').value;
+  const match = document.getElementById('fl-match').value;
+  const words = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (!words.length) {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '请输入至少一个过滤词';
+    return;
+  }
+  msgEl.className = 'msg';
+  msgEl.textContent = '添加中…';
+  let ok = 0;
+  const errors = [];
+  for (const keyword of words) {
+    const res = await api('POST', '/filters', { keyword, match_type: match });
+    if (res.id) ok += 1;
+    else errors.push(`${keyword}: ${res.error || '失败'}`);
+  }
+  if (ok) {
+    document.getElementById('fl-keyword').value = '';
+    msgEl.className = 'msg ok';
+    msgEl.textContent = errors.length
+      ? `✅ 已添加 ${ok} 个，失败 ${errors.length} 个`
+      : `✅ 已添加 ${ok} 个过滤词`;
+    tg?.HapticFeedback?.notificationOccurred('success');
+    loadFilters();
+  } else {
+    msgEl.className = 'msg fail';
+    msgEl.textContent = '❌ ' + (errors[0] || '添加失败');
+  }
+});
+
+document.getElementById('fl-search').addEventListener('input', renderFilters);
+document.getElementById('fl-filter-match').addEventListener('change', renderFilters);
 
 // ── Force Subscribe ───────────────────────────────────────────────────────────
 
