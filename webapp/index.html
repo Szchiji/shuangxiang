@@ -16,59 +16,95 @@
       <!-- ── Sidebar ─────────────────────────────────────────────────── -->
       <aside id="sidebar" class="sidebar">
         <div class="sidebar-header">
-          <span id="bot-name" class="sidebar-title">🤖 管理后台</span>
+          <span id="bot-name" class="sidebar-title">🤖 后台</span>
           <div class="sidebar-header-actions">
             <button id="theme-toggle" class="sidebar-toggle-btn" aria-label="切换主题" title="切换深浅色主题">&#9788;</button>
-            <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="收起侧栏">&#9776;</button>
+            <button id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="收起侧栏" title="收起/展开">&#9776;</button>
+            <button id="sidebar-hide" class="sidebar-toggle-btn" aria-label="隐藏侧栏" title="隐藏侧栏">✕</button>
           </div>
         </div>
-        <div class="sidebar-heading">功能导航</div>
         <nav class="sidebar-nav">
-          <button class="nav-item active" data-tab="settings">
-            <span class="nav-icon">⚙️</span><span class="nav-label">基本设置</span>
-          </button>
-          <button class="nav-item" data-tab="auto-reply">
-            <span class="nav-icon">💬</span><span class="nav-label">自动回复</span>
-          </button>
-          <button class="nav-item" data-tab="filters">
-            <span class="nav-icon">🚫</span><span class="nav-label">过滤词</span>
-          </button>
-          <button class="nav-item" data-tab="force-sub">
-            <span class="nav-icon">📢</span><span class="nav-label">强制订阅</span>
-          </button>
-          <button class="nav-item" data-tab="broadcast">
-            <span class="nav-icon">📣</span><span class="nav-label">群发广告</span>
-          </button>
-          <button class="nav-item" data-tab="scheduled">
-            <span class="nav-icon">⏰</span><span class="nav-label">定时消息</span>
-          </button>
-          <button class="nav-item" data-tab="users">
-            <span class="nav-icon">👥</span><span class="nav-label">用户运营</span>
-          </button>
-          <button class="nav-item" data-tab="quick-replies">
-            <span class="nav-icon">⚡</span><span class="nav-label">快捷回复</span>
-          </button>
-          <button class="nav-item" data-tab="banned">
-            <span class="nav-icon">⛔</span><span class="nav-label">封禁管理</span>
-          </button>
-          <button class="nav-item" data-tab="logs">
-            <span class="nav-icon">📋</span><span class="nav-label">拦截日志</span>
-          </button>
-          <button class="nav-item" data-tab="staff">
-            <span class="nav-icon">🧑‍💼</span><span class="nav-label">协作成员</span>
-          </button>
-          <button class="nav-item" data-tab="stats">
-            <span class="nav-icon">📊</span><span class="nav-label">数据统计</span>
-          </button>
+          <div class="nav-group" data-group="overview">
+            <button type="button" class="nav-group-toggle" aria-expanded="true">
+              <span class="nav-group-label">概况</span>
+              <span class="nav-group-chevron">▾</span>
+            </button>
+            <div class="nav-group-items">
+              <button type="button" class="nav-item active" data-tab="settings" title="基本设置">
+                <span class="nav-icon">⚙️</span><span class="nav-label">设置</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="stats" title="数据统计">
+                <span class="nav-icon">📊</span><span class="nav-label">统计</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="content">
+            <button type="button" class="nav-group-toggle" aria-expanded="true">
+              <span class="nav-group-label">内容</span>
+              <span class="nav-group-chevron">▾</span>
+            </button>
+            <div class="nav-group-items">
+              <button type="button" class="nav-item" data-tab="auto-reply" title="自动回复">
+                <span class="nav-icon">💬</span><span class="nav-label">回复</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="quick-replies" title="快捷回复">
+                <span class="nav-icon">⚡</span><span class="nav-label">话术</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="broadcast" title="群发广告">
+                <span class="nav-icon">📣</span><span class="nav-label">群发</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="scheduled" title="定时消息">
+                <span class="nav-icon">⏰</span><span class="nav-label">定时</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="security">
+            <button type="button" class="nav-group-toggle" aria-expanded="true">
+              <span class="nav-group-label">安全</span>
+              <span class="nav-group-chevron">▾</span>
+            </button>
+            <div class="nav-group-items">
+              <button type="button" class="nav-item" data-tab="filters" title="过滤词">
+                <span class="nav-icon">🚫</span><span class="nav-label">过滤</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="force-sub" title="强制订阅">
+                <span class="nav-icon">📢</span><span class="nav-label">订阅</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="banned" title="封禁管理">
+                <span class="nav-icon">⛔</span><span class="nav-label">封禁</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="logs" title="拦截日志">
+                <span class="nav-icon">📋</span><span class="nav-label">日志</span>
+              </button>
+            </div>
+          </div>
+          <div class="nav-group" data-group="team">
+            <button type="button" class="nav-group-toggle" aria-expanded="true">
+              <span class="nav-group-label">协作</span>
+              <span class="nav-group-chevron">▾</span>
+            </button>
+            <div class="nav-group-items">
+              <button type="button" class="nav-item" data-tab="users" title="用户运营">
+                <span class="nav-icon">👥</span><span class="nav-label">用户</span>
+              </button>
+              <button type="button" class="nav-item" data-tab="staff" title="协作成员">
+                <span class="nav-icon">🧑‍💼</span><span class="nav-label">成员</span>
+              </button>
+            </div>
+          </div>
         </nav>
       </aside>
+      <button type="button" id="sidebar-reopen" class="sidebar-reopen" aria-label="打开侧栏" title="打开侧栏" style="display:none">&#9776;</button>
 
       <!-- ── Main content ───────────────────────────────────────────── -->
       <main id="content">
 
         <!-- Settings -->
         <section id="tab-settings" class="tab active">
-          <div class="page-header"><h2>⚙️ 基本设置</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">⚙️ 基本设置</h3>
+            <p class="page-hero-desc">配置启动欢迎语、按钮、封面媒体、离开状态与安全策略。</p>
+          </div>
           <div class="card">
             <h3 class="card-title">欢迎语设置</h3>
             <label class="field-label">启动欢迎语
@@ -165,10 +201,22 @@
 
         <!-- Auto Reply -->
         <section id="tab-auto-reply" class="tab">
-          <div class="page-header"><h2>💬 自动回复规则</h2></div>
-          <div class="card" id="ar-list-view">
-            <div class="section-toolbar">
-              <input type="text" id="ar-search" placeholder="搜索关键词或回复内容">
+          <div class="card page-hero" id="ar-hero">
+            <h3 class="page-hero-title">💬 自动回复规则</h3>
+            <p class="page-hero-desc">按关键词自动回复用户，可附带媒体与内联按钮，支持命中后拦截转发。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="ar-export" class="btn-sm-action btn-sm-export">⬇️ 导出</button>
+              <button type="button" id="ar-import" class="btn-sm-action btn-sm-import">⬆️ 导入</button>
+              <button type="button" id="ar-start-create" class="btn-sm-action btn-sm-add">＋ 新增自动回复</button>
+            </div>
+            <input type="file" id="ar-import-file" accept="application/json" style="display:none">
+          </div>
+
+          <div class="card" id="ar-search-card">
+            <label class="field-label">🔍 搜索关键词或回复
+              <input type="text" id="ar-search" placeholder="搜索关键词或回复内容…">
+            </label>
+            <label class="field-label">匹配方式
               <select id="ar-filter-match">
                 <option value="">全部匹配方式</option>
                 <option value="contains">包含</option>
@@ -176,11 +224,10 @@
                 <option value="startswith">开头匹配</option>
                 <option value="regex">正则表达式</option>
               </select>
-              <button id="ar-export" class="btn-ghost section-toolbar-btn">⬇️ 导出</button>
-              <button id="ar-import" class="btn-ghost section-toolbar-btn">⬆️ 导入</button>
-              <input type="file" id="ar-import-file" accept="application/json" style="display:none">
-              <button id="ar-start-create" class="btn-primary section-toolbar-btn">➕ 新增自动回复</button>
-            </div>
+            </label>
+          </div>
+
+          <div class="card" id="ar-list-view">
             <div id="ar-list"></div>
           </div>
 
@@ -236,30 +283,38 @@
 
         <!-- Filters -->
         <section id="tab-filters" class="tab">
-          <div class="page-header">
-            <h2>🚫 过滤词管理</h2>
-            <p class="page-desc">命中过滤词的用户消息将被拦截，不再转发给管理员。下方可查看、编辑或删除已添加的词。</p>
+          <div class="card page-hero" id="fl-hero">
+            <h3 class="page-hero-title">🚫 过滤词管理</h3>
+            <p class="page-hero-desc">命中过滤词的用户消息将被拦截，不再转发给管理员。支持包含匹配与正则。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="fl-export" class="btn-sm-action btn-sm-export">⬇️ 导出</button>
+              <button type="button" id="fl-import" class="btn-sm-action btn-sm-import">⬆️ 导入</button>
+              <button type="button" id="fl-start-create" class="btn-sm-action btn-sm-add">＋ 添加过滤词</button>
+            </div>
+            <input type="file" id="fl-import-file" accept="application/json,.txt" style="display:none">
           </div>
-          <div class="card" id="fl-list-card">
-            <div class="section-toolbar section-toolbar-row">
-              <input type="text" id="fl-search" placeholder="搜索已添加的过滤词">
+
+          <div class="card" id="fl-search-card">
+            <label class="field-label">🔍 搜索过滤词
+              <input type="text" id="fl-search" placeholder="搜索已添加的过滤词…">
+            </label>
+            <label class="field-label">匹配方式
               <select id="fl-filter-match">
                 <option value="">全部匹配方式</option>
                 <option value="contains">包含</option>
                 <option value="regex">正则</option>
               </select>
-            </div>
-            <div class="section-toolbar" style="margin-top:8px">
-              <button id="fl-export" class="btn-ghost section-toolbar-btn">⬇️ 导出</button>
-              <button id="fl-import" class="btn-ghost section-toolbar-btn">⬆️ 导入</button>
-              <input type="file" id="fl-import-file" accept="application/json,.txt" style="display:none">
-              <button id="fl-start-create" class="btn-primary section-toolbar-btn">➕ 添加过滤词</button>
-            </div>
+            </label>
+          </div>
+          <div id="fl-msg-top" class="msg"></div>
+
+          <div class="card" id="fl-list-card">
             <div id="fl-list"></div>
           </div>
+
           <div class="card" id="fl-editor-card" style="display:none">
             <div class="subview-header">
-              <button id="fl-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+              <button type="button" id="fl-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
             </div>
             <h3 id="fl-form-title" class="card-title">➕ 添加过滤词</h3>
             <p id="fl-form-hint" class="hint-text">支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。</p>
@@ -274,8 +329,8 @@
               </select>
             </label>
             <div class="form-actions">
-              <button id="fl-submit" class="btn-primary">➕ 添加</button>
-              <button id="fl-cancel" class="btn-ghost" style="display:none">取消</button>
+              <button type="button" id="fl-submit" class="btn-primary">➕ 添加</button>
+              <button type="button" id="fl-cancel" class="btn-ghost">取消</button>
             </div>
             <div id="fl-msg" class="msg"></div>
           </div>
@@ -283,13 +338,15 @@
 
         <!-- Force Subscribe -->
         <section id="tab-force-sub" class="tab">
-          <div class="page-header"><h2>📢 强制订阅</h2></div>
-          <div class="card" id="fsub-list-view">
-            <div class="section-toolbar">
-              <button id="fsub-start-add" class="btn-primary section-toolbar-btn">➕ 新增频道</button>
-              <button id="fsub-open-settings" class="btn-ghost">⚙️ 规则设置</button>
+          <div class="card page-hero" id="fsub-hero">
+            <h3 class="page-hero-title">📢 强制订阅</h3>
+            <p class="page-hero-desc">要求用户加入指定频道后才能继续使用。需将本机器人设为各频道管理员。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="fsub-open-settings" class="btn-sm-action btn-sm-import">⚙️ 规则设置</button>
+              <button type="button" id="fsub-start-add" class="btn-sm-action btn-sm-add">＋ 新增频道</button>
             </div>
-            <p class="hint-text">⚠️ 需将本机器人设为各频道的管理员，否则无法校验成员资格。</p>
+          </div>
+          <div class="card" id="fsub-list-view">
             <div id="fsub-list"></div>
           </div>
 
@@ -336,9 +393,11 @@
 
         <!-- Broadcast -->
         <section id="tab-broadcast" class="tab">
-          <div class="page-header"><h2>📣 群发广告</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">📣 群发广告</h3>
+            <p class="page-hero-desc">向所有活跃用户群发消息，支持图片 URL / file_id、内联按钮和静默推送。</p>
+          </div>
           <div class="card">
-            <p class="hint-text">向所有活跃用户群发消息，支持图片 URL / file_id、内联按钮和静默推送。</p>
             <p class="hint-text" id="bc-estimate">预计触达：加载中…</p>
             <label class="field-label">图片 URL 或 file_id（可选）
               <input type="text" id="bc-photo" placeholder="https://... 或 file_id（留空则仅发文字）">
@@ -365,26 +424,24 @@
 
         <!-- Scheduled Messages -->
         <section id="tab-scheduled" class="tab">
-          <div class="page-header"><h2>⏰ 定时消息管理</h2></div>
-
-          <div class="card sm-hero" id="sm-list-view">
-            <h3 class="sm-hero-title">⏰ 定时消息管理</h3>
-            <p class="sm-hero-desc">定时发送消息到群组或频道，支持重复发送和自动删除上一条</p>
-            <div class="sm-hero-actions">
-              <button id="sm-export" class="btn-sm-action btn-sm-export">⬇️ 导出</button>
-              <button id="sm-import" class="btn-sm-action btn-sm-import">⬆️ 导入</button>
-              <button id="sm-start-create" class="btn-sm-action btn-sm-add">＋ 新增消息</button>
+          <div class="card page-hero" id="sm-list-view">
+            <h3 class="page-hero-title">⏰ 定时消息管理</h3>
+            <p class="page-hero-desc">定时发送消息到群组或频道，支持重复发送和自动删除上一条</p>
+            <div class="page-hero-actions">
+              <button type="button" id="sm-export" class="btn-sm-action btn-sm-export">⬇️ 导出</button>
+              <button type="button" id="sm-import" class="btn-sm-action btn-sm-import">⬆️ 导入</button>
+              <button type="button" id="sm-start-create" class="btn-sm-action btn-sm-add">＋ 新增消息</button>
             </div>
             <input type="file" id="sm-import-file" accept="application/json" style="display:none">
           </div>
 
-          <div class="card">
+          <div class="card" id="sm-search-card">
             <label class="field-label">🔍 搜索备注内容
               <input type="text" id="sm-search" placeholder="搜索备注内容…">
             </label>
             <div class="form-actions">
-              <button id="sm-search-btn" class="btn-primary">🔍 搜索</button>
-              <button id="sm-search-clear" class="btn-ghost">✕ 清除</button>
+              <button type="button" id="sm-search-btn" class="btn-primary">🔍 搜索</button>
+              <button type="button" id="sm-search-clear" class="btn-ghost">✕ 清除</button>
             </div>
           </div>
           <div id="sm-msg" class="msg"></div>
@@ -478,18 +535,25 @@
 
         <!-- Users ops -->
         <section id="tab-users" class="tab">
-          <div class="page-header"><h2>👥 用户运营</h2></div>
-          <div class="card">
-            <div class="section-toolbar">
+          <div class="card page-hero">
+            <h3 class="page-hero-title">👥 用户运营</h3>
+            <p class="page-hero-desc">按会话状态管理用户备注与标签，便于客服跟进。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="ops-users-refresh" class="btn-sm-action btn-sm-add">🔄 刷新</button>
+            </div>
+          </div>
+          <div class="card" id="ops-search-card">
+            <label class="field-label">🔍 搜索用户
               <input type="text" id="ops-users-search" placeholder="搜索 ID / 用户名 / 备注 / 标签">
+            </label>
+            <label class="field-label">会话状态
               <select id="ops-session-filter">
                 <option value="">全部会话</option>
                 <option value="open">未处理</option>
                 <option value="pending">处理中</option>
                 <option value="resolved">已解决</option>
               </select>
-              <button id="ops-users-refresh" class="btn-ghost section-toolbar-btn">🔄 刷新</button>
-            </div>
+            </label>
             <div id="ops-users-summary" class="hint-text"></div>
             <div id="ops-users-list"></div>
             <div id="ops-users-msg" class="msg"></div>
@@ -519,16 +583,18 @@
 
         <!-- Quick replies -->
         <section id="tab-quick-replies" class="tab">
-          <div class="page-header"><h2>⚡ 快捷回复模板</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">⚡ 快捷回复模板</h3>
+            <p class="page-hero-desc">手动点选发送的话术模板（与自动回复区分），便于客服快速回复。</p>
+          </div>
           <div class="card">
-            <p class="hint-text">手动点选发送的话术模板（与自动回复区分）。客服可在后台维护，Bot 侧 /info 等场景可配合使用。</p>
             <label class="field-label">标题
               <input type="text" id="qr-title" placeholder="例如：欢迎话术">
             </label>
             <label class="field-label">内容
               <textarea id="qr-content" rows="4" placeholder="要发送的文本"></textarea>
             </label>
-            <button id="qr-add" class="btn-primary">＋ 添加模板</button>
+            <button type="button" id="qr-add" class="btn-primary">＋ 添加模板</button>
             <div id="qr-msg" class="msg"></div>
           </div>
           <div id="qr-list"></div>
@@ -536,9 +602,11 @@
 
         <!-- Staff -->
         <section id="tab-staff" class="tab">
-          <div class="page-header"><h2>🧑‍💼 协作成员</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">🧑‍💼 协作成员</h3>
+            <p class="page-hero-desc">owner 拥有全部权限；admin 可改配置；support 可回复/封禁/改备注。仅 owner 可增删成员。</p>
+          </div>
           <div class="card">
-            <p class="hint-text">owner 拥有全部权限；admin 可改配置；support 可回复/封禁/改备注。仅 owner 可增删成员。</p>
             <label class="field-label">用户 ID
               <input type="number" id="staff-uid" placeholder="Telegram 用户数字 ID">
             </label>
@@ -560,7 +628,10 @@
 
         <!-- Banned -->
         <section id="tab-banned" class="tab">
-          <div class="page-header"><h2>⛔ 封禁用户管理</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">⛔ 封禁用户管理</h3>
+            <p class="page-hero-desc">按用户 ID 封禁或解封，并支持搜索最近用户与已封禁列表。</p>
+          </div>
           <div class="card">
             <h3 class="card-title">按用户 ID 封禁</h3>
             <label class="field-label">用户 ID
@@ -587,16 +658,24 @@
 
         <!-- Stats -->
         <section id="tab-stats" class="tab">
-          <div class="page-header"><h2>📊 数据统计</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">📊 数据统计</h3>
+            <p class="page-hero-desc">查看用户、消息与拦截等关键运营数据。</p>
+          </div>
           <div id="stats-content"></div>
         </section>
 
         <!-- Intercept Logs -->
         <section id="tab-logs" class="tab">
-          <div class="page-header"><h2>📋 拦截日志</h2></div>
+          <div class="card page-hero">
+            <h3 class="page-hero-title">📋 拦截日志</h3>
+            <p class="page-hero-desc">记录被过滤词 / 防刷屏 / 第三方机器人等策略拦截的消息，便于调整词库。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="logs-refresh" class="btn-sm-action btn-sm-add">🔄 刷新</button>
+            </div>
+          </div>
           <div class="card">
-            <p class="hint-text">记录被过滤词 / 防刷屏 / 第三方机器人拦截等安全策略拦截的消息，便于判断词库是否需要调整。</p>
-            <div class="section-toolbar">
+            <label class="field-label">拦截原因
               <select id="logs-reason">
                 <option value="">全部原因</option>
                 <option value="filter">过滤词</option>
@@ -604,8 +683,7 @@
                 <option value="alphabet_latin">英文拦截</option>
                 <option value="block_via_bot">第三方机器人</option>
               </select>
-              <button id="logs-refresh" class="btn-ghost section-toolbar-btn">🔄 刷新</button>
-            </div>
+            </label>
             <div id="logs-summary" class="hint-text"></div>
             <div id="logs-msg" class="msg"></div>
           </div>
