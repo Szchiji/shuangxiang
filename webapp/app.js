@@ -652,19 +652,19 @@ async function loadSettings() {
   show('main');
 }
 
-document.getElementById('save-welcome-text').addEventListener('click', async () => {
+document.getElementById('save-welcome-text')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     welcome_text:      document.getElementById('welcome-text').value,
   }, 'welcome-text-msg', '✅ 欢迎语已保存');
 });
 
-document.getElementById('save-welcome-buttons').addEventListener('click', async () => {
+document.getElementById('save-welcome-buttons')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     welcome_btns_text: _welcomeBuilder.getText(),
   }, 'welcome-buttons-msg', '✅ 欢迎按钮已保存');
 });
 
-document.getElementById('save-welcome-media').addEventListener('click', async () => {
+document.getElementById('save-welcome-media')?.addEventListener('click', async () => {
   const mediaType = document.getElementById('welcome-media-type').value;
   const mediaId = document.getElementById('welcome-media-id').value.trim();
   if (mediaType && !mediaId) {
@@ -679,7 +679,7 @@ document.getElementById('save-welcome-media').addEventListener('click', async ()
   }, 'welcome-media-msg', '✅ 欢迎语封面已保存');
 });
 
-document.getElementById('clear-welcome-media').addEventListener('click', async () => {
+document.getElementById('clear-welcome-media')?.addEventListener('click', async () => {
   document.getElementById('welcome-media-type').value = '';
   document.getElementById('welcome-media-id').value = '';
   await saveSettingsPartial({
@@ -688,7 +688,7 @@ document.getElementById('clear-welcome-media').addEventListener('click', async (
   }, 'welcome-media-msg', '✅ 已清除封面');
 });
 
-document.getElementById('save-security-settings').addEventListener('click', async () => {
+document.getElementById('save-security-settings')?.addEventListener('click', async () => {
   const floodMaxMsgs = parseInt(document.getElementById('flood-max-msgs').value, 10);
   const floodWindow  = parseInt(document.getElementById('flood-window').value, 10);
   if (Number.isNaN(floodMaxMsgs) || Number.isNaN(floodWindow)) {
@@ -707,7 +707,7 @@ document.getElementById('save-security-settings').addEventListener('click', asyn
   }, 'settings-msg', '✅ 安全设置已保存');
 });
 
-document.getElementById('save-away-settings').addEventListener('click', async () => {
+document.getElementById('save-away-settings')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     away_on:  document.getElementById('away-on').checked,
     away_msg: document.getElementById('away-msg').value,
@@ -856,7 +856,7 @@ async function deleteAR(id) {
   loadAutoReplies();
 }
 
-document.getElementById('ar-submit').addEventListener('click', async () => {
+document.getElementById('ar-submit')?.addEventListener('click', async () => {
   const msgEl  = document.getElementById('ar-msg');
   const keyword = document.getElementById('ar-keyword').value.trim();
   const reply   = document.getElementById('ar-reply').value.trim();
@@ -912,13 +912,13 @@ document.getElementById('ar-submit').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('ar-cancel').addEventListener('click', resetArForm);
-document.getElementById('ar-back').addEventListener('click', resetArForm);
-document.getElementById('ar-start-create').addEventListener('click', startCreateAr);
-document.getElementById('ar-search').addEventListener('input', renderAutoReplies);
-document.getElementById('ar-filter-match').addEventListener('change', renderAutoReplies);
+document.getElementById('ar-cancel')?.addEventListener('click', resetArForm);
+document.getElementById('ar-back')?.addEventListener('click', resetArForm);
+document.getElementById('ar-start-create')?.addEventListener('click', startCreateAr);
+document.getElementById('ar-search')?.addEventListener('input', renderAutoReplies);
+document.getElementById('ar-filter-match')?.addEventListener('change', renderAutoReplies);
 
-document.getElementById('ar-export').addEventListener('click', async () => {
+document.getElementById('ar-export')?.addEventListener('click', async () => {
   const data = await api('GET', '/auto_replies/export');
   if (data.error) { alert('导出失败：' + data.error); return; }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -929,10 +929,10 @@ document.getElementById('ar-export').addEventListener('click', async () => {
   a.click();
   URL.revokeObjectURL(url);
 });
-document.getElementById('ar-import').addEventListener('click', () => {
+document.getElementById('ar-import')?.addEventListener('click', () => {
   document.getElementById('ar-import-file').click();
 });
-document.getElementById('ar-import-file').addEventListener('change', async (e) => {
+document.getElementById('ar-import-file')?.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
@@ -1102,16 +1102,25 @@ function renderFilters() {
   });
 }
 
-async function loadFilters() {
+async function loadFilters({ keepEditor = false } = {}) {
   const list = document.getElementById('fl-list');
-  showFlListView();
-  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const tab = document.getElementById('tab-filters');
+  const editing = !!(tab && tab.classList.contains('is-editing'));
+  if (!(keepEditor && editing)) {
+    showFlListView();
+  }
+  if (list) list.innerHTML = '<p class="empty-state">加载中…</p>';
   const data = await api('GET', '/filters');
+  // A concurrent "add" click may have opened the editor while we were fetching.
+  const stillEditing = !!(tab && tab.classList.contains('is-editing'));
   if (data && data.error) {
-    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    if (list && !stillEditing) {
+      list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    }
     return;
   }
   _filtersCache = Array.isArray(data) ? data : [];
+  if (stillEditing) return; // don't yank the open editor closed
   renderFilters();
 }
 
@@ -1394,7 +1403,7 @@ async function loadForceSub() {
   showFsubView('fsub-list-view');
 }
 
-document.getElementById('fsub-save-btn').addEventListener('click', async () => {
+document.getElementById('fsub-save-btn')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('fsub-msg');
   const chat  = document.getElementById('fsub-add-chat').value.trim();
   if (!chat) {
@@ -1410,18 +1419,18 @@ document.getElementById('fsub-save-btn').addEventListener('click', async () => {
   if (await saveFsubChannels()) resetFsubEditor();
 });
 
-document.getElementById('fsub-save-settings').addEventListener('click', async () => {
+document.getElementById('fsub-save-settings')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     force_sub_on: document.getElementById('force-sub-on').checked,
     force_sub_msg: document.getElementById('fsub-msg-text').value,
   }, 'fsub-save-msg-result', '✅ 规则设置已保存');
 });
 
-document.getElementById('fsub-start-add').addEventListener('click', startCreateFsub);
-document.getElementById('fsub-open-settings').addEventListener('click', () => showFsubView('fsub-settings-view'));
-document.getElementById('fsub-back-from-editor').addEventListener('click', resetFsubEditor);
-document.getElementById('fsub-cancel-btn').addEventListener('click', resetFsubEditor);
-document.getElementById('fsub-back-from-settings').addEventListener('click', () => showFsubView('fsub-list-view'));
+document.getElementById('fsub-start-add')?.addEventListener('click', startCreateFsub);
+document.getElementById('fsub-open-settings')?.addEventListener('click', () => showFsubView('fsub-settings-view'));
+document.getElementById('fsub-back-from-editor')?.addEventListener('click', resetFsubEditor);
+document.getElementById('fsub-cancel-btn')?.addEventListener('click', resetFsubEditor);
+document.getElementById('fsub-back-from-settings')?.addEventListener('click', () => showFsubView('fsub-list-view'));
 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 
@@ -1466,7 +1475,7 @@ async function pollBroadcastJob(jobId) {
   tick();
 }
 
-document.getElementById('bc-send').addEventListener('click', async () => {
+document.getElementById('bc-send')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('bc-msg');
   const text  = document.getElementById('bc-text').value.trim();
   const photo = document.getElementById('bc-photo').value.trim();
@@ -1632,8 +1641,8 @@ async function unban(uid) {
   }
 }
 
-document.getElementById('banned-search').addEventListener('input', renderBanned);
-document.getElementById('ban-submit').addEventListener('click', () => {
+document.getElementById('banned-search')?.addEventListener('input', renderBanned);
+document.getElementById('ban-submit')?.addEventListener('click', () => {
   const uid = parseInt(document.getElementById('ban-uid').value, 10);
   if (Number.isNaN(uid) || uid <= 0) {
     const msgEl = document.getElementById('ban-msg');
@@ -1644,7 +1653,7 @@ document.getElementById('ban-submit').addEventListener('click', () => {
   banUser(uid);
 });
 let _usersSearchTimer = null;
-document.getElementById('users-search').addEventListener('input', () => {
+document.getElementById('users-search')?.addEventListener('input', () => {
   if (_usersSearchTimer) clearTimeout(_usersSearchTimer);
   _usersSearchTimer = setTimeout(loadUsers, 300);
 });
@@ -1708,8 +1717,8 @@ async function loadInterceptLogs() {
   renderInterceptLogs(items);
 }
 
-document.getElementById('logs-reason').addEventListener('change', loadInterceptLogs);
-document.getElementById('logs-refresh').addEventListener('click', loadInterceptLogs);
+document.getElementById('logs-reason')?.addEventListener('change', loadInterceptLogs);
+document.getElementById('logs-refresh')?.addEventListener('click', loadInterceptLogs);
 
 // ── Scheduled Messages ──────────────────────────────────────────────────────
 
@@ -1740,7 +1749,7 @@ function toggleSmMediaRow() {
   if (type === 'text') hide('sm-media-row');
   else show('sm-media-row');
 }
-document.getElementById('sm-msg-type').addEventListener('change', toggleSmMediaRow);
+document.getElementById('sm-msg-type')?.addEventListener('change', toggleSmMediaRow);
 
 function resetSmForm() {
   _smEditId = null;
@@ -1875,14 +1884,14 @@ async function toggleSm(id, enabled) {
   loadScheduledMessages();
 }
 
-document.getElementById('sm-select-all').addEventListener('change', (e) => {
+document.getElementById('sm-select-all')?.addEventListener('change', (e) => {
   document.querySelectorAll('#sm-table-body .sm-row-check').forEach(cb => {
     cb.checked = e.target.checked;
     cb.dispatchEvent(new Event('change'));
   });
 });
 
-document.getElementById('sm-bulk-delete').addEventListener('click', async () => {
+document.getElementById('sm-bulk-delete')?.addEventListener('click', async () => {
   if (!_smSelected.size) return;
   if (!window.confirm(`确定要删除已选的 ${_smSelected.size} 条定时消息吗？`)) return;
   await api('POST', '/scheduled_messages/bulk_delete', { ids: [..._smSelected] });
@@ -1890,18 +1899,18 @@ document.getElementById('sm-bulk-delete').addEventListener('click', async () => 
   loadScheduledMessages();
 });
 
-document.getElementById('sm-search-btn').addEventListener('click', renderScheduledMessages);
-document.getElementById('sm-search').addEventListener('input', renderScheduledMessages);
-document.getElementById('sm-search-clear').addEventListener('click', () => {
+document.getElementById('sm-search-btn')?.addEventListener('click', renderScheduledMessages);
+document.getElementById('sm-search')?.addEventListener('input', renderScheduledMessages);
+document.getElementById('sm-search-clear')?.addEventListener('click', () => {
   document.getElementById('sm-search').value = '';
   renderScheduledMessages();
 });
 
-document.getElementById('sm-start-create').addEventListener('click', startCreateSm);
-document.getElementById('sm-back').addEventListener('click', () => { resetSmForm(); showSmListView(); });
-document.getElementById('sm-cancel').addEventListener('click', () => { resetSmForm(); showSmListView(); });
+document.getElementById('sm-start-create')?.addEventListener('click', startCreateSm);
+document.getElementById('sm-back')?.addEventListener('click', () => { resetSmForm(); showSmListView(); });
+document.getElementById('sm-cancel')?.addEventListener('click', () => { resetSmForm(); showSmListView(); });
 
-document.getElementById('sm-submit').addEventListener('click', async () => {
+document.getElementById('sm-submit')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('sm-form-msg');
   const payload = {
     target_type:      document.getElementById('sm-target-type').value,
@@ -1939,7 +1948,7 @@ document.getElementById('sm-submit').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('sm-export').addEventListener('click', async () => {
+document.getElementById('sm-export')?.addEventListener('click', async () => {
   const data = await api('GET', '/scheduled_messages/export');
   if (data.error) { alert('导出失败：' + data.error); return; }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1951,11 +1960,11 @@ document.getElementById('sm-export').addEventListener('click', async () => {
   URL.revokeObjectURL(url);
 });
 
-document.getElementById('sm-import').addEventListener('click', () => {
+document.getElementById('sm-import')?.addEventListener('click', () => {
   document.getElementById('sm-import-file').click();
 });
 
-document.getElementById('sm-import-file').addEventListener('change', async (e) => {
+document.getElementById('sm-import-file')?.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
@@ -2033,17 +2042,17 @@ async function loadOpsUsers() {
   renderOpsUsers();
 }
 
-document.getElementById('ops-users-refresh').addEventListener('click', loadOpsUsers);
-document.getElementById('ops-session-filter').addEventListener('change', loadOpsUsers);
-document.getElementById('ops-users-search').addEventListener('input', () => {
+document.getElementById('ops-users-refresh')?.addEventListener('click', loadOpsUsers);
+document.getElementById('ops-session-filter')?.addEventListener('change', loadOpsUsers);
+document.getElementById('ops-users-search')?.addEventListener('input', () => {
   if (_opsSearchTimer) clearTimeout(_opsSearchTimer);
   _opsSearchTimer = setTimeout(loadOpsUsers, 300);
 });
-document.getElementById('ops-close-editor').addEventListener('click', () => {
+document.getElementById('ops-close-editor')?.addEventListener('click', () => {
   hide('ops-user-editor');
   _opsEditUid = null;
 });
-document.getElementById('ops-save-user').addEventListener('click', async () => {
+document.getElementById('ops-save-user')?.addEventListener('click', async () => {
   if (!_opsEditUid) return;
   const msgEl = document.getElementById('ops-edit-msg');
   msgEl.className = 'msg';
@@ -2097,7 +2106,7 @@ async function loadQuickReplies() {
   });
 }
 
-document.getElementById('qr-add').addEventListener('click', async () => {
+document.getElementById('qr-add')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('qr-msg');
   const title = document.getElementById('qr-title').value.trim();
   const content = document.getElementById('qr-content').value.trim();
@@ -2175,12 +2184,18 @@ function startCreateStaff() {
   tg?.HapticFeedback?.impactOccurred?.('light');
 }
 
-async function loadStaff() {
+async function loadStaff({ keepEditor = false } = {}) {
   const list = document.getElementById('staff-list');
   if (!list) return;
-  showStaffListView();
+  const tab = document.getElementById('tab-staff');
+  const editing = !!(tab && tab.classList.contains('is-editing'));
+  if (!(keepEditor && editing)) {
+    showStaffListView();
+  }
   list.innerHTML = '<p class="empty-state">加载中…</p>';
   const data = await api('GET', '/staff');
+  const stillEditing = !!(tab && tab.classList.contains('is-editing'));
+  if (stillEditing) return; // keep the open add-member panel visible
   if (data.error) {
     list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
     return;
@@ -2331,31 +2346,37 @@ async function loadStats() {
 /**
  * Global click delegation for critical "open add UI" actions.
  * Survives partial binding failures and works even if a direct listener was missed.
+ * Capture phase so it still fires if a bubbling handler throws.
  */
 function bindGlobalActions() {
-  const root = document.getElementById('main') || document;
-  root.addEventListener('click', (e) => {
+  if (bindGlobalActions._bound) return;
+  bindGlobalActions._bound = true;
+  const handler = (e) => {
     const target = e.target;
     if (!(target instanceof Element)) return;
     const actionEl = target.closest('[data-action]');
-    if (!actionEl || (root !== document && !root.contains(actionEl))) return;
+    if (!actionEl) return;
     const action = actionEl.getAttribute('data-action');
     if (!action) return;
     if (action === 'fl-start-create') {
       e.preventDefault();
       e.stopPropagation();
-      startCreateFl();
+      try { startCreateFl(); } catch (err) { console.warn('startCreateFl', err); }
       return;
     }
     if (action === 'staff-start-create') {
       e.preventDefault();
       e.stopPropagation();
-      startCreateStaff();
+      try { startCreateStaff(); } catch (err) { console.warn('startCreateStaff', err); }
     }
-  });
+  };
+  document.addEventListener('click', handler, true);
 }
 
 function bootApp() {
+  if (bootApp._booted) return;
+  bootApp._booted = true;
+
   try { tg?.ready(); } catch (_) {}
   try { tg?.expand(); } catch (_) {}
 
@@ -2363,6 +2384,7 @@ function bootApp() {
   try { initTheme(); } catch (err) { console.warn('initTheme', err); }
   try { initSidebar(); } catch (err) { console.warn('initSidebar', err); }
   try { initTabs(); } catch (err) { console.warn('initTabs', err); }
+  // Critical add-panel actions first (capture + direct)
   try { bindGlobalActions(); } catch (err) { console.warn('bindGlobalActions', err); }
   try { bindFilterUi(); } catch (err) { console.warn('bindFilterUi', err); }
   try { bindStaffUi(); } catch (err) { console.warn('bindStaffUi', err); }
@@ -2404,11 +2426,19 @@ function bootApp() {
     _smBuilder = { getText: () => '', loadText: () => {} };
   }
 
-  loadSettings();
+  try { loadSettings(); } catch (err) { console.warn('loadSettings', err); }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootApp);
-} else {
-  bootApp();
+// Always schedule boot even if earlier top-level listeners threw.
+// Those listeners run as the parser evaluates the file; a throw above this
+// line would skip boot — keep this block minimal and last.
+try {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootApp);
+  } else {
+    bootApp();
+  }
+} catch (err) {
+  console.warn('bootApp schedule failed', err);
+  try { setTimeout(bootApp, 0); } catch (_) {}
 }

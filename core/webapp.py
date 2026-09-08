@@ -1468,7 +1468,28 @@ async def _serve_index(_request: web.Request):
     if not os.path.exists(path):
         raise web.HTTPNotFound()
     with open(path, encoding="utf-8") as f:
-        return web.Response(text=f.read(), content_type="text/html")
+        body = f.read()
+    # Mini App webviews cache aggressively; never cache the shell HTML so
+    # ?v= cache-bust on JS/CSS always takes effect after deploy.
+    return web.Response(
+        text=body,
+        content_type="text/html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
+
+
+@web.middleware
+async def _static_no_cache_middleware(request: web.Request, handler):
+    """Discourage long-lived caching of /static assets in Telegram WebView."""
+    resp = await handler(request)
+    if request.path.startswith("/static/"):
+        # Short private cache + must-revalidate so versioned URLs refresh quickly
+        # without fully disabling browser cache for bandwidth.
+        resp.headers["Cache-Control"] = "private, max-age=60, must-revalidate"
+    return resp
 
 
 # ── Application factory / runner ──────────────────────────────────────────────
@@ -1476,7 +1497,7 @@ async def _serve_index(_request: web.Request):
 def create_app(*, platform_token: str | None = None,
                platform_admin_id: int | None = None) -> web.Application:
     """Build and return the aiohttp Application (not yet running)."""
-    app = web.Application(middlewares=[_tenant_middleware])
+    app = web.Application(middlewares=[_tenant_middleware, _static_no_cache_middleware])
     app["platform_token"] = platform_token or ""
     app["platform_admin_id"] = platform_admin_id
 
