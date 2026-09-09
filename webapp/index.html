@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>机器人管理后台</title>
   <script>(function(){var t=localStorage.getItem('bh_theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
-  <link rel="stylesheet" href="/static/style.css?v=20260908">
+  <link rel="stylesheet" href="/static/style.css?v=20260909">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -19,8 +19,9 @@
           <span id="bot-name" class="sidebar-title">🤖 后台</span>
           <div class="sidebar-header-actions">
             <button type="button" id="theme-toggle" class="sidebar-toggle-btn" aria-label="切换主题" title="切换深浅色主题">&#9788;</button>
-            <button type="button" id="sidebar-toggle" class="sidebar-toggle-btn" aria-label="收起侧栏" title="收起/展开">&#9776;</button>
-            <button type="button" id="sidebar-hide" class="sidebar-toggle-btn" aria-label="隐藏侧栏" title="隐藏侧栏">✕</button>
+            <!-- Desktop only: collapse to icon rail. On mobile this duplicates the close (✕) action. -->
+            <button type="button" id="sidebar-toggle" class="sidebar-toggle-btn sidebar-toggle-collapse" aria-label="收起侧栏" title="收起/展开">&#9776;</button>
+            <button type="button" id="sidebar-hide" class="sidebar-toggle-btn" aria-label="关闭侧栏" title="关闭侧栏">✕</button>
           </div>
         </div>
         <nav class="sidebar-nav">
@@ -584,21 +585,34 @@
 
         <!-- Quick replies -->
         <section id="tab-quick-replies" class="tab">
-          <div class="card page-hero">
+          <div class="card page-hero" id="qr-hero">
             <h3 class="page-hero-title">⚡ 快捷回复模板</h3>
             <p class="page-hero-desc">手动点选发送的话术模板（与自动回复区分），便于客服快速回复。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="qr-start-create" class="btn-sm-action btn-sm-add" data-action="qr-start-create">＋ 新增话术</button>
+            </div>
           </div>
-          <div class="card">
+          <div class="card" id="qr-list-card">
+            <div id="qr-list"></div>
+          </div>
+          <div class="card editor-card" id="qr-editor-card" style="display:none" hidden>
+            <div class="subview-header">
+              <button type="button" id="qr-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
+            <h3 id="qr-form-title" class="card-title">➕ 添加话术模板</h3>
+            <input type="hidden" id="qr-edit-id" value="">
             <label class="field-label">标题
               <input type="text" id="qr-title" placeholder="例如：欢迎话术">
             </label>
             <label class="field-label">内容
               <textarea id="qr-content" rows="4" placeholder="要发送的文本"></textarea>
             </label>
-            <button type="button" id="qr-add" class="btn-primary">＋ 添加模板</button>
+            <div class="form-actions">
+              <button type="button" id="qr-submit" class="btn-primary">＋ 添加模板</button>
+              <button type="button" id="qr-cancel" class="btn-ghost">取消</button>
+            </div>
             <div id="qr-msg" class="msg"></div>
           </div>
-          <div id="qr-list"></div>
         </section>
 
         <!-- Staff -->
@@ -712,6 +726,6 @@
 
     <div id="error-msg" style="display:none" class="error-box"></div>
   </div>
-  <script src="/static/app.js?v=20260908"></script>
+  <script src="/static/app.js?v=20260909"></script>
 </body>
 </html>
