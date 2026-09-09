@@ -15,8 +15,8 @@
   --success:    #16a34a;
   --warning:    #f59e0b;
   --info:       #0891b2;
-  --sidebar-w:  148px;
-  --sidebar-collapsed: 56px;
+  --sidebar-w:  128px;
+  --sidebar-collapsed: 52px;
   --radius:     14px;
   --radius-sm:  10px;
   --shadow:     0 1px 2px rgba(15, 23, 42, .04), 0 4px 16px rgba(15, 23, 42, .04);
@@ -114,7 +114,7 @@ body {
   left: 0;
   top: 0;
   bottom: 0;
-  width: min(78vw, 260px) !important;
+  width: min(62vw, 200px) !important;
   min-width: 0;
   max-height: none;
   height: 100vh;
@@ -178,13 +178,13 @@ body.sidebar-open {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 8px;
+  padding: 8px 6px;
   border-bottom: 1px solid var(--border);
-  gap: 6px;
-  min-height: 52px;
+  gap: 4px;
+  min-height: 44px;
 }
 .sidebar-title {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   color: var(--primary);
   white-space: nowrap;
@@ -192,7 +192,7 @@ body.sidebar-open {
   text-overflow: ellipsis;
   transition: opacity .15s, max-width .15s;
   letter-spacing: .01em;
-  max-width: 78px;
+  max-width: 64px;
   flex: 1;
   min-width: 0;
 }
@@ -204,15 +204,15 @@ body.sidebar-open {
 .sidebar-toggle-btn {
   background: var(--bg-hover);
   border: 1px solid transparent;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   color: var(--hint);
   flex-shrink: 0;
-  padding: 4px;
+  padding: 3px;
   border-radius: 8px;
   line-height: 1;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -226,8 +226,8 @@ body.sidebar-open {
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 6px 16px;
+  gap: 6px;
+  padding: 6px 4px 14px;
   overflow-y: auto;
   flex: 1;
   -webkit-overflow-scrolling: touch;
@@ -275,13 +275,13 @@ body.sidebar-open {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
+  gap: 6px;
+  padding: 7px 8px;
   border: 1px solid transparent;
   background: none;
-  border-radius: 12px;
+  border-radius: 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--hint);
   text-align: left;
   white-space: nowrap;
@@ -302,8 +302,8 @@ body.sidebar-open {
 }
 .nav-item.active:hover { border-color: transparent; }
 
-.nav-icon { font-size: 15px; flex-shrink: 0; width: 20px; text-align: center; }
-.nav-label { transition: opacity .15s; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.nav-icon { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
+.nav-label { transition: opacity .15s; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
 .sidebar.collapsed .nav-label { opacity: 0; width: 0; overflow: hidden; }
 .sidebar.collapsed .nav-item { justify-content: center; padding: 10px 0; }
 .sidebar.collapsed .nav-icon { width: auto; }
@@ -961,8 +961,8 @@ body.sidebar-open {
 /* ── Responsive: phone keeps docked rail (matches Mini App screenshot) ─ */
 @media (max-width: 720px) {
   :root {
-    --sidebar-w: 118px;
-    --sidebar-collapsed: 52px;
+    --sidebar-w: 96px;
+    --sidebar-collapsed: 48px;
   }
 
   .sidebar {
@@ -986,12 +986,22 @@ body.sidebar-open {
   }
   .sidebar.drawer-open {
     transform: translateX(0);
+    width: min(58vw, 180px) !important;
   }
 
-  .sidebar-title { max-width: 56px; font-size: 12px; }
-  .nav-item { padding: 8px 8px; font-size: 12px; gap: 6px; }
-  .nav-label { font-size: 12px; }
-  .nav-group-toggle { margin: 2px 2px 4px; padding: 2px 7px; font-size: 10px; }
+  /* ☰ collapse duplicates ✕ close on phones — keep a single close control */
+  .sidebar-toggle-collapse {
+    display: none !important;
+  }
+
+  .sidebar-header { padding: 6px 4px; min-height: 40px; gap: 2px; }
+  .sidebar-title { max-width: 42px; font-size: 11px; }
+  .sidebar-toggle-btn { width: 24px; height: 24px; font-size: 12px; }
+  .nav-item { padding: 6px 6px; font-size: 11px; gap: 4px; border-radius: 8px; }
+  .nav-label { font-size: 11px; }
+  .nav-icon { font-size: 13px; width: 16px; }
+  .nav-group-toggle { margin: 2px 1px 3px; padding: 2px 6px; font-size: 9px; }
+  .sidebar-nav { gap: 4px; padding: 4px 3px 12px; }
 
   #content {
     padding: 14px 12px 32px;
@@ -1006,6 +1016,8 @@ body.sidebar-open {
   .sidebar-reopen {
     top: 10px;
     left: 10px;
+    width: 38px;
+    height: 38px;
   }
 
   .stats-grid { grid-template-columns: 1fr 1fr; }
@@ -1016,8 +1028,9 @@ body.sidebar-open {
 }
 
 @media (max-width: 400px) {
-  :root { --sidebar-w: 104px; }
+  :root { --sidebar-w: 88px; }
   .stats-grid { grid-template-columns: 1fr; }
   #content { padding: 12px 10px 28px; }
-  .nav-label { font-size: 12px; }
+  .nav-label { font-size: 11px; }
+  .sidebar-title { max-width: 36px; }
 }

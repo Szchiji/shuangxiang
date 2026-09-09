@@ -194,18 +194,27 @@ function initSidebar() {
 
   function updateChrome(effective, mobile) {
     if (toggleBtn) {
+      // Mobile: collapse toggle is redundant with ✕ close — hide it entirely.
       if (mobile) {
-        toggleBtn.setAttribute('aria-label', effective === 'hidden' ? '打开侧栏' : '隐藏侧栏');
-        toggleBtn.title = effective === 'hidden' ? '打开侧栏' : '隐藏侧栏';
+        toggleBtn.hidden = true;
+        toggleBtn.style.display = 'none';
+        toggleBtn.setAttribute('aria-hidden', 'true');
       } else {
+        toggleBtn.hidden = false;
+        toggleBtn.style.display = '';
+        toggleBtn.setAttribute('aria-hidden', 'false');
         const collapsed = effective === 'collapsed';
         toggleBtn.setAttribute('aria-label', collapsed ? '展开侧栏' : '折叠侧栏');
         toggleBtn.title = collapsed ? '展开侧栏（显示文字）' : '折叠侧栏（仅图标）';
       }
     }
     if (hideBtn) {
-      hideBtn.hidden = effective === 'hidden';
-      hideBtn.style.display = effective === 'hidden' ? 'none' : '';
+      // Close control: always available while sidebar is visible (mobile + desktop).
+      const closed = effective === 'hidden';
+      hideBtn.hidden = closed;
+      hideBtn.style.display = closed ? 'none' : '';
+      hideBtn.setAttribute('aria-label', '关闭侧栏');
+      hideBtn.title = '关闭侧栏';
     }
     document.documentElement.setAttribute('data-sidebar', effective || 'expanded');
   }
@@ -267,16 +276,21 @@ function initSidebar() {
   })();
   applyMode(saved, { persist: false });
 
+  // Desktop only: ☰ toggles icon-rail collapse. Mobile uses ✕ / floating reopen.
   toggleBtn?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (sidebar.classList.contains('hidden')) {
-      // Re-open: on mobile use temporary drawer overlay
-      applyMode('', { asDrawer: isMobileLayout() });
+    if (isMobileLayout()) {
+      // Safety: if CSS hide fails, still act as close rather than a second close twin.
+      if (sidebar.classList.contains('hidden')) {
+        applyMode('', { asDrawer: true });
+      } else {
+        applyMode('hidden');
+      }
       return;
     }
-    if (isMobileLayout()) {
-      applyMode('hidden');
+    if (sidebar.classList.contains('hidden')) {
+      applyMode('');
       return;
     }
     applyMode(sidebar.classList.contains('collapsed') ? '' : 'collapsed');
@@ -2074,20 +2088,103 @@ document.getElementById('ops-save-user')?.addEventListener('click', async () => 
 
 // ── Quick replies ─────────────────────────────────────────────────────────────
 
-async function loadQuickReplies() {
-  const list = document.getElementById('qr-list');
-  list.innerHTML = '<p class="empty-state">加载中…</p>';
-  const data = await api('GET', '/quick_replies');
-  if (data.error) {
-    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
-    return;
+let _qrEditId = null;
+let _quickRepliesCache = [];
+
+function showQrListView() {
+  show('qr-hero');
+  show('qr-list-card');
+  hide('qr-editor-card');
+  const tab = document.getElementById('tab-quick-replies');
+  if (tab) tab.classList.remove('is-editing');
+}
+
+function showQrEditorView() {
+  show('qr-hero');
+  hide('qr-list-card');
+  revealPanel('qr-editor-card');
+  const tab = document.getElementById('tab-quick-replies');
+  if (tab) tab.classList.add('is-editing');
+}
+
+function resetQrFormFields() {
+  _qrEditId = null;
+  const editId = document.getElementById('qr-edit-id');
+  if (editId) editId.value = '';
+  const title = document.getElementById('qr-title');
+  const content = document.getElementById('qr-content');
+  const formTitle = document.getElementById('qr-form-title');
+  const submit = document.getElementById('qr-submit');
+  const msg = document.getElementById('qr-msg');
+  if (title) title.value = '';
+  if (content) content.value = '';
+  if (formTitle) formTitle.textContent = '➕ 添加话术模板';
+  if (submit) submit.textContent = '＋ 添加模板';
+  if (msg) {
+    msg.textContent = '';
+    msg.className = 'msg';
   }
-  const rows = Array.isArray(data) ? data : [];
+}
+
+function resetQrForm() {
+  resetQrFormFields();
+  showQrListView();
+}
+
+function startCreateQr() {
+  const tabBtn = document.querySelector('.nav-item[data-tab="quick-replies"]');
+  const tab = document.getElementById('tab-quick-replies');
+  if (tab && !tab.classList.contains('active')) {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tabBtn?.classList.add('active');
+    tab.classList.add('active');
+  }
+  resetQrFormFields();
+  showQrEditorView();
+  setTimeout(() => {
+    try { document.getElementById('qr-title')?.focus(); } catch (_) {}
+  }, 60);
+  tg?.HapticFeedback?.impactOccurred?.('light');
+}
+
+function startEditQr(r) {
+  if (!r) return;
+  _qrEditId = r.id;
+  const editId = document.getElementById('qr-edit-id');
+  if (editId) editId.value = r.id;
+  const formTitle = document.getElementById('qr-form-title');
+  if (formTitle) formTitle.textContent = '✏️ 编辑话术模板';
+  const submit = document.getElementById('qr-submit');
+  if (submit) submit.textContent = '💾 保存修改';
+  const title = document.getElementById('qr-title');
+  const content = document.getElementById('qr-content');
+  if (title) title.value = r.title || '';
+  if (content) content.value = r.content || '';
+  const msg = document.getElementById('qr-msg');
+  if (msg) {
+    msg.textContent = '';
+    msg.className = 'msg';
+  }
+  showQrEditorView();
+  setTimeout(() => {
+    try { document.getElementById('qr-title')?.focus(); } catch (_) {}
+  }, 60);
+}
+
+function renderQuickReplies() {
+  const list = document.getElementById('qr-list');
+  if (!list) return;
+  const rows = _quickRepliesCache;
   if (!rows.length) {
-    list.innerHTML = '<p class="empty-state">暂无快捷回复模板。</p>';
+    list.innerHTML = '<p class="empty-state">暂无快捷回复模板。点上方「＋ 新增话术」添加。</p>';
     return;
   }
   list.innerHTML = '';
+  const count = document.createElement('div');
+  count.className = 'list-count';
+  count.textContent = `共 ${rows.length} 条话术`;
+  list.appendChild(count);
   rows.forEach(r => {
     const div = document.createElement('div');
     div.className = 'ban-item';
@@ -2096,39 +2193,102 @@ async function loadQuickReplies() {
         <div class="ban-name">⚡ ${esc(r.title)}</div>
         <div>${esc(summarizeText(r.content, 80))}</div>
       </div>
-      <button class="btn-ghost btn-sm qr-del">🗑</button>`;
-    div.querySelector('.qr-del').addEventListener('click', async () => {
+      <div class="fl-actions">
+        <button type="button" class="btn-icon edit qr-edit" title="编辑">✏️</button>
+        <button type="button" class="btn-ghost btn-sm qr-del" title="删除">🗑</button>
+      </div>`;
+    div.querySelector('.qr-edit')?.addEventListener('click', () => startEditQr(r));
+    div.querySelector('.qr-del')?.addEventListener('click', async () => {
       if (!window.confirm('删除该模板？')) return;
-      await api('DELETE', '/quick_replies/' + r.id);
+      const res = await api('DELETE', '/quick_replies/' + r.id);
+      if (res && res.error) {
+        window.alert('删除失败：' + res.error);
+        return;
+      }
+      if (_qrEditId === r.id) resetQrForm();
       loadQuickReplies();
     });
     list.appendChild(div);
   });
 }
 
-document.getElementById('qr-add')?.addEventListener('click', async () => {
+async function loadQuickReplies({ keepEditor = false } = {}) {
+  const list = document.getElementById('qr-list');
+  if (!list) return;
+  const tab = document.getElementById('tab-quick-replies');
+  const editing = !!(tab && tab.classList.contains('is-editing'));
+  if (!(keepEditor && editing)) {
+    showQrListView();
+  }
+  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const data = await api('GET', '/quick_replies');
+  const stillEditing = !!(tab && tab.classList.contains('is-editing'));
+  if (data.error) {
+    if (!stillEditing) {
+      list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    }
+    return;
+  }
+  _quickRepliesCache = Array.isArray(data) ? data : [];
+  if (stillEditing) return;
+  renderQuickReplies();
+}
+
+async function submitQrForm() {
   const msgEl = document.getElementById('qr-msg');
-  const title = document.getElementById('qr-title').value.trim();
-  const content = document.getElementById('qr-content').value.trim();
+  const btn = document.getElementById('qr-submit');
+  if (!msgEl || !btn) return;
+  const title = document.getElementById('qr-title')?.value.trim() || '';
+  const content = document.getElementById('qr-content')?.value.trim() || '';
   if (!title || !content) {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ 标题与内容不能为空';
     return;
   }
+  btn.disabled = true;
   msgEl.className = 'msg';
-  msgEl.textContent = '保存中…';
-  const res = await api('POST', '/quick_replies', { title, content });
-  if (res.ok || res.id) {
-    msgEl.className = 'msg ok';
-    msgEl.textContent = '✅ 已添加';
-    document.getElementById('qr-title').value = '';
-    document.getElementById('qr-content').value = '';
-    loadQuickReplies();
-  } else {
-    msgEl.className = 'msg fail';
-    msgEl.textContent = '❌ ' + (res.error || '失败');
+  msgEl.textContent = _qrEditId != null ? '保存中…' : '添加中…';
+  try {
+    let res;
+    if (_qrEditId != null) {
+      res = await api('PUT', '/quick_replies/' + _qrEditId, { title, content });
+    } else {
+      res = await api('POST', '/quick_replies', { title, content });
+    }
+    if ((res && res.ok) || (res && res.id != null && res.error == null)) {
+      msgEl.className = 'msg ok';
+      msgEl.textContent = _qrEditId != null ? '✅ 已保存修改' : '✅ 已添加';
+      tg?.HapticFeedback?.notificationOccurred('success');
+      resetQrForm();
+      await loadQuickReplies();
+    } else {
+      msgEl.className = 'msg fail';
+      msgEl.textContent = '❌ ' + ((res && res.error) || '失败');
+    }
+  } finally {
+    btn.disabled = false;
   }
-});
+}
+
+function bindQrUi() {
+  document.getElementById('qr-start-create')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startCreateQr();
+  });
+  document.getElementById('qr-submit')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    submitQrForm();
+  });
+  document.getElementById('qr-cancel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetQrForm();
+  });
+  document.getElementById('qr-back')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetQrForm();
+  });
+}
 
 // ── Staff + audit ─────────────────────────────────────────────────────────────
 
@@ -2154,8 +2314,15 @@ function resetStaffFormFields() {
   const uid = document.getElementById('staff-uid');
   const role = document.getElementById('staff-role');
   const msg = document.getElementById('staff-msg');
-  if (uid) uid.value = '';
+  const formTitle = document.querySelector('#staff-editor-card .card-title');
+  const addBtn = document.getElementById('staff-add');
+  if (uid) {
+    uid.value = '';
+    uid.disabled = false;
+  }
   if (role) role.value = 'support';
+  if (formTitle) formTitle.textContent = '➕ 添加协作成员';
+  if (addBtn) addBtn.textContent = '＋ 添加成员';
   if (msg) {
     msg.textContent = '';
     msg.className = 'msg';
@@ -2177,11 +2344,45 @@ function startCreateStaff() {
     tab.classList.add('active');
   }
   resetStaffFormFields();
+  const formTitle = document.querySelector('#staff-editor-card .card-title');
+  if (formTitle) formTitle.textContent = '➕ 添加协作成员';
+  const addBtn = document.getElementById('staff-add');
+  if (addBtn) addBtn.textContent = '＋ 添加成员';
+  const uid = document.getElementById('staff-uid');
+  if (uid) uid.disabled = false;
   showStaffEditorView();
   setTimeout(() => {
     try { document.getElementById('staff-uid')?.focus(); } catch (_) {}
   }, 60);
   tg?.HapticFeedback?.impactOccurred?.('light');
+}
+
+function startEditStaff(s) {
+  if (!s || s.is_owner) return;
+  const tabBtn = document.querySelector('.nav-item[data-tab="staff"]');
+  const tab = document.getElementById('tab-staff');
+  if (tab && !tab.classList.contains('active')) {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tabBtn?.classList.add('active');
+    tab.classList.add('active');
+  }
+  resetStaffFormFields();
+  const formTitle = document.querySelector('#staff-editor-card .card-title');
+  if (formTitle) formTitle.textContent = '✏️ 修改成员角色';
+  const addBtn = document.getElementById('staff-add');
+  if (addBtn) addBtn.textContent = '💾 保存角色';
+  const uid = document.getElementById('staff-uid');
+  if (uid) {
+    uid.value = s.user_id;
+    uid.disabled = true;
+  }
+  const role = document.getElementById('staff-role');
+  if (role) role.value = (s.role === 'admin' || s.role === 'support') ? s.role : 'support';
+  showStaffEditorView();
+  setTimeout(() => {
+    try { document.getElementById('staff-role')?.focus(); } catch (_) {}
+  }, 60);
 }
 
 async function loadStaff({ keepEditor = false } = {}) {
@@ -2214,12 +2415,20 @@ async function loadStaff({ keepEditor = false } = {}) {
     const div = document.createElement('div');
     div.className = 'ban-item';
     const label = s.full_name || s.username || String(s.user_id);
+    const roleLabel = s.is_owner ? 'owner' : (s.role || 'support');
     div.innerHTML = `
       <div class="ban-info">
-        <div class="ban-name">${esc(label)} · <code>${esc(s.role)}</code></div>
-        <small>ID: ${esc(String(s.user_id))}${s.is_owner ? ' · owner' : ''}</small>
+        <div class="ban-name">${esc(label)} · <code>${esc(roleLabel)}</code></div>
+        <small>ID: ${esc(String(s.user_id))}${s.is_owner ? ' · 拥有者' : ''}</small>
       </div>
-      ${s.is_owner ? '' : '<button type="button" class="btn-ghost btn-sm staff-del">移除</button>'}`;
+      ${s.is_owner ? '' : `<div class="fl-actions">
+        <button type="button" class="btn-icon edit staff-edit" title="改角色">✏️</button>
+        <button type="button" class="btn-ghost btn-sm staff-del" title="移除">移除</button>
+      </div>`}`;
+    const editBtn = div.querySelector('.staff-edit');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => startEditStaff(s));
+    }
     const btn = div.querySelector('.staff-del');
     if (btn) {
       btn.addEventListener('click', async () => {
@@ -2236,12 +2445,14 @@ async function loadStaff({ keepEditor = false } = {}) {
 async function submitStaffForm() {
   const msgEl = document.getElementById('staff-msg');
   if (!msgEl) return;
-  const uid = parseInt(document.getElementById('staff-uid')?.value, 10);
+  const uidEl = document.getElementById('staff-uid');
+  const uid = parseInt(uidEl?.value, 10);
   const role = document.getElementById('staff-role')?.value || 'support';
+  const editing = !!(uidEl && uidEl.disabled);
   if (Number.isNaN(uid) || uid <= 0) {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ 请输入有效用户 ID';
-    try { document.getElementById('staff-uid')?.focus(); } catch (_) {}
+    try { uidEl?.focus(); } catch (_) {}
     return;
   }
   msgEl.className = 'msg';
@@ -2249,8 +2460,9 @@ async function submitStaffForm() {
   const res = await api('POST', '/staff', { user_id: uid, role });
   if (res && res.ok && res.error == null) {
     msgEl.className = 'msg ok';
-    msgEl.textContent = '✅ 已添加';
+    msgEl.textContent = editing ? '✅ 角色已更新' : '✅ 已添加';
     tg?.HapticFeedback?.notificationOccurred('success');
+    if (uidEl) uidEl.disabled = false;
     resetStaffFormFields();
     await loadStaff();
   } else {
@@ -2368,6 +2580,12 @@ function bindGlobalActions() {
       e.preventDefault();
       e.stopPropagation();
       try { startCreateStaff(); } catch (err) { console.warn('startCreateStaff', err); }
+      return;
+    }
+    if (action === 'qr-start-create') {
+      e.preventDefault();
+      e.stopPropagation();
+      try { startCreateQr(); } catch (err) { console.warn('startCreateQr', err); }
     }
   };
   document.addEventListener('click', handler, true);
@@ -2388,6 +2606,7 @@ function bootApp() {
   try { bindGlobalActions(); } catch (err) { console.warn('bindGlobalActions', err); }
   try { bindFilterUi(); } catch (err) { console.warn('bindFilterUi', err); }
   try { bindStaffUi(); } catch (err) { console.warn('bindStaffUi', err); }
+  try { bindQrUi(); } catch (err) { console.warn('bindQrUi', err); }
 
   try {
     _welcomeBuilder = initButtonBuilder(

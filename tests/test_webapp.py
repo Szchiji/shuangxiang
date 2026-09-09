@@ -1249,20 +1249,32 @@ def test_webapp_html_has_filter_and_staff_add_ui():
         'id="staff-uid"',
         'id="staff-add"',
         'id="staff-cancel"',
+        'id="qr-start-create"',
+        'data-action="qr-start-create"',
+        'id="qr-editor-card"',
+        'id="qr-title"',
+        'id="qr-submit"',
+        'id="qr-cancel"',
         'id="sidebar"',
         'id="sidebar-toggle"',
         'id="sidebar-hide"',
         'id="sidebar-reopen"',
+        'sidebar-toggle-collapse',
     ):
         assert needle in html, f"missing markup: {needle}"
 
     for needle in (
         "function startCreateFl",
         "function startCreateStaff",
+        "function startEditStaff",
+        "function startCreateQr",
+        "function startEditQr",
         "function showFlEditorView",
         "function showStaffEditorView",
+        "function showQrEditorView",
         "function bindFilterUi",
         "function bindStaffUi",
+        "function bindQrUi",
         "function bindGlobalActions",
         "function initSidebar",
         "function revealPanel",
@@ -1273,6 +1285,9 @@ def test_webapp_html_has_filter_and_staff_add_ui():
     assert "sidebar.collapsed" in css or ".sidebar.collapsed" in css
     assert "sidebar.hidden" in css or ".sidebar.hidden" in css
     assert "drawer-open" in css
+    assert "sidebar-toggle-collapse" in css
+    # phone rail should stay compact
+    assert "--sidebar-w: 96px" in css or "--sidebar-w:96px" in css
     # cache-bust query on assets
     assert "/static/app.js?v=" in html
     assert "/static/style.css?v=" in html
