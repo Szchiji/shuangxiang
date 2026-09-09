@@ -38,6 +38,9 @@
 
 html, body { height: 100%; }
 
+/* Utility: explicit hide (used by show()/hide() helpers) */
+.is-hidden { display: none !important; }
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--hint) var(--bg-hover);
@@ -102,6 +105,25 @@ body {
   opacity: 0;
   pointer-events: none;
   margin-left: 0;
+  overflow: hidden;
+}
+
+/* Mobile temporary drawer when re-opening a hidden sidebar */
+.sidebar.drawer-open {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(78vw, 260px) !important;
+  min-width: 0;
+  max-height: none;
+  height: 100vh;
+  opacity: 1 !important;
+  pointer-events: auto;
+  z-index: 36;
+  border-right: 1px solid var(--border);
+  box-shadow: 8px 0 28px rgba(15, 23, 42, .18);
+  transform: translateX(0);
 }
 
 .sidebar-backdrop {
@@ -120,6 +142,7 @@ body {
 .sidebar-backdrop.show {
   display: block;
   opacity: 1;
+  z-index: 34;
 }
 body.sidebar-open {
   overflow: hidden;
@@ -130,23 +153,25 @@ body.sidebar-open {
   left: 10px;
   top: 10px;
   z-index: 40;
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
   color: var(--text);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent);
   cursor: pointer;
   font-size: 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  transition: background .15s, color .15s, border-color .15s, transform .15s;
 }
 .sidebar-reopen:hover {
   background: var(--primary-soft);
   color: var(--primary);
   border-color: color-mix(in srgb, var(--primary) 25%, var(--border));
+  transform: scale(1.04);
 }
 
 .sidebar-header {
@@ -543,7 +568,9 @@ body.sidebar-open {
 
 .subview-header {
   display: flex;
+  align-items: center;
   justify-content: flex-start;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
@@ -841,12 +868,35 @@ body.sidebar-open {
   border: none; border-radius: 8px; padding: 10px 14px;
   font-size: 13px; font-weight: 700; cursor: pointer;
   display: inline-flex; align-items: center; gap: 4px;
-  transition: opacity .12s ease;
+  transition: opacity .12s ease, transform .12s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  position: relative;
+  z-index: 1;
 }
 .btn-sm-action:hover { opacity: .88; }
+.btn-sm-action:active { transform: scale(.98); }
 .btn-sm-export { background: var(--success); color: #fff; }
 .btn-sm-import { background: var(--info); color: #fff; }
-.btn-sm-add    { background: #fff; color: var(--text); }
+.btn-sm-add {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15,23,42,.12);
+  border: 1px solid color-mix(in srgb, #0f172a 12%, transparent);
+}
+/* Keep the primary CTA readable on dark page-hero gradients */
+[data-theme="dark"] .btn-sm-add {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: color-mix(in srgb, #fff 35%, transparent);
+  box-shadow: 0 1px 3px rgba(0,0,0,.35);
+}
+
+/* Dedicated add/edit panels */
+.editor-card {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  box-shadow: var(--hover-shadow);
+}
 
 .sm-table-wrap { overflow-x: auto; }
 .sm-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
@@ -932,6 +982,10 @@ body.sidebar-open {
     pointer-events: none;
     border-right-width: 0;
     overflow: hidden;
+    transform: translateX(-8px);
+  }
+  .sidebar.drawer-open {
+    transform: translateX(0);
   }
 
   .sidebar-title { max-width: 56px; font-size: 12px; }
@@ -944,6 +998,11 @@ body.sidebar-open {
     max-width: none;
   }
 
+  /* Leave room for the floating reopen control when sidebar is hidden */
+  html[data-sidebar="hidden"] #content {
+    padding-top: 56px;
+  }
+
   .sidebar-reopen {
     top: 10px;
     left: 10px;
@@ -952,6 +1011,8 @@ body.sidebar-open {
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .page-header h2 { font-size: 18px; }
   .btn-primary { width: 100%; }
+  .page-hero-actions { gap: 10px; }
+  .btn-sm-action { min-height: 40px; padding: 10px 16px; }
 }
 
 @media (max-width: 400px) {

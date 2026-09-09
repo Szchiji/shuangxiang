@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>机器人管理后台</title>
   <script>(function(){var t=localStorage.getItem('bh_theme')||'light';document.documentElement.setAttribute('data-theme',t);})();</script>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20260908">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -290,7 +290,7 @@
             <div class="page-hero-actions">
               <button type="button" id="fl-export" class="btn-sm-action btn-sm-export">⬇️ 导出</button>
               <button type="button" id="fl-import" class="btn-sm-action btn-sm-import">⬆️ 导入</button>
-              <button type="button" id="fl-start-create" class="btn-sm-action btn-sm-add">＋ 添加过滤词</button>
+              <button type="button" id="fl-start-create" class="btn-sm-action btn-sm-add" data-action="fl-start-create">＋ 添加过滤词</button>
             </div>
             <input type="file" id="fl-import-file" accept="application/json,.txt" style="display:none">
           </div>
@@ -313,7 +313,7 @@
             <div id="fl-list"></div>
           </div>
 
-          <div class="card" id="fl-editor-card" style="display:none">
+          <div class="card editor-card" id="fl-editor-card" style="display:none" hidden>
             <div class="subview-header">
               <button type="button" id="fl-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
             </div>
@@ -603,13 +603,26 @@
 
         <!-- Staff -->
         <section id="tab-staff" class="tab">
-          <div class="card page-hero">
+          <div class="card page-hero" id="staff-hero">
             <h3 class="page-hero-title">🧑‍💼 协作成员</h3>
             <p class="page-hero-desc">owner 拥有全部权限；admin 可改配置；support 可回复/封禁/改备注。仅 owner 可增删成员。</p>
+            <div class="page-hero-actions">
+              <button type="button" id="staff-start-create" class="btn-sm-action btn-sm-add" data-action="staff-start-create">＋ 添加成员</button>
+            </div>
           </div>
-          <div class="card">
+
+          <div class="card" id="staff-list-card">
+            <div id="staff-list"></div>
+          </div>
+
+          <div class="card editor-card" id="staff-editor-card" style="display:none" hidden>
+            <div class="subview-header">
+              <button type="button" id="staff-back" class="btn-ghost btn-sm">⬅️ 返回列表</button>
+            </div>
+            <h3 class="card-title">➕ 添加协作成员</h3>
+            <p class="hint-text">填写对方的 Telegram 数字用户 ID，并选择角色。添加后对方即可协助管理。</p>
             <label class="field-label">用户 ID
-              <input type="number" id="staff-uid" placeholder="Telegram 用户数字 ID">
+              <input type="number" id="staff-uid" placeholder="Telegram 用户数字 ID" inputmode="numeric">
             </label>
             <label class="field-label">角色
               <select id="staff-role">
@@ -617,11 +630,14 @@
                 <option value="admin">admin（管理员）</option>
               </select>
             </label>
-            <button id="staff-add" class="btn-primary">＋ 添加成员</button>
+            <div class="form-actions">
+              <button type="button" id="staff-add" class="btn-primary">＋ 添加成员</button>
+              <button type="button" id="staff-cancel" class="btn-ghost">取消</button>
+            </div>
             <div id="staff-msg" class="msg"></div>
           </div>
-          <div id="staff-list"></div>
-          <div class="card" style="margin-top:12px">
+
+          <div class="card" id="staff-audit-card" style="margin-top:12px">
             <h3 class="card-title">操作审计</h3>
             <div id="audit-list"></div>
           </div>
@@ -696,6 +712,6 @@
 
     <div id="error-msg" style="display:none" class="error-box"></div>
   </div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260908"></script>
 </body>
 </html>

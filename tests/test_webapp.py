@@ -1217,3 +1217,86 @@ async def test_away_reply_on_incoming(db):
     # cooldown
     await mod._maybe_send_away(msg, 50)
     assert len(replies) == 1
+
+
+# ── Web admin SPA structure (filter/staff add + sidebar) ───────────────────────
+
+def test_webapp_html_has_filter_and_staff_add_ui():
+    """Regression: add buttons must open dedicated editor panels (not no-ops)."""
+    from pathlib import Path
+
+    html = Path(__file__).resolve().parents[1].joinpath("webapp", "index.html").read_text(
+        encoding="utf-8"
+    )
+    js = Path(__file__).resolve().parents[1].joinpath("webapp", "app.js").read_text(
+        encoding="utf-8"
+    )
+    css = Path(__file__).resolve().parents[1].joinpath("webapp", "style.css").read_text(
+        encoding="utf-8"
+    )
+
+    for needle in (
+        'id="fl-start-create"',
+        'data-action="fl-start-create"',
+        'id="fl-editor-card"',
+        'id="fl-keyword"',
+        'id="fl-submit"',
+        'id="fl-cancel"',
+        'id="fl-back"',
+        'id="staff-start-create"',
+        'data-action="staff-start-create"',
+        'id="staff-editor-card"',
+        'id="staff-uid"',
+        'id="staff-add"',
+        'id="staff-cancel"',
+        'id="sidebar"',
+        'id="sidebar-toggle"',
+        'id="sidebar-hide"',
+        'id="sidebar-reopen"',
+    ):
+        assert needle in html, f"missing markup: {needle}"
+
+    for needle in (
+        "function startCreateFl",
+        "function startCreateStaff",
+        "function showFlEditorView",
+        "function showStaffEditorView",
+        "function bindFilterUi",
+        "function bindStaffUi",
+        "function bindGlobalActions",
+        "function initSidebar",
+        "function revealPanel",
+        "bh_sidebar_mode",
+    ):
+        assert needle in js, f"missing JS: {needle}"
+
+    assert "sidebar.collapsed" in css or ".sidebar.collapsed" in css
+    assert "sidebar.hidden" in css or ".sidebar.hidden" in css
+    assert "drawer-open" in css
+    # cache-bust query on assets
+    assert "/static/app.js?v=" in html
+    assert "/static/style.css?v=" in html
+
+
+@pytest.mark.asyncio
+async def test_index_and_static_cache_headers(aiohttp_client, app):
+    """HTML must not be cached; static assets get short private cache."""
+    client = await aiohttp_client(app)
+
+    index = await client.get("/")
+    assert index.status == 200
+    assert "text/html" in index.headers.get("Content-Type", "")
+    cc = index.headers.get("Cache-Control", "")
+    assert "no-store" in cc or "no-cache" in cc
+    body = await index.text()
+    assert "fl-start-create" in body
+    assert "staff-start-create" in body
+
+    static_js = await client.get("/static/app.js")
+    assert static_js.status == 200
+    js_cc = static_js.headers.get("Cache-Control", "")
+    assert "max-age" in js_cc or "must-revalidate" in js_cc
+    js_body = await static_js.text()
+    assert "function startCreateFl" in js_body
+    assert "function startCreateStaff" in js_body
+    assert "function initSidebar" in js_body

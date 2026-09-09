@@ -10,20 +10,48 @@ const initData = tg?.initData || '';
 const BASE    = `/api/${tenantId}`;
 const HEADERS = { 'Content-Type': 'application/json', 'X-Init-Data': initData };
 
-function show(id) {
-  const el = document.getElementById(id);
+function elRef(idOrEl) {
+  if (!idOrEl) return null;
+  return typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+}
+
+function show(idOrEl) {
+  const el = elRef(idOrEl);
   if (!el) return;
+  el.classList.remove('is-hidden');
+  el.hidden = false;
   // removeProperty restores stylesheet display (block/flex/etc.)
   el.style.removeProperty('display');
-  // Fallback if element was only hidden via inline style and has no CSS display
+  // Fallback if element was only hidden via inline style / CSS and has no visible display
   if (getComputedStyle(el).display === 'none') {
-    el.style.display = (el.tagName === 'BUTTON' || el.tagName === 'SPAN') ? 'inline-flex' : 'block';
+    const tag = el.tagName;
+    el.style.display = (tag === 'BUTTON' || tag === 'SPAN' || tag === 'A') ? 'inline-flex' : 'block';
   }
 }
-function hide(id) {
-  const el = document.getElementById(id);
+function hide(idOrEl) {
+  const el = elRef(idOrEl);
   if (!el) return;
+  el.classList.add('is-hidden');
+  el.hidden = true;
   el.style.display = 'none';
+}
+
+/** Force a panel into view (Telegram Mini App scroll is unreliable). */
+function revealPanel(idOrEl) {
+  const el = elRef(idOrEl);
+  if (!el) return null;
+  show(el);
+  try {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (_) {
+    try { el.scrollIntoView(true); } catch (__) {}
+  }
+  // Nudge window scroll for Mini App webviews that ignore element scrollIntoView
+  try {
+    const top = el.getBoundingClientRect().top + (window.pageYOffset || 0) - 12;
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+  } catch (_) {}
+  return el;
 }
 
 async function api(method, path, body) {
@@ -135,20 +163,23 @@ function initSidebar() {
     backdrop.className = 'sidebar-backdrop';
     backdrop.setAttribute('aria-label', '关闭侧栏');
     backdrop.hidden = true;
-    // Place after sidebar so it stacks correctly
     sidebar.insertAdjacentElement('afterend', backdrop);
   }
 
   const KEY = 'bh_sidebar_mode'; // '', 'collapsed', 'hidden'
+  // Remember preferred desktop mode separately so mobile hide doesn't wipe collapse pref
+  const KEY_DESKTOP = 'bh_sidebar_mode_desktop';
 
   function setReopenVisible(visible) {
     if (!reopenBtn) return;
     if (visible) {
       reopenBtn.hidden = false;
+      reopenBtn.classList.remove('is-hidden');
       reopenBtn.style.display = 'inline-flex';
       reopenBtn.setAttribute('aria-hidden', 'false');
     } else {
       reopenBtn.hidden = true;
+      reopenBtn.classList.add('is-hidden');
       reopenBtn.style.display = 'none';
       reopenBtn.setAttribute('aria-hidden', 'true');
     }
@@ -158,27 +189,68 @@ function initSidebar() {
     if (!backdrop) return;
     backdrop.hidden = !visible;
     backdrop.classList.toggle('show', !!visible);
-    document.body.classList.toggle('sidebar-open', !!visible && isMobileLayout());
+    document.body.classList.toggle('sidebar-open', !!visible);
   }
 
-  function applyMode(mode) {
+  function updateChrome(effective, mobile) {
+    if (toggleBtn) {
+      if (mobile) {
+        toggleBtn.setAttribute('aria-label', effective === 'hidden' ? '打开侧栏' : '隐藏侧栏');
+        toggleBtn.title = effective === 'hidden' ? '打开侧栏' : '隐藏侧栏';
+      } else {
+        const collapsed = effective === 'collapsed';
+        toggleBtn.setAttribute('aria-label', collapsed ? '展开侧栏' : '折叠侧栏');
+        toggleBtn.title = collapsed ? '展开侧栏（显示文字）' : '折叠侧栏（仅图标）';
+      }
+    }
+    if (hideBtn) {
+      hideBtn.hidden = effective === 'hidden';
+      hideBtn.style.display = effective === 'hidden' ? 'none' : '';
+    }
+    document.documentElement.setAttribute('data-sidebar', effective || 'expanded');
+  }
+
+  function applyMode(mode, { persist = true, asDrawer = false } = {}) {
     const mobile = isMobileLayout();
     // Compact icon-rail is awkward on very narrow screens — keep labels visible.
-    const effective = mobile && mode === 'collapsed' ? '' : (mode || '');
+    let effective = mode || '';
+    if (mobile && effective === 'collapsed') effective = '';
 
-    sidebar.classList.remove('collapsed', 'hidden');
-    if (effective === 'collapsed') sidebar.classList.add('collapsed');
-    if (effective === 'hidden') sidebar.classList.add('hidden');
+    sidebar.classList.remove('collapsed', 'hidden', 'drawer-open');
 
-    setBackdrop(false);
-    setReopenVisible(effective === 'hidden');
+    if (effective === 'collapsed') {
+      sidebar.classList.add('collapsed');
+      setBackdrop(false);
+      setReopenVisible(false);
+    } else if (effective === 'hidden') {
+      sidebar.classList.add('hidden');
+      setBackdrop(false);
+      setReopenVisible(true);
+    } else {
+      // expanded
+      if (mobile && asDrawer) {
+        sidebar.classList.add('drawer-open');
+        setBackdrop(true);
+        setReopenVisible(false);
+      } else {
+        setBackdrop(false);
+        setReopenVisible(false);
+      }
+    }
 
-    try {
-      localStorage.setItem(
-        KEY,
-        effective === 'collapsed' || effective === 'hidden' ? effective : ''
-      );
-    } catch (_) {}
+    updateChrome(effective, mobile);
+
+    if (persist) {
+      try {
+        if (!mobile) {
+          localStorage.setItem(KEY_DESKTOP, effective === 'collapsed' || effective === 'hidden' ? effective : '');
+        }
+        localStorage.setItem(
+          KEY,
+          effective === 'collapsed' || effective === 'hidden' ? effective : ''
+        );
+      } catch (_) {}
+    }
   }
 
   function currentMode() {
@@ -187,19 +259,24 @@ function initSidebar() {
     return '';
   }
 
-  const saved = (() => { try { return localStorage.getItem(KEY) || ''; } catch (_) { return ''; } })();
-  applyMode(saved === 'collapsed' || saved === 'hidden' ? saved : '');
+  const saved = (() => {
+    try {
+      const v = localStorage.getItem(KEY) || '';
+      return (v === 'collapsed' || v === 'hidden') ? v : '';
+    } catch (_) { return ''; }
+  })();
+  applyMode(saved, { persist: false });
 
   toggleBtn?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (sidebar.classList.contains('hidden')) {
-      applyMode('');
+      // Re-open: on mobile use temporary drawer overlay
+      applyMode('', { asDrawer: isMobileLayout() });
       return;
     }
     if (isMobileLayout()) {
-      // On mobile: hamburger hides/shows the docked rail
-      applyMode(currentMode() === 'hidden' ? '' : 'hidden');
+      applyMode('hidden');
       return;
     }
     applyMode(sidebar.classList.contains('collapsed') ? '' : 'collapsed');
@@ -212,15 +289,35 @@ function initSidebar() {
   reopenBtn?.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    applyMode('');
+    applyMode('', { asDrawer: isMobileLayout() });
   });
   backdrop?.addEventListener('click', (e) => {
     e.preventDefault();
     applyMode('hidden');
   });
 
+  // Close mobile drawer after navigating
+  sidebar.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      if (isMobileLayout() && sidebar.classList.contains('drawer-open')) {
+        applyMode('hidden');
+      }
+    });
+  });
+
   window.addEventListener('resize', () => {
-    applyMode(currentMode());
+    const mobile = isMobileLayout();
+    let mode = currentMode();
+    if (!mobile) {
+      try {
+        const desk = localStorage.getItem(KEY_DESKTOP);
+        if (desk === 'collapsed' || desk === 'hidden' || desk === '') mode = desk || '';
+      } catch (_) {}
+    } else if (mode === 'collapsed') {
+      mode = '';
+    }
+    // Drop drawer overlay when rotating to desktop
+    applyMode(mode, { persist: false, asDrawer: false });
   });
 
   // Collapsible nav groups
@@ -555,19 +652,19 @@ async function loadSettings() {
   show('main');
 }
 
-document.getElementById('save-welcome-text').addEventListener('click', async () => {
+document.getElementById('save-welcome-text')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     welcome_text:      document.getElementById('welcome-text').value,
   }, 'welcome-text-msg', '✅ 欢迎语已保存');
 });
 
-document.getElementById('save-welcome-buttons').addEventListener('click', async () => {
+document.getElementById('save-welcome-buttons')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     welcome_btns_text: _welcomeBuilder.getText(),
   }, 'welcome-buttons-msg', '✅ 欢迎按钮已保存');
 });
 
-document.getElementById('save-welcome-media').addEventListener('click', async () => {
+document.getElementById('save-welcome-media')?.addEventListener('click', async () => {
   const mediaType = document.getElementById('welcome-media-type').value;
   const mediaId = document.getElementById('welcome-media-id').value.trim();
   if (mediaType && !mediaId) {
@@ -582,7 +679,7 @@ document.getElementById('save-welcome-media').addEventListener('click', async ()
   }, 'welcome-media-msg', '✅ 欢迎语封面已保存');
 });
 
-document.getElementById('clear-welcome-media').addEventListener('click', async () => {
+document.getElementById('clear-welcome-media')?.addEventListener('click', async () => {
   document.getElementById('welcome-media-type').value = '';
   document.getElementById('welcome-media-id').value = '';
   await saveSettingsPartial({
@@ -591,7 +688,7 @@ document.getElementById('clear-welcome-media').addEventListener('click', async (
   }, 'welcome-media-msg', '✅ 已清除封面');
 });
 
-document.getElementById('save-security-settings').addEventListener('click', async () => {
+document.getElementById('save-security-settings')?.addEventListener('click', async () => {
   const floodMaxMsgs = parseInt(document.getElementById('flood-max-msgs').value, 10);
   const floodWindow  = parseInt(document.getElementById('flood-window').value, 10);
   if (Number.isNaN(floodMaxMsgs) || Number.isNaN(floodWindow)) {
@@ -610,7 +707,7 @@ document.getElementById('save-security-settings').addEventListener('click', asyn
   }, 'settings-msg', '✅ 安全设置已保存');
 });
 
-document.getElementById('save-away-settings').addEventListener('click', async () => {
+document.getElementById('save-away-settings')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     away_on:  document.getElementById('away-on').checked,
     away_msg: document.getElementById('away-msg').value,
@@ -759,7 +856,7 @@ async function deleteAR(id) {
   loadAutoReplies();
 }
 
-document.getElementById('ar-submit').addEventListener('click', async () => {
+document.getElementById('ar-submit')?.addEventListener('click', async () => {
   const msgEl  = document.getElementById('ar-msg');
   const keyword = document.getElementById('ar-keyword').value.trim();
   const reply   = document.getElementById('ar-reply').value.trim();
@@ -815,13 +912,13 @@ document.getElementById('ar-submit').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('ar-cancel').addEventListener('click', resetArForm);
-document.getElementById('ar-back').addEventListener('click', resetArForm);
-document.getElementById('ar-start-create').addEventListener('click', startCreateAr);
-document.getElementById('ar-search').addEventListener('input', renderAutoReplies);
-document.getElementById('ar-filter-match').addEventListener('change', renderAutoReplies);
+document.getElementById('ar-cancel')?.addEventListener('click', resetArForm);
+document.getElementById('ar-back')?.addEventListener('click', resetArForm);
+document.getElementById('ar-start-create')?.addEventListener('click', startCreateAr);
+document.getElementById('ar-search')?.addEventListener('input', renderAutoReplies);
+document.getElementById('ar-filter-match')?.addEventListener('change', renderAutoReplies);
 
-document.getElementById('ar-export').addEventListener('click', async () => {
+document.getElementById('ar-export')?.addEventListener('click', async () => {
   const data = await api('GET', '/auto_replies/export');
   if (data.error) { alert('导出失败：' + data.error); return; }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -832,10 +929,10 @@ document.getElementById('ar-export').addEventListener('click', async () => {
   a.click();
   URL.revokeObjectURL(url);
 });
-document.getElementById('ar-import').addEventListener('click', () => {
+document.getElementById('ar-import')?.addEventListener('click', () => {
   document.getElementById('ar-import-file').click();
 });
-document.getElementById('ar-import-file').addEventListener('change', async (e) => {
+document.getElementById('ar-import-file')?.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
@@ -862,6 +959,8 @@ function showFlListView() {
   show('fl-search-card');
   show('fl-list-card');
   hide('fl-editor-card');
+  const tab = document.getElementById('tab-filters');
+  if (tab) tab.classList.remove('is-editing');
 }
 
 function showFlEditorView() {
@@ -869,21 +968,35 @@ function showFlEditorView() {
   show('fl-hero');
   hide('fl-search-card');
   hide('fl-list-card');
-  show('fl-editor-card');
+  revealPanel('fl-editor-card');
+  const tab = document.getElementById('tab-filters');
+  if (tab) tab.classList.add('is-editing');
 }
 
 function resetFlFormFields() {
   _flEditId = null;
-  document.getElementById('fl-edit-id').value = '';
-  document.getElementById('fl-form-title').textContent = '➕ 添加过滤词';
-  document.getElementById('fl-form-hint').textContent =
-    '支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。';
-  document.getElementById('fl-submit').textContent = '➕ 添加';
-  document.getElementById('fl-keyword').value = '';
-  document.getElementById('fl-keyword').rows = 3;
-  document.getElementById('fl-match').value = 'contains';
-  document.getElementById('fl-msg').textContent = '';
-  document.getElementById('fl-msg').className = 'msg';
+  const editId = document.getElementById('fl-edit-id');
+  if (editId) editId.value = '';
+  const title = document.getElementById('fl-form-title');
+  if (title) title.textContent = '➕ 添加过滤词';
+  const hint = document.getElementById('fl-form-hint');
+  if (hint) {
+    hint.textContent = '支持包含匹配或正则表达式。可一次粘贴多个词，每行一个。';
+  }
+  const submit = document.getElementById('fl-submit');
+  if (submit) submit.textContent = '➕ 添加';
+  const kw = document.getElementById('fl-keyword');
+  if (kw) {
+    kw.value = '';
+    kw.rows = 3;
+  }
+  const match = document.getElementById('fl-match');
+  if (match) match.value = 'contains';
+  const msg = document.getElementById('fl-msg');
+  if (msg) {
+    msg.textContent = '';
+    msg.className = 'msg';
+  }
 }
 
 function resetFlForm() {
@@ -892,28 +1005,51 @@ function resetFlForm() {
 }
 
 function startCreateFl() {
+  // Ensure filters tab is active so the editor is not display:none via .tab
+  const tabBtn = document.querySelector('.nav-item[data-tab="filters"]');
+  const tab = document.getElementById('tab-filters');
+  if (tab && !tab.classList.contains('active')) {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tabBtn?.classList.add('active');
+    tab.classList.add('active');
+  }
   resetFlFormFields();
   showFlEditorView();
-  const editor = document.getElementById('fl-editor-card');
-  editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  setTimeout(() => document.getElementById('fl-keyword').focus(), 50);
+  setTimeout(() => {
+    try { document.getElementById('fl-keyword')?.focus(); } catch (_) {}
+  }, 60);
+  tg?.HapticFeedback?.impactOccurred?.('light');
 }
 
 function startEditFl(r) {
   _flEditId = r.id;
-  document.getElementById('fl-edit-id').value = r.id;
-  document.getElementById('fl-form-title').textContent = '✏️ 编辑过滤词';
-  document.getElementById('fl-form-hint').textContent =
-    '修改关键词或匹配方式后保存。编辑时一次只能改一条。';
-  document.getElementById('fl-submit').textContent = '💾 保存修改';
-  document.getElementById('fl-keyword').value = r.keyword || '';
-  document.getElementById('fl-keyword').rows = 2;
-  document.getElementById('fl-match').value = r.match_type || 'contains';
-  document.getElementById('fl-msg').textContent = '';
-  document.getElementById('fl-msg').className = 'msg';
+  const editId = document.getElementById('fl-edit-id');
+  if (editId) editId.value = r.id;
+  const title = document.getElementById('fl-form-title');
+  if (title) title.textContent = '✏️ 编辑过滤词';
+  const hint = document.getElementById('fl-form-hint');
+  if (hint) {
+    hint.textContent = '修改关键词或匹配方式后保存。编辑时一次只能改一条。';
+  }
+  const submit = document.getElementById('fl-submit');
+  if (submit) submit.textContent = '💾 保存修改';
+  const kw = document.getElementById('fl-keyword');
+  if (kw) {
+    kw.value = r.keyword || '';
+    kw.rows = 2;
+  }
+  const match = document.getElementById('fl-match');
+  if (match) match.value = r.match_type || 'contains';
+  const msg = document.getElementById('fl-msg');
+  if (msg) {
+    msg.textContent = '';
+    msg.className = 'msg';
+  }
   showFlEditorView();
-  document.getElementById('fl-editor-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  setTimeout(() => document.getElementById('fl-keyword').focus(), 50);
+  setTimeout(() => {
+    try { document.getElementById('fl-keyword')?.focus(); } catch (_) {}
+  }, 60);
 }
 
 function renderFilters() {
@@ -966,16 +1102,25 @@ function renderFilters() {
   });
 }
 
-async function loadFilters() {
+async function loadFilters({ keepEditor = false } = {}) {
   const list = document.getElementById('fl-list');
-  showFlListView();
-  list.innerHTML = '<p class="empty-state">加载中…</p>';
+  const tab = document.getElementById('tab-filters');
+  const editing = !!(tab && tab.classList.contains('is-editing'));
+  if (!(keepEditor && editing)) {
+    showFlListView();
+  }
+  if (list) list.innerHTML = '<p class="empty-state">加载中…</p>';
   const data = await api('GET', '/filters');
+  // A concurrent "add" click may have opened the editor while we were fetching.
+  const stillEditing = !!(tab && tab.classList.contains('is-editing'));
   if (data && data.error) {
-    list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    if (list && !stillEditing) {
+      list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
+    }
     return;
   }
   _filtersCache = Array.isArray(data) ? data : [];
+  if (stillEditing) return; // don't yank the open editor closed
   renderFilters();
 }
 
@@ -990,11 +1135,12 @@ async function deleteFilter(id) {
   await loadFilters();
 }
 
-document.getElementById('fl-submit').addEventListener('click', async () => {
+async function submitFilterForm() {
   const msgEl = document.getElementById('fl-msg');
   const btn = document.getElementById('fl-submit');
-  const raw = document.getElementById('fl-keyword').value;
-  const match = document.getElementById('fl-match').value;
+  if (!msgEl || !btn) return;
+  const raw = document.getElementById('fl-keyword')?.value || '';
+  const match = document.getElementById('fl-match')?.value || 'contains';
   const words = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   if (!words.length) {
     msgEl.className = 'msg fail';
@@ -1036,7 +1182,8 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
       else errors.push(`${keyword}: ${(res && res.error) || '失败'}`);
     }
     if (ok) {
-      document.getElementById('fl-keyword').value = '';
+      const kw = document.getElementById('fl-keyword');
+      if (kw) kw.value = '';
       msgEl.className = 'msg ok';
       msgEl.textContent = errors.length
         ? `✅ 已添加 ${ok} 个，失败 ${errors.length} 个`
@@ -1051,19 +1198,9 @@ document.getElementById('fl-submit').addEventListener('click', async () => {
   } finally {
     btn.disabled = false;
   }
-});
+}
 
-document.getElementById('fl-start-create')?.addEventListener('click', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  startCreateFl();
-});
-document.getElementById('fl-cancel').addEventListener('click', resetFlForm);
-document.getElementById('fl-back').addEventListener('click', resetFlForm);
-document.getElementById('fl-search').addEventListener('input', renderFilters);
-document.getElementById('fl-filter-match').addEventListener('change', renderFilters);
-
-document.getElementById('fl-export').addEventListener('click', async () => {
+async function exportFilters() {
   const data = await api('GET', '/filters/export');
   if (data.error) { alert('导出失败：' + data.error); return; }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1073,20 +1210,15 @@ document.getElementById('fl-export').addEventListener('click', async () => {
   a.download = 'filters.json';
   a.click();
   URL.revokeObjectURL(url);
-});
-document.getElementById('fl-import').addEventListener('click', () => {
-  document.getElementById('fl-import-file').click();
-});
-document.getElementById('fl-import-file').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  e.target.value = '';
+}
+
+async function importFiltersFile(file) {
   if (!file) return;
   let parsed;
   const text = await file.text();
   try {
     parsed = JSON.parse(text);
   } catch (_) {
-    // Plain text: one keyword per line
     parsed = {
       items: text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
         .map(keyword => ({ keyword, match_type: 'contains' })),
@@ -1096,7 +1228,42 @@ document.getElementById('fl-import-file').addEventListener('change', async (e) =
   if (res.error) { alert('导入失败：' + res.error); return; }
   alert(`导入完成：成功 ${res.imported} 条${res.errors && res.errors.length ? `，失败 ${res.errors.length} 条` : ''}`);
   loadFilters();
-});
+}
+
+function bindFilterUi() {
+  document.getElementById('fl-submit')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    submitFilterForm();
+  });
+  document.getElementById('fl-start-create')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startCreateFl();
+  });
+  document.getElementById('fl-cancel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetFlForm();
+  });
+  document.getElementById('fl-back')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetFlForm();
+  });
+  document.getElementById('fl-search')?.addEventListener('input', renderFilters);
+  document.getElementById('fl-filter-match')?.addEventListener('change', renderFilters);
+  document.getElementById('fl-export')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    exportFilters();
+  });
+  document.getElementById('fl-import')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('fl-import-file')?.click();
+  });
+  document.getElementById('fl-import-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    await importFiltersFile(file);
+  });
+}
 
 // ── Force Subscribe ───────────────────────────────────────────────────────────
 
@@ -1236,7 +1403,7 @@ async function loadForceSub() {
   showFsubView('fsub-list-view');
 }
 
-document.getElementById('fsub-save-btn').addEventListener('click', async () => {
+document.getElementById('fsub-save-btn')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('fsub-msg');
   const chat  = document.getElementById('fsub-add-chat').value.trim();
   if (!chat) {
@@ -1252,18 +1419,18 @@ document.getElementById('fsub-save-btn').addEventListener('click', async () => {
   if (await saveFsubChannels()) resetFsubEditor();
 });
 
-document.getElementById('fsub-save-settings').addEventListener('click', async () => {
+document.getElementById('fsub-save-settings')?.addEventListener('click', async () => {
   await saveSettingsPartial({
     force_sub_on: document.getElementById('force-sub-on').checked,
     force_sub_msg: document.getElementById('fsub-msg-text').value,
   }, 'fsub-save-msg-result', '✅ 规则设置已保存');
 });
 
-document.getElementById('fsub-start-add').addEventListener('click', startCreateFsub);
-document.getElementById('fsub-open-settings').addEventListener('click', () => showFsubView('fsub-settings-view'));
-document.getElementById('fsub-back-from-editor').addEventListener('click', resetFsubEditor);
-document.getElementById('fsub-cancel-btn').addEventListener('click', resetFsubEditor);
-document.getElementById('fsub-back-from-settings').addEventListener('click', () => showFsubView('fsub-list-view'));
+document.getElementById('fsub-start-add')?.addEventListener('click', startCreateFsub);
+document.getElementById('fsub-open-settings')?.addEventListener('click', () => showFsubView('fsub-settings-view'));
+document.getElementById('fsub-back-from-editor')?.addEventListener('click', resetFsubEditor);
+document.getElementById('fsub-cancel-btn')?.addEventListener('click', resetFsubEditor);
+document.getElementById('fsub-back-from-settings')?.addEventListener('click', () => showFsubView('fsub-list-view'));
 
 // ── Broadcast ─────────────────────────────────────────────────────────────────
 
@@ -1308,7 +1475,7 @@ async function pollBroadcastJob(jobId) {
   tick();
 }
 
-document.getElementById('bc-send').addEventListener('click', async () => {
+document.getElementById('bc-send')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('bc-msg');
   const text  = document.getElementById('bc-text').value.trim();
   const photo = document.getElementById('bc-photo').value.trim();
@@ -1474,8 +1641,8 @@ async function unban(uid) {
   }
 }
 
-document.getElementById('banned-search').addEventListener('input', renderBanned);
-document.getElementById('ban-submit').addEventListener('click', () => {
+document.getElementById('banned-search')?.addEventListener('input', renderBanned);
+document.getElementById('ban-submit')?.addEventListener('click', () => {
   const uid = parseInt(document.getElementById('ban-uid').value, 10);
   if (Number.isNaN(uid) || uid <= 0) {
     const msgEl = document.getElementById('ban-msg');
@@ -1486,7 +1653,7 @@ document.getElementById('ban-submit').addEventListener('click', () => {
   banUser(uid);
 });
 let _usersSearchTimer = null;
-document.getElementById('users-search').addEventListener('input', () => {
+document.getElementById('users-search')?.addEventListener('input', () => {
   if (_usersSearchTimer) clearTimeout(_usersSearchTimer);
   _usersSearchTimer = setTimeout(loadUsers, 300);
 });
@@ -1550,8 +1717,8 @@ async function loadInterceptLogs() {
   renderInterceptLogs(items);
 }
 
-document.getElementById('logs-reason').addEventListener('change', loadInterceptLogs);
-document.getElementById('logs-refresh').addEventListener('click', loadInterceptLogs);
+document.getElementById('logs-reason')?.addEventListener('change', loadInterceptLogs);
+document.getElementById('logs-refresh')?.addEventListener('click', loadInterceptLogs);
 
 // ── Scheduled Messages ──────────────────────────────────────────────────────
 
@@ -1582,7 +1749,7 @@ function toggleSmMediaRow() {
   if (type === 'text') hide('sm-media-row');
   else show('sm-media-row');
 }
-document.getElementById('sm-msg-type').addEventListener('change', toggleSmMediaRow);
+document.getElementById('sm-msg-type')?.addEventListener('change', toggleSmMediaRow);
 
 function resetSmForm() {
   _smEditId = null;
@@ -1717,14 +1884,14 @@ async function toggleSm(id, enabled) {
   loadScheduledMessages();
 }
 
-document.getElementById('sm-select-all').addEventListener('change', (e) => {
+document.getElementById('sm-select-all')?.addEventListener('change', (e) => {
   document.querySelectorAll('#sm-table-body .sm-row-check').forEach(cb => {
     cb.checked = e.target.checked;
     cb.dispatchEvent(new Event('change'));
   });
 });
 
-document.getElementById('sm-bulk-delete').addEventListener('click', async () => {
+document.getElementById('sm-bulk-delete')?.addEventListener('click', async () => {
   if (!_smSelected.size) return;
   if (!window.confirm(`确定要删除已选的 ${_smSelected.size} 条定时消息吗？`)) return;
   await api('POST', '/scheduled_messages/bulk_delete', { ids: [..._smSelected] });
@@ -1732,18 +1899,18 @@ document.getElementById('sm-bulk-delete').addEventListener('click', async () => 
   loadScheduledMessages();
 });
 
-document.getElementById('sm-search-btn').addEventListener('click', renderScheduledMessages);
-document.getElementById('sm-search').addEventListener('input', renderScheduledMessages);
-document.getElementById('sm-search-clear').addEventListener('click', () => {
+document.getElementById('sm-search-btn')?.addEventListener('click', renderScheduledMessages);
+document.getElementById('sm-search')?.addEventListener('input', renderScheduledMessages);
+document.getElementById('sm-search-clear')?.addEventListener('click', () => {
   document.getElementById('sm-search').value = '';
   renderScheduledMessages();
 });
 
-document.getElementById('sm-start-create').addEventListener('click', startCreateSm);
-document.getElementById('sm-back').addEventListener('click', () => { resetSmForm(); showSmListView(); });
-document.getElementById('sm-cancel').addEventListener('click', () => { resetSmForm(); showSmListView(); });
+document.getElementById('sm-start-create')?.addEventListener('click', startCreateSm);
+document.getElementById('sm-back')?.addEventListener('click', () => { resetSmForm(); showSmListView(); });
+document.getElementById('sm-cancel')?.addEventListener('click', () => { resetSmForm(); showSmListView(); });
 
-document.getElementById('sm-submit').addEventListener('click', async () => {
+document.getElementById('sm-submit')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('sm-form-msg');
   const payload = {
     target_type:      document.getElementById('sm-target-type').value,
@@ -1781,7 +1948,7 @@ document.getElementById('sm-submit').addEventListener('click', async () => {
   }
 });
 
-document.getElementById('sm-export').addEventListener('click', async () => {
+document.getElementById('sm-export')?.addEventListener('click', async () => {
   const data = await api('GET', '/scheduled_messages/export');
   if (data.error) { alert('导出失败：' + data.error); return; }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -1793,11 +1960,11 @@ document.getElementById('sm-export').addEventListener('click', async () => {
   URL.revokeObjectURL(url);
 });
 
-document.getElementById('sm-import').addEventListener('click', () => {
+document.getElementById('sm-import')?.addEventListener('click', () => {
   document.getElementById('sm-import-file').click();
 });
 
-document.getElementById('sm-import-file').addEventListener('change', async (e) => {
+document.getElementById('sm-import-file')?.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
@@ -1875,17 +2042,17 @@ async function loadOpsUsers() {
   renderOpsUsers();
 }
 
-document.getElementById('ops-users-refresh').addEventListener('click', loadOpsUsers);
-document.getElementById('ops-session-filter').addEventListener('change', loadOpsUsers);
-document.getElementById('ops-users-search').addEventListener('input', () => {
+document.getElementById('ops-users-refresh')?.addEventListener('click', loadOpsUsers);
+document.getElementById('ops-session-filter')?.addEventListener('change', loadOpsUsers);
+document.getElementById('ops-users-search')?.addEventListener('input', () => {
   if (_opsSearchTimer) clearTimeout(_opsSearchTimer);
   _opsSearchTimer = setTimeout(loadOpsUsers, 300);
 });
-document.getElementById('ops-close-editor').addEventListener('click', () => {
+document.getElementById('ops-close-editor')?.addEventListener('click', () => {
   hide('ops-user-editor');
   _opsEditUid = null;
 });
-document.getElementById('ops-save-user').addEventListener('click', async () => {
+document.getElementById('ops-save-user')?.addEventListener('click', async () => {
   if (!_opsEditUid) return;
   const msgEl = document.getElementById('ops-edit-msg');
   msgEl.className = 'msg';
@@ -1939,7 +2106,7 @@ async function loadQuickReplies() {
   });
 }
 
-document.getElementById('qr-add').addEventListener('click', async () => {
+document.getElementById('qr-add')?.addEventListener('click', async () => {
   const msgEl = document.getElementById('qr-msg');
   const title = document.getElementById('qr-title').value.trim();
   const content = document.getElementById('qr-content').value.trim();
@@ -1965,16 +2132,84 @@ document.getElementById('qr-add').addEventListener('click', async () => {
 
 // ── Staff + audit ─────────────────────────────────────────────────────────────
 
-async function loadStaff() {
+function showStaffListView() {
+  show('staff-hero');
+  show('staff-list-card');
+  show('staff-audit-card');
+  hide('staff-editor-card');
+  const tab = document.getElementById('tab-staff');
+  if (tab) tab.classList.remove('is-editing');
+}
+
+function showStaffEditorView() {
+  show('staff-hero');
+  hide('staff-list-card');
+  hide('staff-audit-card');
+  revealPanel('staff-editor-card');
+  const tab = document.getElementById('tab-staff');
+  if (tab) tab.classList.add('is-editing');
+}
+
+function resetStaffFormFields() {
+  const uid = document.getElementById('staff-uid');
+  const role = document.getElementById('staff-role');
+  const msg = document.getElementById('staff-msg');
+  if (uid) uid.value = '';
+  if (role) role.value = 'support';
+  if (msg) {
+    msg.textContent = '';
+    msg.className = 'msg';
+  }
+}
+
+function resetStaffForm() {
+  resetStaffFormFields();
+  showStaffListView();
+}
+
+function startCreateStaff() {
+  const tabBtn = document.querySelector('.nav-item[data-tab="staff"]');
+  const tab = document.getElementById('tab-staff');
+  if (tab && !tab.classList.contains('active')) {
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tabBtn?.classList.add('active');
+    tab.classList.add('active');
+  }
+  resetStaffFormFields();
+  showStaffEditorView();
+  setTimeout(() => {
+    try { document.getElementById('staff-uid')?.focus(); } catch (_) {}
+  }, 60);
+  tg?.HapticFeedback?.impactOccurred?.('light');
+}
+
+async function loadStaff({ keepEditor = false } = {}) {
   const list = document.getElementById('staff-list');
+  if (!list) return;
+  const tab = document.getElementById('tab-staff');
+  const editing = !!(tab && tab.classList.contains('is-editing'));
+  if (!(keepEditor && editing)) {
+    showStaffListView();
+  }
   list.innerHTML = '<p class="empty-state">加载中…</p>';
   const data = await api('GET', '/staff');
+  const stillEditing = !!(tab && tab.classList.contains('is-editing'));
+  if (stillEditing) return; // keep the open add-member panel visible
   if (data.error) {
     list.innerHTML = `<p class="msg fail">加载失败：${esc(data.error)}</p>`;
     return;
   }
   const items = data.items || [];
+  if (!items.length) {
+    list.innerHTML = '<p class="empty-state">暂无协作成员。点上方「＋ 添加成员」邀请管理员或客服。</p>';
+    return;
+  }
   list.innerHTML = '';
+  const count = document.createElement('div');
+  count.className = 'list-count';
+  count.textContent = `共 ${items.length} 位成员`;
+  list.appendChild(count);
   items.forEach(s => {
     const div = document.createElement('div');
     div.className = 'ban-item';
@@ -1984,7 +2219,7 @@ async function loadStaff() {
         <div class="ban-name">${esc(label)} · <code>${esc(s.role)}</code></div>
         <small>ID: ${esc(String(s.user_id))}${s.is_owner ? ' · owner' : ''}</small>
       </div>
-      ${s.is_owner ? '' : '<button class="btn-ghost btn-sm staff-del">移除</button>'}`;
+      ${s.is_owner ? '' : '<button type="button" class="btn-ghost btn-sm staff-del">移除</button>'}`;
     const btn = div.querySelector('.staff-del');
     if (btn) {
       btn.addEventListener('click', async () => {
@@ -1998,28 +2233,51 @@ async function loadStaff() {
   });
 }
 
-document.getElementById('staff-add').addEventListener('click', async () => {
+async function submitStaffForm() {
   const msgEl = document.getElementById('staff-msg');
-  const uid = parseInt(document.getElementById('staff-uid').value, 10);
-  const role = document.getElementById('staff-role').value;
+  if (!msgEl) return;
+  const uid = parseInt(document.getElementById('staff-uid')?.value, 10);
+  const role = document.getElementById('staff-role')?.value || 'support';
   if (Number.isNaN(uid) || uid <= 0) {
     msgEl.className = 'msg fail';
     msgEl.textContent = '❌ 请输入有效用户 ID';
+    try { document.getElementById('staff-uid')?.focus(); } catch (_) {}
     return;
   }
   msgEl.className = 'msg';
   msgEl.textContent = '保存中…';
   const res = await api('POST', '/staff', { user_id: uid, role });
-  if (res.ok) {
+  if (res && res.ok && res.error == null) {
     msgEl.className = 'msg ok';
     msgEl.textContent = '✅ 已添加';
-    document.getElementById('staff-uid').value = '';
-    loadStaff();
+    tg?.HapticFeedback?.notificationOccurred('success');
+    resetStaffFormFields();
+    await loadStaff();
   } else {
     msgEl.className = 'msg fail';
-    msgEl.textContent = '❌ ' + (res.error || '失败（需 owner 权限）');
+    msgEl.textContent = '❌ ' + ((res && res.error) || '失败（需 owner 权限）');
   }
-});
+}
+
+function bindStaffUi() {
+  document.getElementById('staff-start-create')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    startCreateStaff();
+  });
+  document.getElementById('staff-add')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    submitStaffForm();
+  });
+  document.getElementById('staff-cancel')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetStaffForm();
+  });
+  document.getElementById('staff-back')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    resetStaffForm();
+  });
+}
 
 async function loadAuditLogs() {
   const list = document.getElementById('audit-list');
@@ -2085,7 +2343,40 @@ async function loadStats() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Global click delegation for critical "open add UI" actions.
+ * Survives partial binding failures and works even if a direct listener was missed.
+ * Capture phase so it still fires if a bubbling handler throws.
+ */
+function bindGlobalActions() {
+  if (bindGlobalActions._bound) return;
+  bindGlobalActions._bound = true;
+  const handler = (e) => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    const actionEl = target.closest('[data-action]');
+    if (!actionEl) return;
+    const action = actionEl.getAttribute('data-action');
+    if (!action) return;
+    if (action === 'fl-start-create') {
+      e.preventDefault();
+      e.stopPropagation();
+      try { startCreateFl(); } catch (err) { console.warn('startCreateFl', err); }
+      return;
+    }
+    if (action === 'staff-start-create') {
+      e.preventDefault();
+      e.stopPropagation();
+      try { startCreateStaff(); } catch (err) { console.warn('startCreateStaff', err); }
+    }
+  };
+  document.addEventListener('click', handler, true);
+}
+
 function bootApp() {
+  if (bootApp._booted) return;
+  bootApp._booted = true;
+
   try { tg?.ready(); } catch (_) {}
   try { tg?.expand(); } catch (_) {}
 
@@ -2093,6 +2384,10 @@ function bootApp() {
   try { initTheme(); } catch (err) { console.warn('initTheme', err); }
   try { initSidebar(); } catch (err) { console.warn('initSidebar', err); }
   try { initTabs(); } catch (err) { console.warn('initTabs', err); }
+  // Critical add-panel actions first (capture + direct)
+  try { bindGlobalActions(); } catch (err) { console.warn('bindGlobalActions', err); }
+  try { bindFilterUi(); } catch (err) { console.warn('bindFilterUi', err); }
+  try { bindStaffUi(); } catch (err) { console.warn('bindStaffUi', err); }
 
   try {
     _welcomeBuilder = initButtonBuilder(
@@ -2131,11 +2426,19 @@ function bootApp() {
     _smBuilder = { getText: () => '', loadText: () => {} };
   }
 
-  loadSettings();
+  try { loadSettings(); } catch (err) { console.warn('loadSettings', err); }
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', bootApp);
-} else {
-  bootApp();
+// Always schedule boot even if earlier top-level listeners threw.
+// Those listeners run as the parser evaluates the file; a throw above this
+// line would skip boot — keep this block minimal and last.
+try {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootApp);
+  } else {
+    bootApp();
+  }
+} catch (err) {
+  console.warn('bootApp schedule failed', err);
+  try { setTimeout(bootApp, 0); } catch (_) {}
 }
